@@ -10,6 +10,13 @@ from web_listening.models import Document
 
 
 class DocumentProcessor:
+    """Download documents and record metadata.
+
+    Content conversion (PDF → Markdown, DOCX → Markdown, etc.) is intentionally
+    out of scope for this module.  Use a dedicated ``doc_to_md`` module to
+    populate ``Document.content_md`` after downloading.
+    """
+
     def __init__(self, client: httpx.Client = None):
         self.client = client or httpx.Client(
             timeout=60,
@@ -19,7 +26,7 @@ class DocumentProcessor:
         self._owns_client = client is None
 
     def download(self, url: str, institution: str, page_url: str = "") -> Path:
-        """Download a document to the institution's directory."""
+        """Download a document into ``<downloads_dir>/<institution>/`` and return its path."""
         resp = self.client.get(url)
         resp.raise_for_status()
 
@@ -32,40 +39,6 @@ class DocumentProcessor:
         local_path.write_bytes(resp.content)
         return local_path
 
-    def to_markdown(self, local_path: Path) -> str:
-        """Convert document to markdown text."""
-        suffix = local_path.suffix.lower()
-        if suffix == ".pdf":
-            return self._pdf_to_md(local_path)
-        elif suffix in (".html", ".htm"):
-            return self._html_to_md(local_path.read_text(errors="ignore"))
-        else:
-            try:
-                return local_path.read_text(errors="ignore")
-            except (OSError, UnicodeDecodeError):
-                return ""
-
-    def _pdf_to_md(self, path: Path) -> str:
-        try:
-            import fitz  # pymupdf
-
-            doc = fitz.open(str(path))
-            pages = []
-            for page in doc:
-                pages.append(page.get_text())
-            doc.close()
-            return "\n\n".join(pages)
-        except (fitz.FileDataError, fitz.EmptyFileError, RuntimeError, ValueError) as e:  # type: ignore[attr-defined]
-            return f"[PDF conversion error: {e}]"
-
-    def _html_to_md(self, html: str) -> str:
-        try:
-            from markdownify import markdownify
-
-            return markdownify(html)
-        except (TypeError, AttributeError, ValueError) as e:
-            return f"[HTML conversion error: {e}]"
-
     def process(
         self,
         url: str,
@@ -74,8 +47,12 @@ class DocumentProcessor:
         page_url: str = "",
         title: str = "",
     ) -> Document:
+        """Download *url* and return a :class:`Document` record.
+
+        ``content_md`` is left empty; fill it with an external ``doc_to_md``
+        module when text extraction is required.
+        """
         local_path = self.download(url, institution, page_url)
-        content_md = self.to_markdown(local_path)
         suffix = local_path.suffix.lower().lstrip(".")
 
         return Document(
@@ -89,7 +66,6 @@ class DocumentProcessor:
             downloaded_at=datetime.now(timezone.utc),
             local_path=str(local_path),
             doc_type=suffix,
-            content_md=content_md,
         )
 
     def close(self):

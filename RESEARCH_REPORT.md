@@ -306,13 +306,14 @@ class PDFSpider(scrapy.Spider):
 | **变化检测** | ✅ 核心 | ✅ 核心 | ✅ 可配置 | ❌ 需自建 | ⚠️ 间接 | **✅** |
 | **差异存储（历史）** | ✅ | ✅ | ✅ | ❌ | ❌ | **✅ SQLite** |
 | **PDF/文档下载** | ⚠️ 间接 | ❌ | ⚠️ 可配置 | ✅ Pipeline | ⚠️ 部分 | **✅** |
-| **文档转 Markdown** | ❌ | ❌ | ❌ | ❌ | ⚠️ 部分 | **✅ (pymupdf)** |
+| **文档转 Markdown** | ❌ | ❌ | ❌ | ❌ | ⚠️ 部分 | ⚠️ 单独模块 |
+| **定时调度** | ✅ | ✅ cron | ✅ | ❌ | ❌ | **✅ APScheduler** |
 | **机构分类存储** | ❌ | ❌ | ❌ | ❌ | ❌ | **✅** |
 | **AI 分析摘要** | ❌ | ❌ | ❌ | ❌ | ✅ (驱动层) | **✅ (weekly)** |
 | **CLI 接口** | ❌ | ✅ | ❌ | ✅ | ✅ | **✅ (Typer)** |
 | **REST API** | ❌ | ❌ | ✅ | ❌ | ❌ | **✅ (FastAPI)** |
 | **Web UI** | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ (可扩展) |
-| **通知推送** | ✅ 85+ | ✅ 多渠道 | ✅ 多渠道 | ❌ | ❌ | ⚠️ (可扩展) |
+| **通知推送** | ✅ 85+ | ✅ 多渠道 | ✅ 多渠道 | ❌ | ❌ | ⚠️ 单独模块 |
 | **动态页面(JS)** | ✅ Playwright | ⚠️ 有限 | ⚠️ 有限 | ✅ (插件) | ✅ | ❌ (可扩展) |
 | **自托管** | ✅ | ✅ | ✅ | ✅ | ✅ | **✅** |
 | **模块化/Building Block** | ❌ | ⚠️ | ⚠️ | ✅ | ✅ | **✅ 核心设计** |
@@ -335,27 +336,36 @@ class PDFSpider(scrapy.Spider):
 
 ### 4.2 文档处理管道
 
-```
-URL 发现 → 下载 → 格式识别 → 内容提取 → 存储
+本项目只负责文档**发现与下载**，内容转换由独立的 `doc_to_md` 模块负责：
 
-PDF    → pymupdf (fitz)        → 文本页面
-DOCX   → python-docx           → 段落文本
-HTML   → markdownify           → Markdown
-XLSX   → openpyxl              → 表格文本
+```
+web_listening（本项目）
+  URL 发现 (diff.find_document_links)
+    └── 下载 (DocumentProcessor.download)
+         └── 存储元数据 (Storage.add_document, content_md="")
+
+doc_to_md（单独模块，不在本项目）
+  PDF    → pymupdf (fitz)     → 文本页面
+  DOCX   → python-docx        → 段落文本
+  HTML   → markdownify        → Markdown
+  XLSX   → openpyxl           → 表格文本
+    └── 写回 Document.content_md
 ```
 
 ### 4.3 AI 分析架构
 
-changedetection.io 等主流项目均**无 AI 分析层**，这是 `web_listening` 的核心差异化竞争力。
-
-常见 AI 分析方案：
+changedetection.io 等主流项目均**无 AI 分析层**，这是 `web_listening` 的核心差异化竞争力。  
+本项目生成分析内容（`AnalysisReport.summary_md`），通知推送由独立模块消费：
 
 ```
 变化记录列表
-  └── Prompt 构造（变化类型 + 摘要 + 时间）
-       └── LLM API (OpenAI / 本地 Ollama)
-            └── 结构化 Markdown 报告
-                 └── 存储 + 推送（Email / Webhook）
+  └── Analyzer.analyze_changes()
+       └── LLM API (OpenAI / 本地降级摘要)
+            └── AnalysisReport 存储 (Storage.add_analysis)
+
+独立通知模块（不在本项目）
+  └── Storage.list_analyses() + list_changes()
+       └── Apprise / Email / Webhook 推送
 ```
 
 ### 4.4 Building Block 模块化设计
@@ -366,12 +376,13 @@ Scrapy 的 Pipeline 模式和 Huginn 的 Agent 模式都体现了良好的模块
 web_listening 模块依赖关系：
 
 CLI ──────────┐
-              ├──► crawler.py  (爬取)
+              ├──► crawler.py   (爬取)
 FastAPI ──────┤
-              ├──► diff.py     (比较)
-              ├──► storage.py  (持久化)
-              ├──► document.py (文档处理)
-              └──► analyzer.py (AI 分析)
+              ├──► diff.py      (比较)
+              ├──► storage.py   (持久化)
+              ├──► document.py  (下载)
+              ├──► analyzer.py  (AI 内容生成)
+              └──► scheduler.py (APScheduler 定时)
 ```
 
 各模块可独立导入，例如：
@@ -417,13 +428,14 @@ web_listening/
 
 | 能力 | 主流项目最强者 | web_listening |
 |---|---|---|
-| 通知渠道丰富度 | changedetection.io (85+) | ⚠️ 待扩展（可集成 Apprise） |
-| JS 动态页面 | changedetection.io + Playwright | ⚠️ 待扩展（可加 playwright 驱动） |
+| 通知渠道丰富度 | changedetection.io (85+) | ⚠️ 独立通知模块（消费本项目数据） |
+| JS 动态页面 | changedetection.io + Playwright | ⚠️ 待扩展（可加 Playwright 驱动） |
 | 工作流可视化 | Huginn | ❌ 不在范围内 |
-| **PDF 下载+转 MD** | **web_listening** | ✅ 原生支持 |
+| **PDF / 文档下载** | **web_listening** | ✅ 原生支持（不含转换） |
 | **机构分类存储** | **web_listening** | ✅ 原生支持 |
-| **AI 周报摘要** | **web_listening** | ✅ 原生支持 |
+| **AI 周报摘要生成** | **web_listening** | ✅ 原生支持（内容生成，不推送） |
 | **REST API** | **web_listening + Huginn** | ✅ FastAPI |
+| **定时调度** | **web_listening** | ✅ APScheduler 3.x |
 | **Building Block 可组合** | **web_listening + Scrapy** | ✅ 核心设计原则 |
 
 ---
@@ -449,17 +461,49 @@ web_listening/
 
 4. **SQLite 结构化存储**：与 changedetection.io 的 JSON 文件存储不同，使用 SQLite 支持丰富的查询（按机构、按时间、按站点过滤），方便后续分析。
 
-### 6.3 建议增强方向（路线图）
+### 6.3 架构决策与模块边界
 
-| 优先级 | 功能 | 参考项目 |
+经过评审，本项目的定位调整如下：
+
+> **web_listening 只负责「跟踪 + 下载」，不做文档转换，不做通知推送。**  
+> 所有新功能均以独立、可调用的 Building Block 模块方式提供，方便外部集成。
+
+| 功能领域 | 归属 | 说明 |
 |---|---|---|
-| 🔴 高 | 集成 Apprise 多渠道通知（Email/Telegram/Slack） | changedetection.io |
-| 🔴 高 | 定时任务调度（APScheduler / cron 集成） | urlwatch, changedetection.io |
-| 🟡 中 | Playwright 支持（监控 JS 渲染页面） | changedetection.io |
-| 🟡 中 | DOCX / XLSX → Markdown 转换补全 | Scrapy FilesPipeline |
-| 🟡 中 | 文档元数据自动提取（发布日期、作者、机构） | ScrapeGraphAI |
-| 🟢 低 | Web UI 管理界面 | changedetection.io, Huginn |
-| 🟢 低 | 分布式爬取支持（多节点） | Scrapy + Scrapy-Redis |
+| 网页爬取 + 变化检测 | ✅ **本项目** (`blocks/crawler`, `blocks/diff`) | 核心职责 |
+| 文档链接发现 + 下载 | ✅ **本项目** (`blocks/document`) | 只下载，不转换 |
+| 结构化存储 | ✅ **本项目** (`blocks/storage`) | SQLite，按机构/站点/时间查询 |
+| AI 变化摘要（周报内容生成） | ✅ **本项目** (`blocks/analyzer`) | 生成 Markdown 内容，不发送 |
+| 定时调度 | ✅ **本项目** (`blocks/scheduler`) | APScheduler 3.x，生产级调度库 |
+| PDF/DOCX/HTML → Markdown 转换 | ⚠️ **单独模块** `doc_to_md` | 写入 `Document.content_md` 字段 |
+| 多渠道通知推送（Email/Telegram/Slack） | ⚠️ **单独模块**（可基于 Apprise） | 消费 `AnalysisReport` + 变化记录 |
+| Web UI 管理界面 | ❌ **不在当前范围** | 可后续独立集成 |
+
+### 6.4 模块间调用关系
+
+```
+外部 doc_to_md 模块
+  └── DocumentProcessor.download() → 写 Document.content_md
+
+外部通知模块（Apprise 等）
+  └── Storage.list_changes() + Storage.list_analyses() → 发送通知
+
+本项目内部数据流：
+  Scheduler
+    └── check_callback()
+         ├── Crawler.snapshot()
+         ├── diff.compute_diff() / find_new_links() / find_document_links()
+         ├── Storage.add_change() / add_snapshot()
+         └── DocumentProcessor.download()
+```
+
+### 6.5 路线图（剩余增强方向）
+
+| 优先级 | 功能 | 参考项目 | 备注 |
+|---|---|---|---|
+| 🟡 中 | Playwright 支持（监控 JS 渲染页面） | changedetection.io | 可扩展 Crawler |
+| 🟡 中 | 文档元数据结构化提取（发布日期、机构） | ScrapeGraphAI | 结构化块存储 |
+| 🟢 低 | 分布式爬取支持（多节点） | Scrapy + Scrapy-Redis | 结构化块存储 |
 
 ---
 

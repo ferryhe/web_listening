@@ -17,12 +17,10 @@ dependencies = [
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
     "aiosqlite>=0.20.0",
-    "markdownify>=0.12.0",
-    "pymupdf>=1.24.0",
+    "apscheduler>=3.10.0",
     "openai>=1.30.0",
     "python-dateutil>=2.9.0",
     "rich>=13.7.0",
-    "schedule>=1.2.0",
 ]
 
 [project.optional-dependencies]

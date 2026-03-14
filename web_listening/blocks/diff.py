@@ -28,7 +28,7 @@ def extract_links(html: str, base_url: str) -> List[str]:
         parsed = urlparse(href)
         if parsed.scheme in ("http", "https"):
             links.append(href)
-    return list(set(links))
+    return sorted(set(links))
 
 
 def find_new_links(old_links: List[str], new_links: List[str]) -> List[str]:

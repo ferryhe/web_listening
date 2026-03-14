@@ -5,7 +5,7 @@ Monitor websites for changes, download documents, and generate AI summaries.
 ## Features
 
 - **Website monitoring** – crawl sites, compute content diffs, detect new links and documents
-- **Document downloading** – fetch PDFs, DOCX, XLSX and convert to Markdown
+- **Document downloading** – fetch PDFs, DOCX, XLSX and save locally; content conversion is handled by the separate `doc_to_md` module
 - **AI analysis** – summarise weekly changes with OpenAI (falls back to local summary)
 - **SQLite storage** – lightweight, no external DB required
 - **CLI** – `web-listening` command with rich terminal output
@@ -133,7 +133,7 @@ web_listening/
 │   ├── blocks/
 │   │   ├── crawler.py     # HTTP crawling + text extraction
 │   │   ├── diff.py        # Hashing, diffing, link extraction
-│   │   ├── document.py    # Document download + PDF/HTML→Markdown
+│   │   ├── document.py    # Document download (no conversion; content_md left for doc_to_md module)
 │   │   ├── storage.py     # SQLite persistence
 │   │   └── analyzer.py    # AI/local change summarisation
 │   └── api/

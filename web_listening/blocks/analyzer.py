@@ -73,6 +73,6 @@ class Analyzer:
             lines.append(f"- **{change_type}**: {count} changes")
         lines.append("")
         lines.append("### Recent Changes")
-        for c in changes[-10:]:
+        for c in changes[:10]:
             lines.append(f"- [{c.change_type}] {c.summary} (site {c.site_id})")
         return "\n".join(lines)

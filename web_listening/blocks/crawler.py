@@ -30,6 +30,8 @@ class Crawler:
         return html, text
 
     def snapshot(self, site: Site) -> SiteSnapshot:
+        if site.id is None:
+            raise ValueError("site.id must not be None — persist the site with Storage.add_site() before snapshotting")
         html, text = self.fetch(site.url)
         links = extract_links(html, site.url)
         return SiteSnapshot(

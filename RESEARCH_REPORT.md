@@ -404,7 +404,7 @@ from web_listening.blocks.storage import Storage
 > **面向研究/政策追踪场景的、以文档为中心的智能监控工具**
 
 与 changedetection.io 相比，它：
-- 更关注**文档发现与下载**（PDF → Markdown）
+- 更关注**文档发现与下载**（文档链接自动识别、按机构目录存储）
 - 增加了**机构分类维度**（按发布机构组织下载目录）
 - 内置**AI 周报生成**，产出可读的分析摘要
 - 提供**REST API**，支持与外部系统集成
@@ -417,7 +417,7 @@ web_listening/
 │   ├── crawler.py      ✅ httpx + BeautifulSoup, 快照+哈希
 │   ├── diff.py         ✅ SHA-256, unified diff, 链接/文档链接过滤
 │   ├── storage.py      ✅ SQLite, 5 张表, 完整 CRUD
-│   ├── document.py     ✅ PDF→文本(pymupdf), HTML→Markdown(markdownify)
+│   ├── document.py     ✅ 文档链接发现 + 下载（转换由外部 doc_to_md 模块负责）
 │   └── analyzer.py     ✅ OpenAI + 本地降级摘要
 ├── cli.py              ✅ 8 个命令 (Typer + Rich)
 ├── api/routes.py       ✅ 10 个 REST 端点 (FastAPI)

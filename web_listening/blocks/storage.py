@@ -142,7 +142,7 @@ class Storage:
         self.conn.execute("UPDATE sites SET is_active=0 WHERE id=?", (site_id,))
         self.conn.commit()
 
-    def _update_site_checked(self, site_id: int):
+    def update_site_checked(self, site_id: int):
         self.conn.execute(
             "UPDATE sites SET last_checked_at=? WHERE id=?",
             (datetime.now(timezone.utc).isoformat(), site_id),

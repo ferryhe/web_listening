@@ -91,7 +91,7 @@ def check(
                 if old_snap is None:
                     # First snapshot
                     storage.add_snapshot(new_snap)
-                    storage._update_site_checked(site.id)
+                    storage.update_site_checked(site.id)
                     console.print(f"  [green]First snapshot captured[/green]")
                     continue
 
@@ -132,7 +132,7 @@ def check(
                     changes_detected.append(change)
 
                 storage.add_snapshot(new_snap)
-                storage._update_site_checked(site.id)
+                storage.update_site_checked(site.id)
 
                 if changes_detected:
                     console.print(f"  [yellow]{len(changes_detected)} change(s) detected[/yellow]")
@@ -281,7 +281,7 @@ def analyze(
 
 @app.command("serve")
 def serve(
-    host: str = typer.Option("0.0.0.0", "--host"),
+    host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8000, "--port"),
 ):
     """Start the FastAPI server."""

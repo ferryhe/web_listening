@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -11,6 +12,18 @@ from web_listening.config import settings
 from web_listening.models import AnalysisReport, Change, Document, Site
 
 router = APIRouter()
+
+_ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _validate_url(url: str) -> None:
+    """Raise HTTP 422 if *url* is not a valid http/https URL."""
+    scheme = urlparse(url).scheme
+    if scheme not in _ALLOWED_SCHEMES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"URL scheme '{scheme}' is not allowed; only http and https are accepted.",
+        )
 
 
 def get_storage() -> Storage:
@@ -47,6 +60,7 @@ def list_sites():
 
 @router.post("/sites", response_model=Site, status_code=201)
 def add_site(body: AddSiteRequest):
+    _validate_url(body.url)
     storage = get_storage()
     try:
         site = storage.add_site(Site(url=body.url, name=body.name or body.url, tags=body.tags))
@@ -139,7 +153,7 @@ def _do_check(site_id: int):
                     ))
 
             storage.add_snapshot(new_snap)
-            storage._update_site_checked(site.id)
+            storage.update_site_checked(site.id)
     except Exception as exc:
         import logging
         logging.getLogger(__name__).error("Error during background check for site %s: %s", site_id, exc)
@@ -174,6 +188,8 @@ def list_documents(institution: Optional[str] = None, site_id: Optional[int] = N
 
 @router.post("/sites/{site_id}/download-docs")
 def download_docs_for_site(site_id: int, body: DownloadDocsRequest, background_tasks: BackgroundTasks):
+    if body.url is not None:
+        _validate_url(body.url)
     storage = get_storage()
     site = storage.get_site(site_id)
     storage.close()

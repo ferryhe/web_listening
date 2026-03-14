@@ -42,7 +42,7 @@ class DocumentProcessor:
         else:
             try:
                 return local_path.read_text(errors="ignore")
-            except Exception:
+            except (OSError, UnicodeDecodeError):
                 return ""
 
     def _pdf_to_md(self, path: Path) -> str:
@@ -55,7 +55,7 @@ class DocumentProcessor:
                 pages.append(page.get_text())
             doc.close()
             return "\n\n".join(pages)
-        except Exception as e:
+        except (fitz.FileDataError, fitz.EmptyFileError, RuntimeError, ValueError) as e:  # type: ignore[attr-defined]
             return f"[PDF conversion error: {e}]"
 
     def _html_to_md(self, html: str) -> str:
@@ -63,7 +63,7 @@ class DocumentProcessor:
             from markdownify import markdownify
 
             return markdownify(html)
-        except Exception as e:
+        except (TypeError, AttributeError, ValueError) as e:
             return f"[HTML conversion error: {e}]"
 
     def process(

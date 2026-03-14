@@ -13,10 +13,12 @@ def test_html_to_md_basic():
 
 def test_html_to_md_links():
     proc = DocumentProcessor.__new__(DocumentProcessor)
-    html = '<a href="https://example.com">Click here</a>'
+    link_url = "https://example.com"
+    html = f'<a href="{link_url}">Click here</a>'
     md = proc._html_to_md(html)
     assert "Click here" in md
-    assert "example.com" in md
+    # The converted markdown should contain the original link URL somewhere
+    assert link_url in md
 
 
 def test_to_markdown_dispatch_html(tmp_path):

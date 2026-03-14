@@ -24,7 +24,7 @@ class Site(BaseModel):
         if isinstance(v, str):
             try:
                 return json.loads(v)
-            except Exception:
+            except json.JSONDecodeError:
                 return [t.strip() for t in v.split(",") if t.strip()]
         return v or []
 
@@ -45,7 +45,7 @@ class SiteSnapshot(BaseModel):
         if isinstance(v, str):
             try:
                 return json.loads(v)
-            except Exception:
+            except json.JSONDecodeError:
                 return []
         return v or []
 
@@ -95,6 +95,6 @@ class AnalysisReport(BaseModel):
         if isinstance(v, str):
             try:
                 return json.loads(v)
-            except Exception:
+            except json.JSONDecodeError:
                 return []
         return v or []

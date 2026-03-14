@@ -286,7 +286,6 @@ def serve(
 ):
     """Start the FastAPI server."""
     import uvicorn
-    from web_listening.api.app import app as fastapi_app  # noqa: F401
 
     uvicorn.run("web_listening.api.app:app", host=host, port=port, reload=False)
 

@@ -140,8 +140,9 @@ def _do_check(site_id: int):
 
             storage.add_snapshot(new_snap)
             storage._update_site_checked(site.id)
-    except Exception:
-        pass
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("Error during background check for site %s: %s", site_id, exc)
     finally:
         storage.close()
 
@@ -207,8 +208,9 @@ def _do_download(site_id: int, institution: str, url: Optional[str]):
                 try:
                     doc = proc.process(doc_url, site_id=site_id, institution=institution, page_url=site.url)
                     storage.add_document(doc)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    import logging
+                    logging.getLogger(__name__).error("Failed to download %s: %s", doc_url, exc)
     finally:
         storage.close()
 

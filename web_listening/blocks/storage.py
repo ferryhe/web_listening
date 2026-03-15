@@ -69,8 +69,22 @@ class Storage:
                 downloaded_at TEXT,
                 local_path TEXT DEFAULT '',
                 doc_type TEXT DEFAULT '',
+                sha256 TEXT DEFAULT '',
+                file_size INTEGER,
+                content_type TEXT DEFAULT '',
+                etag TEXT DEFAULT '',
+                last_modified TEXT DEFAULT '',
                 content_md TEXT DEFAULT '',
                 FOREIGN KEY (site_id) REFERENCES sites(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS document_blobs (
+                sha256 TEXT PRIMARY KEY,
+                canonical_path TEXT NOT NULL,
+                file_size INTEGER,
+                content_type TEXT DEFAULT '',
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS analysis_reports (
@@ -83,7 +97,18 @@ class Storage:
                 change_count INTEGER DEFAULT 0
             );
         """)
+        self._ensure_column("documents", "sha256", "TEXT DEFAULT ''")
+        self._ensure_column("documents", "file_size", "INTEGER")
+        self._ensure_column("documents", "content_type", "TEXT DEFAULT ''")
+        self._ensure_column("documents", "etag", "TEXT DEFAULT ''")
+        self._ensure_column("documents", "last_modified", "TEXT DEFAULT ''")
         self.conn.commit()
+
+    def _ensure_column(self, table_name: str, column_name: str, column_sql: str):
+        rows = self.conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        existing = {row["name"] for row in rows}
+        if column_name not in existing:
+            self.conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
 
     def close(self):
         self.conn.close()
@@ -246,28 +271,79 @@ class Storage:
 
     def add_document(self, doc: Document) -> Document:
         now = datetime.now(timezone.utc).isoformat()
-        cur = self.conn.execute(
-            """INSERT INTO documents
-               (site_id, title, url, download_url, institution, page_url,
-                published_at, downloaded_at, local_path, doc_type, content_md)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                doc.site_id,
-                doc.title,
-                doc.url,
-                doc.download_url,
-                doc.institution,
-                doc.page_url,
-                doc.published_at.isoformat() if doc.published_at else None,
-                doc.downloaded_at.isoformat() if doc.downloaded_at else now,
-                doc.local_path,
-                doc.doc_type,
-                doc.content_md,
-            ),
-        )
+        existing = self.conn.execute(
+            "SELECT id FROM documents WHERE download_url = ? ORDER BY id ASC LIMIT 1",
+            (doc.download_url,),
+        ).fetchone()
+        if existing is None:
+            cur = self.conn.execute(
+                """INSERT INTO documents
+                   (site_id, title, url, download_url, institution, page_url,
+                    published_at, downloaded_at, local_path, doc_type, sha256,
+                    file_size, content_type, etag, last_modified, content_md)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    doc.site_id,
+                    doc.title,
+                    doc.url,
+                    doc.download_url,
+                    doc.institution,
+                    doc.page_url,
+                    doc.published_at.isoformat() if doc.published_at else None,
+                    doc.downloaded_at.isoformat() if doc.downloaded_at else now,
+                    doc.local_path,
+                    doc.doc_type,
+                    doc.sha256,
+                    doc.file_size,
+                    doc.content_type,
+                    doc.etag,
+                    doc.last_modified,
+                    doc.content_md,
+                ),
+            )
+            row_id = cur.lastrowid
+        else:
+            row_id = existing["id"]
+            self.conn.execute(
+                """UPDATE documents
+                   SET site_id = ?,
+                       title = ?,
+                       url = ?,
+                       institution = ?,
+                       page_url = ?,
+                       published_at = ?,
+                       downloaded_at = ?,
+                       local_path = ?,
+                       doc_type = ?,
+                       sha256 = ?,
+                       file_size = ?,
+                       content_type = ?,
+                       etag = ?,
+                       last_modified = ?,
+                       content_md = ?
+                   WHERE id = ?""",
+                (
+                    doc.site_id,
+                    doc.title,
+                    doc.url,
+                    doc.institution,
+                    doc.page_url,
+                    doc.published_at.isoformat() if doc.published_at else None,
+                    doc.downloaded_at.isoformat() if doc.downloaded_at else now,
+                    doc.local_path,
+                    doc.doc_type,
+                    doc.sha256,
+                    doc.file_size,
+                    doc.content_type,
+                    doc.etag,
+                    doc.last_modified,
+                    doc.content_md,
+                    row_id,
+                ),
+            )
         self.conn.commit()
         row = self.conn.execute(
-            "SELECT * FROM documents WHERE id=?", (cur.lastrowid,)
+            "SELECT * FROM documents WHERE id=?", (row_id,)
         ).fetchone()
         return self._row_to_document(row)
 
@@ -284,8 +360,70 @@ class Storage:
             downloaded_at=_parse_dt(row["downloaded_at"]),
             local_path=row["local_path"] or "",
             doc_type=row["doc_type"] or "",
+            sha256=row["sha256"] or "",
+            file_size=row["file_size"],
+            content_type=row["content_type"] or "",
+            etag=row["etag"] or "",
+            last_modified=row["last_modified"] or "",
             content_md=row["content_md"] or "",
         )
+
+    def get_document_by_download_url(self, download_url: str) -> Optional[Document]:
+        row = self.conn.execute(
+            "SELECT * FROM documents WHERE download_url = ? ORDER BY id ASC LIMIT 1",
+            (download_url,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_document(row)
+
+    def get_document_by_sha256(self, sha256: str) -> Optional[Document]:
+        row = self.conn.execute(
+            "SELECT * FROM documents WHERE sha256 = ? ORDER BY id ASC LIMIT 1",
+            (sha256,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_document(row)
+
+    def get_blob(self, sha256: str) -> Optional[dict]:
+        row = self.conn.execute(
+            """SELECT sha256, canonical_path, file_size, content_type
+               FROM document_blobs WHERE sha256 = ?""",
+            (sha256,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "sha256": row["sha256"],
+            "canonical_path": row["canonical_path"],
+            "file_size": row["file_size"],
+            "content_type": row["content_type"] or "",
+        }
+
+    def upsert_blob(
+        self,
+        *,
+        sha256: str,
+        canonical_path: str,
+        file_size: Optional[int],
+        content_type: str,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            INSERT INTO document_blobs (
+                sha256, canonical_path, file_size, content_type, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sha256) DO UPDATE SET
+                canonical_path = excluded.canonical_path,
+                file_size = excluded.file_size,
+                content_type = excluded.content_type,
+                last_seen_at = excluded.last_seen_at
+            """,
+            (sha256, canonical_path, file_size, content_type, now, now),
+        )
+        self.conn.commit()
 
     def list_documents(
         self, site_id: Optional[int] = None, institution: Optional[str] = None

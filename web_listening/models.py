@@ -75,6 +75,11 @@ class Document(BaseModel):
     downloaded_at: Optional[datetime] = None
     local_path: str = ""
     doc_type: str = ""
+    sha256: str = ""
+    file_size: Optional[int] = None
+    content_type: str = ""
+    etag: str = ""
+    last_modified: str = ""
     content_md: str = ""
 
 

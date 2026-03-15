@@ -206,7 +206,7 @@ def download_docs(
         storage.close()
         return
 
-    with DocumentProcessor() as proc:
+    with DocumentProcessor(storage=storage) as proc:
         for doc_url in urls_to_download:
             console.print(f"Downloading: {doc_url}")
             try:

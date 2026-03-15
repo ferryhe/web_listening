@@ -219,7 +219,7 @@ def _do_download(site_id: int, institution: str, url: Optional[str]):
             urls_to_download = find_document_links(snap.links)
 
     try:
-        with DocumentProcessor() as proc:
+        with DocumentProcessor(storage=storage) as proc:
             for doc_url in urls_to_download:
                 try:
                     doc = proc.process(doc_url, site_id=site_id, institution=institution, page_url=site.url)

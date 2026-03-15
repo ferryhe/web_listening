@@ -56,7 +56,7 @@ def list_sites(all_sites: bool = typer.Option(False, "--all", help="Include inac
             site.url,
             ", ".join(site.tags),
             str(site.last_checked_at)[:19] if site.last_checked_at else "-",
-            "✓" if site.is_active else "✗",
+            "yes" if site.is_active else "no",
         )
     console.print(table)
 
@@ -212,7 +212,7 @@ def download_docs(
             try:
                 doc = proc.process(doc_url, site_id=site_id, institution=institution, page_url=site.url)
                 saved = storage.add_document(doc)
-                console.print(f"  [green]Saved as id={saved.id}[/green] → {saved.local_path}")
+                console.print(f"  [green]Saved as id={saved.id}[/green] -> {saved.local_path}")
             except Exception as e:
                 console.print(f"  [red]Error: {e}[/red]")
 
@@ -272,7 +272,7 @@ def analyze(
 
     console.print(Panel(
         f"[bold]Analysis Report[/bold] (id={saved.id})\n"
-        f"Period: {period_start.date()} → {period_end.date()}\n"
+        f"Period: {period_start.date()} -> {period_end.date()}\n"
         f"Changes: {saved.change_count}\n\n"
         + saved.summary_md,
         title="Analysis",

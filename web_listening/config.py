@@ -16,7 +16,12 @@ class Settings(BaseSettings):
     user_agent: str = "web-listening-bot/1.0"
     request_timeout: int = 30
 
-    model_config = {"env_prefix": "WL_", "env_file": ".env"}
+    model_config = {
+        "env_prefix": "WL_",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
     @model_validator(mode="after")
     def _resolve_paths(self) -> "Settings":

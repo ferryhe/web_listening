@@ -21,6 +21,24 @@ Requires Python ≥ 3.10.
 
 ## Configuration
 
+For local development, the standard approach is to put non-secret defaults and local secrets in a project-level `.env` file.
+This project already supports that via Pydantic Settings.
+
+Use `.env.example` as the template:
+
+```bash
+cp .env.example .env
+```
+
+Then set your real API key in `.env`:
+
+```dotenv
+WL_OPENAI_API_KEY=your_real_api_key
+```
+
+`.env` is already ignored by git, so the secret stays local.
+For production or shared deployments, prefer real environment variables or a secret manager instead of committing or distributing `.env` files.
+
 All settings can be overridden via environment variables (prefix `WL_`) or a `.env` file:
 
 | Variable | Default | Description |
@@ -113,6 +131,152 @@ Start the server with `web-listening serve`, then browse to `http://localhost:80
 | `GET` | `/api/v1/documents` | List documents (filter by `institution`, `site_id`) |
 | `POST` | `/api/v1/analyze` | Run analysis and store report |
 | `GET` | `/api/v1/analyses` | List analysis reports |
+
+## Production Deployment
+
+The recommended production shape for this project is:
+
+- one Linux host
+- one Python virtualenv
+- one `uvicorn` process
+- one local SQLite database on persistent disk
+- one reverse proxy such as Nginx
+- scheduled CLI runs via `cron` or systemd timers
+
+This is important because the app currently uses SQLite and FastAPI `BackgroundTasks`.
+That makes single-process deployment the safest default.
+Do not start multiple API workers unless you are also prepared to change the storage and job-execution model.
+
+### 1. Create the runtime environment
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+pip install -e .
+```
+
+### 2. Configure secrets and paths
+
+For production, prefer real environment variables or a protected env file outside the repo.
+
+Example env file:
+
+```dotenv
+WL_DATA_DIR=/srv/web-listening/data
+WL_DB_PATH=/srv/web-listening/data/web_listening.db
+WL_DOWNLOADS_DIR=/srv/web-listening/data/downloads
+
+WL_OPENAI_API_KEY=your_real_api_key
+WL_OPENAI_MODEL=gpt-4o-mini
+WL_OPENAI_BASE_URL=https://api.openai.com/v1
+
+WL_USER_AGENT=web-listening-bot/1.0
+WL_REQUEST_TIMEOUT=30
+```
+
+Recommended file location:
+
+```bash
+/etc/web-listening/web-listening.env
+```
+
+Recommended permissions:
+
+```bash
+sudo chown root:root /etc/web-listening/web-listening.env
+sudo chmod 600 /etc/web-listening/web-listening.env
+```
+
+### 3. Run the API with `uvicorn`
+
+For production, bind the app to localhost and let Nginx handle public traffic:
+
+```bash
+.venv/bin/uvicorn web_listening.api.app:app --host 127.0.0.1 --port 8000
+```
+
+Use a single worker unless you replace SQLite and in-process background tasks with more production-oriented components.
+
+### 4. Create a systemd service
+
+Example `/etc/systemd/system/web-listening.service`:
+
+```ini
+[Unit]
+Description=web-listening API
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/srv/web-listening/app
+EnvironmentFile=/etc/web-listening/web-listening.env
+ExecStart=/srv/web-listening/app/.venv/bin/uvicorn web_listening.api.app:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then enable it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now web-listening.service
+sudo systemctl status web-listening.service
+```
+
+### 5. Put Nginx in front
+
+Example `/etc/nginx/sites-available/web-listening`:
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.example;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Then enable the site and reload Nginx:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/web-listening /etc/nginx/sites-enabled/web-listening
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+If the service is public-facing, add HTTPS with Let's Encrypt.
+
+### 6. Schedule checks and analysis
+
+The API exposes endpoints to queue checks and downloads, but regular monitoring still needs a scheduler around the app.
+The simplest production option is `cron`.
+
+Example cron jobs:
+
+```cron
+*/30 * * * * cd /srv/web-listening/app && /srv/web-listening/app/.venv/bin/python -m web_listening.cli check >> /var/log/web-listening-check.log 2>&1
+15 0 * * * cd /srv/web-listening/app && /srv/web-listening/app/.venv/bin/python -m web_listening.cli analyze >> /var/log/web-listening-analyze.log 2>&1
+```
+
+If you want automatic document downloads too, add a separate scheduled `download-docs` command or implement a dedicated scheduler flow in the app.
+
+### 7. Operational notes
+
+- Keep `WL_DATA_DIR` on persistent disk. SQLite and downloaded files live there.
+- Back up the SQLite database and downloads directory together.
+- If `WL_OPENAI_API_KEY` is empty, analysis still works, but it falls back to local summarization.
+- First `check` creates the baseline snapshot only; it does not download files automatically.
 
 ## Development
 

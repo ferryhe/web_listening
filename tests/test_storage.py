@@ -157,6 +157,31 @@ def test_add_and_list_documents(storage):
     assert len(docs_other) == 0
 
 
+def test_update_document_content_md(storage):
+    site = storage.add_site(Site(url="https://example.com", name="Test"))
+    doc = storage.add_document(
+        Document(
+            site_id=site.id,
+            title="Annual Report",
+            url="https://example.com/report.pdf",
+            download_url="https://example.com/report.pdf",
+            institution="ExampleOrg",
+            doc_type="pdf",
+        )
+    )
+
+    updated = storage.update_document_content_md(
+        doc.id,
+        content_md="# Annual Report\n\nConverted",
+        content_md_status="converted",
+    )
+
+    assert updated is not None
+    assert updated.content_md.startswith("# Annual Report")
+    assert updated.content_md_status == "converted"
+    assert updated.content_md_updated_at is not None
+
+
 def test_add_and_list_analyses(storage):
     report = AnalysisReport(
         period_start=datetime(2024, 1, 1, tzinfo=timezone.utc),

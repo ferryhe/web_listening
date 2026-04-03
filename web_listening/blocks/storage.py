@@ -421,6 +421,15 @@ class Storage:
             return None
         return self._row_to_document(row)
 
+    def get_document(self, document_id: int) -> Optional[Document]:
+        row = self.conn.execute(
+            "SELECT * FROM documents WHERE id = ?",
+            (document_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_document(row)
+
     def get_document_by_sha256(self, sha256: str) -> Optional[Document]:
         row = self.conn.execute(
             "SELECT * FROM documents WHERE sha256 = ? ORDER BY id ASC LIMIT 1",
@@ -483,6 +492,31 @@ class Storage:
         query += " ORDER BY downloaded_at DESC"
         rows = self.conn.execute(query, params).fetchall()
         return [self._row_to_document(r) for r in rows]
+
+    def update_document_content_md(
+        self,
+        document_id: int,
+        *,
+        content_md: str,
+        content_md_status: str = "converted",
+    ) -> Optional[Document]:
+        existing = self.get_document(document_id)
+        if existing is None:
+            return None
+
+        updated_at = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            UPDATE documents
+            SET content_md = ?,
+                content_md_status = ?,
+                content_md_updated_at = ?
+            WHERE id = ?
+            """,
+            (content_md, content_md_status, updated_at, document_id),
+        )
+        self.conn.commit()
+        return self.get_document(document_id)
 
     # ── Analyses ───────────────────────────────────────────────────────────
 

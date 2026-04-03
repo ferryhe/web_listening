@@ -166,6 +166,7 @@ class DocumentProcessor:
             content_type=downloaded.content_type,
             etag=downloaded.etag,
             last_modified=downloaded.last_modified,
+            content_md_status="pending",
         )
 
     def close(self):

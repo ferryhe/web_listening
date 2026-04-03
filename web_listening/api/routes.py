@@ -47,6 +47,11 @@ class DownloadDocsRequest(BaseModel):
     url: Optional[str] = None
 
 
+class UpdateDocumentContentRequest(BaseModel):
+    content_md: str
+    content_md_status: str = "converted"
+
+
 # ── Sites ───────────────────────────────────────────────────────────────────
 
 @router.get("/sites", response_model=List[Site])
@@ -208,6 +213,22 @@ def list_documents(institution: Optional[str] = None, site_id: Optional[int] = N
     storage = get_storage()
     try:
         return storage.list_documents(site_id=site_id, institution=institution)
+    finally:
+        storage.close()
+
+
+@router.patch("/documents/{document_id}/content", response_model=Document)
+def update_document_content(document_id: int, body: UpdateDocumentContentRequest):
+    storage = get_storage()
+    try:
+        document = storage.update_document_content_md(
+            document_id,
+            content_md=body.content_md,
+            content_md_status=body.content_md_status,
+        )
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return document
     finally:
         storage.close()
 

@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from web_listening.api import routes
 from web_listening.api.app import create_app
 from web_listening.blocks.storage import Storage
-from web_listening.models import Site, SiteSnapshot
+from web_listening.models import Document, Site, SiteSnapshot
 
 
 def test_get_latest_snapshot_endpoint(tmp_path, monkeypatch):
@@ -58,3 +58,38 @@ def test_get_latest_snapshot_endpoint_returns_404_without_snapshot(tmp_path, mon
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Snapshot not found"
+
+
+def test_update_document_content_endpoint(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+
+    storage = Storage(db_path)
+    site = storage.add_site(Site(url="https://example.com", name="Example"))
+    document = storage.add_document(
+        Document(
+            site_id=site.id,
+            title="Report",
+            url="https://example.com/report.pdf",
+            download_url="https://example.com/report.pdf",
+            institution="ExampleOrg",
+            doc_type="pdf",
+        )
+    )
+    storage.close()
+
+    client = TestClient(create_app())
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/content",
+        json={
+            "content_md": "# Report\n\nConverted content",
+            "content_md_status": "converted",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == document.id
+    assert payload["content_md"].startswith("# Report")
+    assert payload["content_md_status"] == "converted"
+    assert payload["content_md_updated_at"] is not None

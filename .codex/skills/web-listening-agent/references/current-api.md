@@ -14,6 +14,7 @@
 - `web_listening/blocks/scheduler.py`: APScheduler-based periodic execution.
 - `web_listening/dev_targets.py`: required live development target validation for `SOA`, `CAS`, and `IAA`.
 - `web_listening/smoke_sites.py`: curated smoke site catalog validation for larger list-driven monitoring.
+- `tools/run_dev_daily_monitor.py`: persistent daily monitoring flow for `SOA`, `CAS`, and `IAA`, with optional sample downloads into the main database and blob store.
 - `tools/run_agent_rescue_validation.py`: agent-style fallback validation across catalog target, browser retry, and official sitemap or RSS fallback.
 
 ## Implemented REST endpoints
@@ -70,6 +71,7 @@ Every live development validation should include the required default target set
 
 The canonical definition lives in `config/dev_test_sites.json`.
 Use `tools/validate_real_sites.py` and `tools/run_dev_regression.py` to exercise them.
+Use `tools/run_dev_daily_monitor.py --download-samples` when you want to persist today's baseline into the main database and reuse it on the next run.
 `tools/run_dev_regression.py` fails on regression issues by default; use `--report-only` only when you need a non-failing report.
 Use `DEV_TEST_TARGETS.md` for the current baseline expectations and SHA-256 rules.
 

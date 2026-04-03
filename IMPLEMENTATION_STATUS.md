@@ -106,6 +106,13 @@ Reference commit:
 - Added local tests for the rescue endpoint and smoke outcome handling.
 - Tightened rescue correctness so returned snapshots keep the real `site_id`, and browser rescue now defaults to a browser user-agent profile instead of the bot UA.
 
+### 12. Persistent daily dev monitoring
+
+- Added `tools/run_dev_daily_monitor.py` to persist daily `SOA`, `CAS`, and `IAA` monitoring snapshots into the main SQLite database.
+- The daily monitor reuses the stored snapshots on later runs, so tomorrow's execution will compare against today's persisted baseline instead of starting from scratch.
+- Added optional sample-document download support so daily development runs can also refresh a small set of real downloaded files in the shared blob store.
+- Added local coverage to prove the daily monitor initializes the baseline once, then reuses the same database on the next run.
+
 ## Current state
 
 - Tests passing: `72`
@@ -115,6 +122,7 @@ Reference commit:
 - Required live validation commands:
   - `.venv\Scripts\python tools\validate_real_sites.py`
   - `.venv\Scripts\python tools\run_dev_regression.py`
+  - `.venv\Scripts\python tools\run_dev_daily_monitor.py --download-samples`
   - `.venv\Scripts\python tools\run_smoke_site_catalog.py --report-only`
   - `.venv\Scripts\python tools\run_smoke_site_catalog.py --primary-only --report-only`
   - `.venv\Scripts\python tools\run_tree_catalog_validation.py`

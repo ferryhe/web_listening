@@ -340,11 +340,14 @@ Recommended live validation commands:
 ```powershell
 .venv\Scripts\python tools\validate_real_sites.py
 .venv\Scripts\python tools\run_dev_regression.py
+.venv\Scripts\python tools\run_dev_daily_monitor.py --download-samples
 .venv\Scripts\python tools\run_smoke_site_catalog.py --report-only
 .venv\Scripts\python tools\run_smoke_site_catalog.py --primary-only --report-only
 .venv\Scripts\python tools\run_agent_rescue_validation.py
 ```
 
+`tools/run_dev_daily_monitor.py` writes the persistent dev-target baseline into `WL_DB_PATH` and stores a fresh Markdown run report in `data/reports/dev_daily_latest.md` by default.
+Run the same command again tomorrow to get real diff results against today's stored snapshots.
 `tools/run_smoke_site_catalog.py` now uses the rescue ladder by default.
 Use `--primary-only` when you want the strict catalog target without browser or feed fallback.
 `tools/run_dev_regression.py` still fails on live regressions by default; use `--report-only` if you only want the Markdown report without a failing exit code.

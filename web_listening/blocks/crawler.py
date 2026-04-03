@@ -1,15 +1,95 @@
-from bs4 import BeautifulSoup
+from __future__ import annotations
+
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Tuple
+from typing import Optional, Tuple
 
 import httpx
 
-from web_listening.blocks.diff import compute_hash, extract_links
+from web_listening.blocks.diff import compute_hash, extract_links, select_compare_artifact
+from web_listening.blocks.normalizer import normalize_html
 from web_listening.config import settings
 from web_listening.models import Site, SiteSnapshot
 
+_ALLOWED_FETCH_MODES = {"http", "browser", "auto"}
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+)
 
-class Crawler:
+
+@dataclass(slots=True)
+class FetchResult:
+    raw_html: str
+    cleaned_html: str
+    content_text: str
+    markdown: str
+    fit_markdown: str
+    metadata_json: dict
+    final_url: str
+    status_code: Optional[int]
+
+
+def normalize_fetch_mode(mode: str | None) -> str:
+    resolved = (mode or "http").strip().lower()
+    if resolved not in _ALLOWED_FETCH_MODES:
+        raise ValueError(f"Unsupported fetch_mode '{mode}'. Allowed: http, browser, auto.")
+    if resolved == "auto":
+        return "http"
+    return resolved
+
+
+def resolve_user_agent(fetch_config_json: Optional[dict] = None) -> str:
+    config = fetch_config_json or {}
+    explicit = str(config.get("user_agent", "")).strip()
+    if explicit:
+        return explicit
+    profile = str(config.get("user_agent_profile", "")).strip().lower()
+    if profile == "browser":
+        return _BROWSER_USER_AGENT
+    return settings.user_agent
+
+
+def resolve_request_headers(fetch_config_json: Optional[dict] = None) -> dict:
+    config = fetch_config_json or {}
+    headers = {}
+    raw_headers = config.get("headers")
+    if isinstance(raw_headers, dict):
+        headers.update({str(key): str(value) for key, value in raw_headers.items()})
+    has_user_agent = any(str(key).lower() == "user-agent" for key in headers)
+    if not has_user_agent or str(config.get("user_agent", "")).strip() or str(config.get("user_agent_profile", "")).strip():
+        headers["User-Agent"] = resolve_user_agent(fetch_config_json)
+    return headers
+
+
+def _snapshot_from_page(site: Site, page: FetchResult, fetch_mode: str) -> SiteSnapshot:
+    links = extract_links(page.raw_html, page.final_url or site.url)
+    hash_basis, compare_text = select_compare_artifact(
+        fit_markdown=page.fit_markdown,
+        markdown=page.markdown,
+        content_text=page.content_text,
+    )
+    metadata = dict(page.metadata_json)
+    metadata["hash_basis"] = hash_basis
+    metadata["hash_normalization"] = "whitespace-normalized-v1"
+    return SiteSnapshot(
+        site_id=site.id,
+        captured_at=datetime.now(timezone.utc),
+        content_hash=compute_hash(compare_text),
+        raw_html=page.raw_html,
+        cleaned_html=page.cleaned_html,
+        content_text=page.content_text,
+        markdown=page.markdown,
+        fit_markdown=page.fit_markdown,
+        metadata_json=metadata,
+        fetch_mode=fetch_mode,
+        final_url=page.final_url,
+        status_code=page.status_code,
+        links=links,
+    )
+
+
+class HttpCrawler:
     def __init__(self, client: httpx.Client = None):
         self.client = client or httpx.Client(
             timeout=settings.request_timeout,
@@ -18,36 +98,148 @@ class Crawler:
         )
         self._owns_client = client is None
 
-    def fetch(self, url: str) -> Tuple[str, str]:
-        """Returns (raw_html, text_content)."""
-        resp = self.client.get(url)
+    def fetch_page(self, url: str, *, fetch_config_json: Optional[dict] = None) -> FetchResult:
+        request_headers = resolve_request_headers(fetch_config_json)
+        resp = self.client.get(url, headers=request_headers)
         resp.raise_for_status()
-        html = resp.text
-        soup = BeautifulSoup(html, "lxml")
-        for tag in soup(["script", "style", "nav", "footer"]):
-            tag.decompose()
-        text = soup.get_text(separator="\n", strip=True)
-        return html, text
+        normalized = normalize_html(resp.text, base_url=str(resp.url))
+        metadata = dict(normalized.metadata)
+        metadata["driver"] = "http"
+        metadata["request_user_agent"] = request_headers.get("User-Agent", settings.user_agent)
+        return FetchResult(
+            raw_html=normalized.raw_html,
+            cleaned_html=normalized.cleaned_html,
+            content_text=normalized.content_text,
+            markdown=normalized.markdown,
+            fit_markdown=normalized.fit_markdown,
+            metadata_json=metadata,
+            final_url=str(resp.url),
+            status_code=resp.status_code,
+        )
+
+    def fetch(self, url: str) -> Tuple[str, str]:
+        page = self.fetch_page(url)
+        return page.raw_html, page.content_text
 
     def snapshot(self, site: Site) -> SiteSnapshot:
         if site.id is None:
             raise ValueError("site.id must not be None — persist the site with Storage.add_site() before snapshotting")
-        html, text = self.fetch(site.url)
-        links = extract_links(html, site.url)
-        return SiteSnapshot(
-            site_id=site.id,
-            captured_at=datetime.now(timezone.utc),
-            content_hash=compute_hash(text),
-            content_text=text,
-            links=links,
-        )
+        page = self.fetch_page(site.url, fetch_config_json=site.fetch_config_json)
+        return _snapshot_from_page(site, page, fetch_mode="http")
 
-    def close(self):
+    def close(self) -> None:
         if self._owns_client:
             self.client.close()
 
-    def __enter__(self):
+    def __enter__(self) -> "HttpCrawler":
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args) -> None:
+        self.close()
+
+
+class BrowserCrawler:
+    def fetch_page(self, url: str, *, fetch_config_json: Optional[dict] = None) -> FetchResult:
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError(
+                "Browser crawling requires Playwright. Install it with `pip install -e \".[browser]\"` "
+                "and run `playwright install chromium`."
+            ) from exc
+
+        config = fetch_config_json or {}
+        timeout_ms = int(config.get("timeout_ms", settings.request_timeout * 1000))
+        wait_until = config.get("wait_until", "load")
+        wait_for_selector = config.get("wait_for")
+        extra_wait_ms = int(config.get("extra_wait_ms", 0))
+        headless = bool(config.get("headless", True))
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=headless)
+            try:
+                page = browser.new_page(user_agent=resolve_user_agent(fetch_config_json))
+                response = page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+                if wait_for_selector:
+                    page.wait_for_selector(wait_for_selector, timeout=timeout_ms)
+                if extra_wait_ms > 0:
+                    page.wait_for_timeout(extra_wait_ms)
+                html = page.content()
+                final_url = page.url
+                status_code = response.status if response else None
+            finally:
+                browser.close()
+
+        normalized = normalize_html(html, base_url=final_url or url)
+        metadata = dict(normalized.metadata)
+        metadata["driver"] = "browser"
+        metadata["request_user_agent"] = resolve_user_agent(fetch_config_json)
+        metadata["wait_until"] = wait_until
+        metadata["wait_for"] = wait_for_selector or ""
+        return FetchResult(
+            raw_html=normalized.raw_html,
+            cleaned_html=normalized.cleaned_html,
+            content_text=normalized.content_text,
+            markdown=normalized.markdown,
+            fit_markdown=normalized.fit_markdown,
+            metadata_json=metadata,
+            final_url=final_url or url,
+            status_code=status_code,
+        )
+
+    def fetch(self, url: str) -> Tuple[str, str]:
+        page = self.fetch_page(url)
+        return page.raw_html, page.content_text
+
+    def snapshot(self, site: Site) -> SiteSnapshot:
+        if site.id is None:
+            raise ValueError("site.id must not be None — persist the site with Storage.add_site() before snapshotting")
+        page = self.fetch_page(site.url, fetch_config_json=site.fetch_config_json)
+        return _snapshot_from_page(site, page, fetch_mode="browser")
+
+    def close(self) -> None:
+        return None
+
+    def __enter__(self) -> "BrowserCrawler":
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close()
+
+
+class Crawler:
+    def __init__(self, client: httpx.Client = None, fetch_mode: str = "http"):
+        self.fetch_mode = normalize_fetch_mode(fetch_mode)
+        self.http_crawler = HttpCrawler(client=client)
+        self.browser_crawler: Optional[BrowserCrawler] = None
+
+    def _get_driver(self, fetch_mode: str):
+        mode = normalize_fetch_mode(fetch_mode)
+        if mode == "browser":
+            if self.browser_crawler is None:
+                self.browser_crawler = BrowserCrawler()
+            return self.browser_crawler
+        return self.http_crawler
+
+    def fetch(self, url: str, *, fetch_mode: Optional[str] = None, fetch_config_json: Optional[dict] = None) -> Tuple[str, str]:
+        page = self.fetch_page(url, fetch_mode=fetch_mode, fetch_config_json=fetch_config_json)
+        return page.raw_html, page.content_text
+
+    def fetch_page(self, url: str, *, fetch_mode: Optional[str] = None, fetch_config_json: Optional[dict] = None) -> FetchResult:
+        driver = self._get_driver(fetch_mode or self.fetch_mode)
+        return driver.fetch_page(url, fetch_config_json=fetch_config_json)
+
+    def snapshot(self, site: Site) -> SiteSnapshot:
+        driver = self._get_driver(site.fetch_mode)
+        return driver.snapshot(site)
+
+    def close(self) -> None:
+        self.http_crawler.close()
+        if self.browser_crawler is not None:
+            self.browser_crawler.close()
+
+    def __enter__(self) -> "Crawler":
+        return self
+
+    def __exit__(self, *args) -> None:
         self.close()

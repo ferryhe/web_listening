@@ -51,7 +51,13 @@ class DocumentProcessor:
         blob_dir.mkdir(parents=True, exist_ok=True)
         return blob_dir / f"{sha256}{suffix}"
 
-    def download(self, url: str, institution: str, page_url: str = "") -> DownloadResult:
+    def download(
+        self,
+        url: str,
+        institution: str,
+        page_url: str = "",
+        request_headers: dict | None = None,
+    ) -> DownloadResult:
         """Download a document into the shared blob store and return its metadata."""
         if self.storage is not None:
             existing = self.storage.get_document_by_download_url(url)
@@ -77,7 +83,7 @@ class DocumentProcessor:
         file_size = 0
 
         try:
-            with self.client.stream("GET", url) as resp:
+            with self.client.stream("GET", url, headers=request_headers) as resp:
                 resp.raise_for_status()
                 content_type = resp.headers.get("content-type", "")
                 etag = resp.headers.get("etag", "")
@@ -142,13 +148,19 @@ class DocumentProcessor:
         institution: str,
         page_url: str = "",
         title: str = "",
+        request_headers: dict | None = None,
     ) -> Document:
         """Download *url* and return a :class:`Document` record.
 
         ``content_md`` is left empty; fill it with an external ``doc_to_md``
         module when text extraction is required.
         """
-        downloaded = self.download(url, institution, page_url)
+        downloaded = self.download(
+            url,
+            institution,
+            page_url,
+            request_headers=request_headers,
+        )
 
         return Document(
             site_id=site_id,
@@ -166,6 +178,7 @@ class DocumentProcessor:
             content_type=downloaded.content_type,
             etag=downloaded.etag,
             last_modified=downloaded.last_modified,
+            content_md_status="pending",
         )
 
     def close(self):

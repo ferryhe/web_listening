@@ -203,6 +203,10 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Local site-list inputs
+input/
+list/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

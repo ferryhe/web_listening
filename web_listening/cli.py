@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -23,15 +24,37 @@ def add_site(
     url: str = typer.Argument(..., help="URL to monitor"),
     name: str = typer.Option("", "--name", "-n", help="Friendly name"),
     tags: str = typer.Option("", "--tags", "-t", help="Comma-separated tags"),
+    fetch_mode: str = typer.Option("http", "--fetch-mode", help="Fetch mode: http, browser, auto"),
+    fetch_config: str = typer.Option("", "--fetch-config", help="Fetch config as JSON"),
 ):
     """Add a website to monitor."""
     from web_listening.models import Site
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    if fetch_config:
+        try:
+            fetch_config_json = json.loads(fetch_config)
+        except json.JSONDecodeError as exc:
+            raise typer.BadParameter(f"Invalid JSON for --fetch-config: {exc.msg}") from exc
+    else:
+        fetch_config_json = {}
     storage = _get_storage()
-    site = storage.add_site(Site(url=url, name=name or url, tags=tag_list))
+    site = storage.add_site(
+        Site(
+            url=url,
+            name=name or url,
+            tags=tag_list,
+            fetch_mode=fetch_mode,
+            fetch_config_json=fetch_config_json,
+        )
+    )
     storage.close()
-    console.print(Panel(f"[green]Added site:[/green] [bold]{site.name}[/bold] (id={site.id})\n{site.url}"))
+    console.print(
+        Panel(
+            f"[green]Added site:[/green] [bold]{site.name}[/bold] (id={site.id})\n"
+            f"{site.url}\nmode={site.fetch_mode}"
+        )
+    )
 
 
 @app.command("list-sites")
@@ -45,6 +68,7 @@ def list_sites(all_sites: bool = typer.Option(False, "--all", help="Include inac
     table.add_column("ID", style="cyan")
     table.add_column("Name")
     table.add_column("URL", style="blue")
+    table.add_column("Fetch Mode")
     table.add_column("Tags")
     table.add_column("Last Checked")
     table.add_column("Active")
@@ -54,6 +78,7 @@ def list_sites(all_sites: bool = typer.Option(False, "--all", help="Include inac
             str(site.id),
             site.name,
             site.url,
+            site.fetch_mode,
             ", ".join(site.tags),
             str(site.last_checked_at)[:19] if site.last_checked_at else "-",
             "yes" if site.is_active else "no",
@@ -67,7 +92,7 @@ def check(
 ):
     """Check sites for changes."""
     from web_listening.blocks.crawler import Crawler
-    from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links
+    from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links, select_compare_text
     from web_listening.models import Change
 
     storage = _get_storage()
@@ -96,7 +121,18 @@ def check(
                     continue
 
                 # Check content change
-                has_changed, diff_snippet = compute_diff(old_snap.content_text, new_snap.content_text)
+                has_changed, diff_snippet = compute_diff(
+                    select_compare_text(
+                        fit_markdown=old_snap.fit_markdown,
+                        markdown=old_snap.markdown,
+                        content_text=old_snap.content_text,
+                    ),
+                    select_compare_text(
+                        fit_markdown=new_snap.fit_markdown,
+                        markdown=new_snap.markdown,
+                        content_text=new_snap.content_text,
+                    ),
+                )
                 if has_changed:
                     change = storage.add_change(Change(
                         site_id=site.id,

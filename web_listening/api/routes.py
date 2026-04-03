@@ -5,11 +5,12 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from web_listening.blocks.storage import Storage
+from web_listening.blocks.rescue import run_site_rescue
 from web_listening.config import settings
-from web_listening.models import AnalysisReport, Change, Document, Site
+from web_listening.models import AnalysisReport, Change, Document, Site, SiteSnapshot
 
 router = APIRouter()
 
@@ -35,7 +36,9 @@ def get_storage() -> Storage:
 class AddSiteRequest(BaseModel):
     url: str
     name: str = ""
-    tags: List[str] = []
+    tags: List[str] = Field(default_factory=list)
+    fetch_mode: str = "http"
+    fetch_config_json: dict = Field(default_factory=dict)
 
 
 class AnalyzeRequest(BaseModel):
@@ -45,6 +48,48 @@ class AnalyzeRequest(BaseModel):
 class DownloadDocsRequest(BaseModel):
     institution: str
     url: Optional[str] = None
+
+
+class UpdateDocumentContentRequest(BaseModel):
+    content_md: str
+    content_md_status: str = "converted"
+
+
+class RescueCheckRequest(BaseModel):
+    expected_min_words: int = 50
+    min_inventory_links: int = 5
+    allow_browser: bool = True
+    allow_official_feeds: bool = True
+    sitemap_url: Optional[str] = None
+    rss_url: Optional[str] = None
+    browser_fetch_config: dict = Field(default_factory=dict)
+
+
+class RescueAttemptResponse(BaseModel):
+    strategy: str
+    url: str
+    fetch_mode: str
+    status_code: Optional[int] = None
+    final_url: str = ""
+    request_user_agent: str = ""
+    word_count: int = 0
+    link_count: int = 0
+    source_kind: str = ""
+    passed: bool = False
+    reason: str = ""
+    head: str = ""
+    error: str = ""
+
+
+class RescueCheckResponse(BaseModel):
+    site_id: int
+    site_name: str
+    monitor_url: str
+    primary_strategy: str
+    resolved_strategy: str = ""
+    resolved: bool
+    attempts: List[RescueAttemptResponse]
+    winning_snapshot: Optional[SiteSnapshot] = None
 
 
 # ── Sites ───────────────────────────────────────────────────────────────────
@@ -63,7 +108,15 @@ def add_site(body: AddSiteRequest):
     _validate_url(body.url)
     storage = get_storage()
     try:
-        site = storage.add_site(Site(url=body.url, name=body.name or body.url, tags=body.tags))
+        site = storage.add_site(
+            Site(
+                url=body.url,
+                name=body.name or body.url,
+                tags=body.tags,
+                fetch_mode=body.fetch_mode,
+                fetch_config_json=body.fetch_config_json,
+            )
+        )
         return site
     finally:
         storage.close()
@@ -79,6 +132,77 @@ def get_site(site_id: int):
         return site
     finally:
         storage.close()
+
+
+@router.get("/sites/{site_id}/snapshots/latest", response_model=SiteSnapshot)
+def get_latest_snapshot(site_id: int):
+    storage = get_storage()
+    try:
+        site = storage.get_site(site_id)
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+        snapshot = storage.get_latest_snapshot(site_id)
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        return snapshot
+    finally:
+        storage.close()
+
+
+@router.post("/sites/{site_id}/rescue-check", response_model=RescueCheckResponse)
+def rescue_check_site(site_id: int, body: RescueCheckRequest):
+    if body.sitemap_url is not None:
+        _validate_url(body.sitemap_url)
+    if body.rss_url is not None:
+        _validate_url(body.rss_url)
+
+    storage = get_storage()
+    try:
+        site = storage.get_site(site_id)
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+    finally:
+        storage.close()
+
+    result = run_site_rescue(
+        site,
+        expected_min_words=body.expected_min_words,
+        min_inventory_links=body.min_inventory_links,
+        allow_browser=body.allow_browser,
+        allow_official_feeds=body.allow_official_feeds,
+        sitemap_url=body.sitemap_url,
+        rss_url=body.rss_url,
+        browser_fetch_config=body.browser_fetch_config,
+    )
+    attempts = [
+        RescueAttemptResponse(
+            strategy=attempt.strategy,
+            url=attempt.url,
+            fetch_mode=attempt.fetch_mode,
+            status_code=attempt.status_code,
+            final_url=attempt.final_url,
+            request_user_agent=attempt.request_user_agent,
+            word_count=attempt.word_count,
+            link_count=attempt.link_count,
+            source_kind=attempt.source_kind,
+            passed=attempt.passed,
+            reason=attempt.reason,
+            head=attempt.head,
+            error=attempt.error,
+        )
+        for attempt in result.attempts
+    ]
+    winning_attempt = result.winning_attempt
+    return RescueCheckResponse(
+        site_id=site.id,
+        site_name=site.name,
+        monitor_url=site.url,
+        primary_strategy=result.primary_strategy,
+        resolved_strategy=result.resolved_strategy,
+        resolved=result.resolved,
+        attempts=attempts,
+        winning_snapshot=winning_attempt.snapshot if winning_attempt is not None else None,
+    )
 
 
 @router.delete("/sites/{site_id}", status_code=204)
@@ -107,7 +231,7 @@ def check_site(site_id: int, background_tasks: BackgroundTasks):
 
 def _do_check(site_id: int):
     from web_listening.blocks.crawler import Crawler
-    from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links
+    from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links, select_compare_text
     from web_listening.models import Change
 
     storage = get_storage()
@@ -122,7 +246,18 @@ def _do_check(site_id: int):
             old_snap = storage.get_latest_snapshot(site.id)
 
             if old_snap:
-                has_changed, diff_snippet = compute_diff(old_snap.content_text, new_snap.content_text)
+                has_changed, diff_snippet = compute_diff(
+                    select_compare_text(
+                        fit_markdown=old_snap.fit_markdown,
+                        markdown=old_snap.markdown,
+                        content_text=old_snap.content_text,
+                    ),
+                    select_compare_text(
+                        fit_markdown=new_snap.fit_markdown,
+                        markdown=new_snap.markdown,
+                        content_text=new_snap.content_text,
+                    ),
+                )
                 if has_changed:
                     storage.add_change(Change(
                         site_id=site.id,
@@ -182,6 +317,22 @@ def list_documents(institution: Optional[str] = None, site_id: Optional[int] = N
     storage = get_storage()
     try:
         return storage.list_documents(site_id=site_id, institution=institution)
+    finally:
+        storage.close()
+
+
+@router.patch("/documents/{document_id}/content", response_model=Document)
+def update_document_content(document_id: int, body: UpdateDocumentContentRequest):
+    storage = get_storage()
+    try:
+        document = storage.update_document_content_md(
+            document_id,
+            content_md=body.content_md,
+            content_md_status=body.content_md_status,
+        )
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return document
     finally:
         storage.close()
 

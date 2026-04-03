@@ -1,0 +1,35 @@
+[
+  {
+    "site_key": "soa",
+    "site_name": "SOA",
+    "base_url": "https://www.soa.org/",
+    "monitor_url": "https://www.soa.org/",
+    "document_url": "https://www.soa.org/publications/publications-landing/",
+    "expected_min_doc_links": 1,
+    "expected_min_monitor_words": 150,
+    "expected_min_document_words": 150,
+    "sample_download_limit": 1
+  },
+  {
+    "site_key": "cas",
+    "site_name": "CAS",
+    "base_url": "https://www.casact.org/",
+    "monitor_url": "https://www.casact.org/",
+    "document_url": "https://www.casact.org/about/governance/annual-reports",
+    "expected_min_doc_links": 5,
+    "expected_min_monitor_words": 150,
+    "expected_min_document_words": 50,
+    "sample_download_limit": 1
+  },
+  {
+    "site_key": "iaa",
+    "site_name": "IAA",
+    "base_url": "https://actuaries.org/",
+    "monitor_url": "https://actuaries.org/",
+    "document_url": "https://actuaries.org/annual-reports/",
+    "expected_min_doc_links": 5,
+    "expected_min_monitor_words": 150,
+    "expected_min_document_words": 80,
+    "sample_download_limit": 1
+  }
+]

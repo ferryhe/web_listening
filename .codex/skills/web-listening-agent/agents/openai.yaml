@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web Listening Agent"
+  short_description: "Operate and extend web-listening"
+  default_prompt: "Use $web-listening-agent to operate or extend the web_listening monitoring stack."

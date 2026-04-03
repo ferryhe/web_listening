@@ -1,5 +1,4 @@
 import pytest
-from pathlib import Path
 from datetime import datetime, timezone
 
 from web_listening.blocks.storage import Storage
@@ -15,17 +14,27 @@ def storage(tmp_path):
 
 
 def test_add_and_get_site(storage):
-    site = Site(url="https://example.com", name="Example", tags=["news"])
+    site = Site(
+        url="https://example.com",
+        name="Example",
+        tags=["news"],
+        fetch_mode="browser",
+        fetch_config_json={"wait_for": "#main"},
+    )
     saved = storage.add_site(site)
     assert saved.id is not None
     assert saved.url == "https://example.com"
     assert saved.name == "Example"
     assert "news" in saved.tags
+    assert saved.fetch_mode == "browser"
+    assert saved.fetch_config_json["wait_for"] == "#main"
 
     retrieved = storage.get_site(saved.id)
     assert retrieved is not None
     assert retrieved.id == saved.id
     assert retrieved.url == saved.url
+    assert retrieved.fetch_mode == "browser"
+    assert retrieved.fetch_config_json["wait_for"] == "#main"
 
 
 def test_get_site_not_found(storage):
@@ -55,16 +64,30 @@ def test_add_and_get_snapshot(storage):
         site_id=site.id,
         captured_at=datetime.now(timezone.utc),
         content_hash="abc123",
+        raw_html="<html><body><h1>Hello world</h1></body></html>",
+        cleaned_html="<body><h1>Hello world</h1></body>",
         content_text="Hello world",
+        markdown="# Hello world",
+        fit_markdown="# Hello world",
+        metadata_json={"word_count": 2},
+        fetch_mode="http",
+        final_url="https://example.com/final",
+        status_code=200,
         links=["https://example.com/page1"],
     )
     saved = storage.add_snapshot(snap)
     assert saved.id is not None
     assert saved.content_hash == "abc123"
+    assert saved.markdown == "# Hello world"
+    assert saved.metadata_json["word_count"] == 2
 
     latest = storage.get_latest_snapshot(site.id)
     assert latest is not None
     assert latest.content_hash == "abc123"
+    assert latest.cleaned_html == "<body><h1>Hello world</h1></body>"
+    assert latest.fit_markdown == "# Hello world"
+    assert latest.final_url == "https://example.com/final"
+    assert latest.status_code == 200
     assert "https://example.com/page1" in latest.links
 
 
@@ -127,17 +150,46 @@ def test_add_and_list_documents(storage):
         page_url="https://example.com/reports",
         doc_type="pdf",
         content_md="# Annual Report",
+        content_md_status="converted",
+        content_md_updated_at=datetime.now(timezone.utc),
     )
     saved = storage.add_document(doc)
     assert saved.id is not None
     assert saved.title == "Annual Report"
+    assert saved.content_md_status == "converted"
 
     docs = storage.list_documents(site_id=site.id)
     assert len(docs) == 1
+    assert docs[0].content_md_status == "converted"
     docs_by_inst = storage.list_documents(institution="ExampleOrg")
     assert len(docs_by_inst) == 1
     docs_other = storage.list_documents(institution="Other")
     assert len(docs_other) == 0
+
+
+def test_update_document_content_md(storage):
+    site = storage.add_site(Site(url="https://example.com", name="Test"))
+    doc = storage.add_document(
+        Document(
+            site_id=site.id,
+            title="Annual Report",
+            url="https://example.com/report.pdf",
+            download_url="https://example.com/report.pdf",
+            institution="ExampleOrg",
+            doc_type="pdf",
+        )
+    )
+
+    updated = storage.update_document_content_md(
+        doc.id,
+        content_md="# Annual Report\n\nConverted",
+        content_md_status="converted",
+    )
+
+    assert updated is not None
+    assert updated.content_md.startswith("# Annual Report")
+    assert updated.content_md_status == "converted"
+    assert updated.content_md_updated_at is not None
 
 
 def test_add_and_list_analyses(storage):

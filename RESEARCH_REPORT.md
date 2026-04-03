@@ -19,7 +19,8 @@
 4. [关键技术点分析](#4-关键技术点分析)
 5. [本项目（web_listening）方案分析](#5-本项目-web_listening-方案分析)
 6. [借鉴与创新点总结](#6-借鉴与创新点总结)
-7. [参考资料](#7-参考资料)
+7. [2026-04 补充观察与下一步开发计划](#7-2026-04-补充观察与下一步开发计划)
+8. [参考资料](#8-参考资料)
 
 ---
 
@@ -507,7 +508,259 @@ web_listening/
 
 ---
 
-## 7. 参考资料
+## 7. 2026-04 补充观察与下一步开发计划
+
+> 补充日期：2026-04-03  
+> 说明：以下判断结合截至 2026-04-03 的官方文档与当前项目代码现状，重点关注“更适合 AI agent 使用”的 Web Listening 形态。
+
+### 7.1 当前更流行的 Web Listening 方式
+
+过去一个月里，主流方案已经明显从“抓网页 + 算 hash”演进到“给 LLM / Agent 提供可直接消费的数据层”：
+
+| 趋势 | 当前主流做法 | 对 `web_listening` 的启发 |
+|---|---|---|
+| **浏览器级抓取** | Playwright MCP 将浏览器操作能力通过 MCP 暴露给 AI 助手，支持结构化 accessibility snapshot、表单交互、登录态复用 | 不能只保留 `httpx` 抓取，必须补一层 browser driver |
+| **LLM-ready 内容归一化** | Firecrawl 直接输出 `markdown` / `html` / `json`，强调“Turn any url into clean data”；Crawl4AI 强调 `fit_markdown` 这类更适合模型消费的正文表示 | 快照主存储不应只有 `content_text`，还应增加 Markdown / 主体正文版本 |
+| **结构化变更检测** | Firecrawl `changeTracking` 在 Markdown 上比较，并支持 `git-diff` 与 `json` 两种 diff 模式 | 变化检测应从“全文 diff”升级到“字段级 / 规则级 / 结构化 diff” |
+| **事件驱动异步编排** | Firecrawl 通过 webhook 推送 `started` / `page` / `completed` / `failed` 事件，不再要求调用方持续轮询 | 现有 `BackgroundTasks` 适合 demo，但不足以成为 agent 基础设施 |
+| **MCP / Tool 化暴露** | Firecrawl、Playwright 都已把网页能力包装成 MCP tool；AI 助手按“工具调用”而不是“拼 REST 请求”来使用 | `web_listening` 应补 MCP server，而不止 REST API |
+
+### 7.2 当前项目与主流形态的核心差距
+
+对照现有实现，`web_listening` 已具备不错的基础，但与“agent-first”形态还差四层：
+
+1. **采集层偏静态**：`blocks/crawler.py` 当前是 `httpx + BeautifulSoup`，无法处理需要 JS 执行、点击展开、登录后访问的页面。
+2. **内容层偏文本**：`site_snapshots` 只存 `content_text`，没有 `markdown`、`fit_markdown`、页面元数据、渲染方式等 agent 更易消费的产物。
+3. **变化层偏全文**：`blocks/diff.py` 只有 hash + unified diff，没有 selector 规则、schema 抽取、字段级 diff、语义级变更判定。
+4. **接口层偏“给人写客户端”**：API 可以被程序调用，但还没有持久化 job、webhook、MCP tools、agent skill 这些“给 agent 用”的能力。
+
+### 7.3 目标形态：面向 AI Agent 的 Web Listening 2.0
+
+建议将后续架构收敛为五层：
+
+```text
+Acquisition Layer
+  ├── HTTP Fetch
+  └── Browser Fetch (Playwright)
+
+Normalization Layer
+  ├── raw_html
+  ├── cleaned_html
+  ├── markdown
+  └── fit_markdown / main_content
+
+Change Intelligence Layer
+  ├── text diff
+  ├── selector diff
+  ├── schema diff
+  └── semantic summary
+
+Orchestration Layer
+  ├── persistent jobs
+  ├── schedules
+  ├── retries
+  └── webhooks
+
+Agent Interface Layer
+  ├── REST API
+  ├── MCP Server
+  └── repo skill
+```
+
+其中最关键的设计原则有三条：
+
+- **先把内容变成 agent 易消费的格式，再做 AI 分析**。换句话说，先补 Markdown / 主体正文层，再继续堆摘要能力。
+- **所有长任务都要变成 job**。agent 需要稳定查询状态、拿到 artifact，而不是只拿到一条“queued”字符串。
+- **所有结论都要保留证据指针**。每条变化都应能回溯到 snapshot、document、URL、时间戳与 diff 片段。
+
+### 7.4 分阶段开发计划
+
+#### Phase 0：先把 agent 使用契约定下来（本轮最优先）
+
+目标：让未来 AI agent 有统一调用方法，而不是每次临时拼接口。
+
+具体工作：
+
+- 在仓库内维护一个 `web-listening-agent` skill，固定 agent 的操作顺序、当前能力边界和扩展优先级。
+- 明确 API 的标准返回形态，后续所有写操作统一返回 `job_id`、`status`、`accepted_at`。
+- 明确后续 artifact 命名：`snapshot_id`、`change_id`、`document_id`、`analysis_id`。
+- 为后续 MCP server 提前约束“最小可用工具集”。
+
+本轮已经建议并创建的产物：
+
+- 仓库内 skill：`.codex/skills/web-listening-agent`
+- 本节路线图：作为项目级执行参考
+
+#### Phase 1：补齐 LLM-ready 内容归一化层
+
+目标：让 `web_listening` 不只知道“页面变了”，还知道“该把什么内容交给 agent”。
+
+建议改动：
+
+- 新增 `blocks/normalizer.py`
+- 为 `SiteSnapshot` 增加以下字段：
+  - `raw_html`
+  - `cleaned_html`
+  - `markdown`
+  - `fit_markdown`
+  - `metadata_json`
+  - `fetch_mode`
+  - `final_url`
+  - `status_code`
+- 将默认 diff 基础从 `content_text` 迁移到 `markdown` 或 `fit_markdown`
+
+模块落点：
+
+- `web_listening/models.py`
+- `web_listening/blocks/storage.py`
+- `web_listening/blocks/crawler.py`
+- `tests/test_crawler.py`
+- `tests/test_storage.py`
+
+为什么这一阶段最重要：
+
+- 这是后续“结构化抽取”“语义 diff”“agent 阅读快照”的共同底座。
+- 也是与 Firecrawl / Crawl4AI 这一代产品差距最大的部分。
+
+#### Phase 2：新增 Browser / Playwright 抓取能力
+
+目标：覆盖 JS 渲染站点、折叠内容、点击后出现的文档链接，以及需要登录态的场景。
+
+建议改动：
+
+- 将 `Crawler` 改造成 driver 抽象：
+  - `HttpCrawler`
+  - `BrowserCrawler`
+- 新增可选 `playwright` 依赖，不强制所有用户安装
+- 为站点级配置增加：
+  - `fetch_mode=http|browser|auto`
+  - `wait_for`
+  - `browser_steps`
+  - `storage_state_path`
+- 支持抓取后的截图或 DOM 调试 artifact，便于 agent 回溯失败原因
+
+说明：
+
+- 这一层建议先做“无登录 + JS 渲染”版本，再逐步加入登录态与复杂步骤。
+- 不建议一开始就做浏览器集群或远程浏览器池，先把本地单机路径走通。
+
+#### Phase 3：从全文 diff 升级到规则化 / 结构化 diff
+
+目标：让系统回答的不只是“页面有变化”，而是“哪些字段有变化，变化是否重要”。
+
+建议改动：
+
+- 新增 `watch_rules` 概念，支持：
+  - `full_page`
+  - `css_selector`
+  - `xpath`
+  - `document_links`
+  - `json_schema_extract`
+  - `prompt_extract`
+- 新增 `blocks/extractor.py`
+- 新增结构化存储：
+  - `extraction_results`
+  - `change_payload_json`
+  - `severity`
+  - `evidence_snapshot_id`
+- 扩展 `change_type`：
+  - `content_changed`
+  - `field_changed`
+  - `document_added`
+  - `document_updated`
+  - `page_removed`
+  - `fetch_failed`
+
+这一步完成后，agent 才真正能把 `web_listening` 当成“外部感知器”，而不是“网页 diff 记录器”。
+
+#### Phase 4：把异步能力做成真正可编排的任务系统
+
+目标：让 API 成为可靠的 agent backend，而不是 FastAPI 的轻量后台任务包装。
+
+建议改动：
+
+- 新增 `jobs` 表，记录：
+  - `job_type`
+  - `status`
+  - `input_json`
+  - `result_json`
+  - `error_message`
+  - `created_at` / `started_at` / `finished_at`
+- 写接口返回 job，而不是只返回 `"check queued"`
+- 增加新接口：
+  - `GET /api/v1/jobs/{id}`
+  - `POST /api/v1/webhooks/subscriptions`
+  - `GET /api/v1/sites/{id}/latest-state`
+- 将调度器从“直接执行检查”改成“投递 job”
+
+为什么这一步对 AI agent 很关键：
+
+- agent 可以安全轮询
+- 也可以用 webhook / 事件流接收结果
+- 可以做失败重试、幂等控制、并行编排
+
+#### Phase 5：在稳定 REST 之上补 MCP Server
+
+目标：让 `web_listening` 被 Cursor、Claude、Codex 等支持 MCP 的 agent 直接当成工具使用。
+
+建议的第一版 MCP tools：
+
+- `add_site`
+- `list_sites`
+- `check_site`
+- `list_changes`
+- `download_documents`
+- `list_documents`
+- `run_analysis`
+- `get_latest_snapshot`
+- `get_site_state`
+
+建议的 MCP resources：
+
+- `site://{id}/latest`
+- `changes://recent`
+- `documents://site/{id}`
+- `analysis://latest`
+
+实施建议：
+
+- 不要绕过现有 building blocks 直接重写一套逻辑
+- MCP server 只做 tool/resource 暴露
+- 真正的执行仍复用 `storage.py`、`crawler.py`、`document.py`、`analyzer.py`
+
+### 7.5 建议的首个迭代 Backlog
+
+如果只排一个最现实、最容易成功的三周版本，建议顺序如下：
+
+1. 先扩展 `SiteSnapshot` 存储结构，补 `markdown` / `fit_markdown` / `metadata_json`
+2. 再把 `Crawler` 拆成 HTTP 与 Browser 两个 driver
+3. 给 API 增加 `jobs` 与 `GET /jobs/{id}`
+4. 引入 `watch_rules` 与 `extraction_results`
+5. 最后再补 MCP server
+
+不建议当前阶段优先做的事情：
+
+- Web UI
+- 分布式多节点爬取
+- 复杂多租户权限模型
+- 过早把 SQLite 替换成更重的数据库
+
+### 7.6 对“让 API 更适合以后 AI agent 使用”的直接结论
+
+如果只保留一句最核心的策略，那就是：
+
+> **把 `web_listening` 从“网页变化检测 API”升级成“可回溯、可编排、可工具化调用的内容感知层”。**
+
+这意味着后续每个功能都要优先回答四个问题：
+
+1. agent 能不能直接消费这个输出，而不用二次清洗？
+2. 这个任务是不是有稳定的 `job_id` 和状态流转？
+3. 这个结果能不能回溯到原始证据？
+4. 这项能力将来能不能自然映射成 MCP tool 或 resource？
+
+---
+
+## 8. 参考资料
 
 | 项目 | 链接 |
 |---|---|
@@ -524,6 +777,13 @@ web_listening/
 | pymupdf | https://pymupdf.readthedocs.io/ |
 | FastAPI | https://fastapi.tiangolo.com/ |
 | Typer | https://typer.tiangolo.com/ |
+| Firecrawl Scrape | https://docs.firecrawl.dev/features/scrape |
+| Firecrawl Change Tracking | https://docs.firecrawl.dev/features/change-tracking |
+| Firecrawl Webhooks | https://docs.firecrawl.dev/webhooks/overview |
+| Firecrawl Developers & MCP | https://docs.firecrawl.dev/use-cases/developers-mcp |
+| Playwright MCP | https://playwright.dev/docs/next/getting-started-mcp |
+| Crawl4AI Markdown Generation | https://docs.crawl4ai.com/core/markdown-generation/ |
+| Model Context Protocol | https://modelcontextprotocol.io/ |
 
 ---
 

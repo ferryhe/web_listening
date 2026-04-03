@@ -104,10 +104,11 @@ Reference commit:
 - Added `POST /api/v1/sites/{id}/rescue-check` so AI agents can request a rescue evaluation and receive the winning normalized snapshot without changing the stored monitoring baseline.
 - Refactored `tools/run_agent_rescue_validation.py` to reuse the same core ladder instead of maintaining a duplicate script-only implementation.
 - Added local tests for the rescue endpoint and smoke outcome handling.
+- Tightened rescue correctness so returned snapshots keep the real `site_id`, and browser rescue now defaults to a browser user-agent profile instead of the bot UA.
 
 ## Current state
 
-- Tests passing: `70`
+- Tests passing: `72`
 - Validation command: `.venv\Scripts\python -m pytest tests -q`
 - Local validation environment: project-local `.venv`
 - Required live targets: `SOA`, `CAS`, `IAA`

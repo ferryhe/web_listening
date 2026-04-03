@@ -84,8 +84,7 @@ def build_default_site_rescue_candidates(
                 strategy="browser",
                 url=site.url,
                 fetch_mode="browser",
-                fetch_config_json=browser_fetch_config
-                or {"wait_until": "domcontentloaded", "extra_wait_ms": 1000},
+                fetch_config_json=_resolve_browser_fetch_config(browser_fetch_config),
             )
         )
 
@@ -161,6 +160,7 @@ def run_rescue_candidates(
     candidates: list[RescueCandidate],
     expected_min_words: int = 50,
     min_inventory_links: int = 5,
+    site_id: Optional[int] = None,
 ) -> RescueResult:
     attempts: list[RescueAttempt] = []
     resolved = False
@@ -171,7 +171,7 @@ def run_rescue_candidates(
             try:
                 snapshot = crawler.snapshot(
                     Site(
-                        id=index,
+                        id=site_id if site_id is not None else index,
                         url=candidate.url,
                         name=label,
                         fetch_mode=candidate.fetch_mode,
@@ -273,9 +273,21 @@ def run_site_rescue(
         ),
         expected_min_words=expected_min_words,
         min_inventory_links=min_inventory_links,
+        site_id=site.id,
     )
 
 
 def _site_root_url(url: str) -> str:
     parts = urlsplit(url)
     return f"{parts.scheme}://{parts.netloc}/"
+
+
+def _resolve_browser_fetch_config(browser_fetch_config: Optional[dict]) -> dict:
+    config = {
+        "wait_until": "domcontentloaded",
+        "extra_wait_ms": 1000,
+        "user_agent_profile": "browser",
+    }
+    if browser_fetch_config:
+        config.update(browser_fetch_config)
+    return config

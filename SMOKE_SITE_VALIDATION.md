@@ -1,6 +1,6 @@
 ﻿# Smoke Site Catalog Report
 
-- Generated at: `2026-04-03T19:04:29.677836+00:00`
+- Generated at: `2026-04-03T19:15:00.701687+00:00`
 - Catalog path: `C:\Project\web_listening\config\smoke_site_catalog.json`
 - Sites checked: `37`
 - Required smoke targets passed: `24/24`
@@ -66,7 +66,7 @@
 - Primary link count: `0`
 - Final URL: `https://www.cgap.org/topics/collections/access-to-insurance-initiative`
 - Fetch mode: `browser`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Status code: `200`
 - Word count: `607` (expected minimum `100`)
 - Link count: `73`
@@ -268,7 +268,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Primary link count: `0`
 - Final URL: `https://www.oecd.org/`
 - Fetch mode: `browser`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Status code: `200`
 - Word count: `965` (expected minimum `100`)
 - Link count: `416`
@@ -468,16 +468,16 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Primary link count: `0`
 - Final URL: `https://www.weforum.org/`
 - Fetch mode: `browser`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Status code: `200`
 - Word count: `9185` (expected minimum `100`)
-- Link count: `131`
+- Link count: `130`
 - Source kind: `html`
 - Rescue ladder: `yes`
 - JS-heavy candidate: `no`
 - Attempts tried: `2`
 - Attempt `catalog` via `http`: status=`403` words=`0` links=`0` kind=`error` passed=`no` reason=`http_403`
-- Attempt `browser` via `browser`: status=`200` words=`9185` links=`131` kind=`html` passed=`yes` reason=`content_ok`
+- Attempt `browser` via `browser`: status=`200` words=`9185` links=`130` kind=`html` passed=`yes` reason=`content_ok`
 - Notes: `Homepage and tested section pages returned 403 from this environment on 2026-04-03.`
 
 ### World Bank
@@ -554,7 +554,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Primary link count: `0`
 - Final URL: `https://www.afdb.org/en`
 - Fetch mode: `browser`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Status code: `200`
 - Word count: `317` (expected minimum `100`)
 - Link count: `222`
@@ -637,7 +637,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Primary link count: `0`
 - Final URL: `https://www.caf.com/en/`
 - Fetch mode: `browser`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Status code: `200`
 - Word count: `1184` (expected minimum `100`)
 - Link count: `87`
@@ -1033,7 +1033,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Primary link count: `0`
 - Final URL: `https://wmo.int/`
 - Fetch mode: `browser`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Status code: `200`
 - Word count: `475` (expected minimum `100`)
 - Link count: `85`

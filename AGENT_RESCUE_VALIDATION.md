@@ -1,6 +1,6 @@
 ﻿# Agent Rescue Validation
 
-- Generated at: `2026-04-03T19:04:30.807889+00:00`
+- Generated at: `2026-04-03T19:15:00.741618+00:00`
 - Catalog path: `C:\Project\web_listening\config\smoke_site_catalog.json`
 - Sites checked: `37`
 - Sites resolved by catalog-or-agent strategy: `35/37`
@@ -78,7 +78,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Attempt `browser` via `browser`: status=`200` words=`607` links=`73` kind=`html` passed=`yes` reason=`content_ok`
 - Attempt URL: `https://a2ii.org/`
 - Final URL: `https://www.cgap.org/topics/collections/access-to-insurance-initiative`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Head: `Google Tag Manager (noscript) |  | End Google Tag Manager (noscript) |  | # Access to Insurance Initiative (A2ii) |  | - [About](https://www.cgap.org/topics/collections/access-to-insurance-initiative) | - [Innovation Lab](https://www.`
 - Notes: `Official URL was supplemented. Requests from this environment redirected to a CGAP collection and returned 403 on 2026-04-03.`
 
@@ -135,7 +135,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Attempt `browser` via `browser`: status=`403` words=`35` links=`2` kind=`html` passed=`no` reason=`blocked_interstitial`
 - Attempt URL: `https://www.issa.int/`
 - Final URL: `https://www.issa.int/`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Head: `![Icon for www.issa.int](https://www.issa.int/favicon.ico) |  | # www.issa.int |  | ## Performing security verification |  | This website uses a security service to protect against malicious bots. This page is displayed while the we`
 - Attempt `sitemap` via `http`: status=`403` words=`0` links=`0` kind=`error` passed=`no` reason=`http_403`
 - Attempt URL: `https://www.issa.int/sitemap.xml`
@@ -172,7 +172,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Attempt `browser` via `browser`: status=`200` words=`965` links=`416` kind=`html` passed=`yes` reason=`content_ok`
 - Attempt URL: `https://www.oecd.org/`
 - Final URL: `https://www.oecd.org/`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Head: `# OECD |  | ## Top stories |  | [View all press releases](https://www.oecd.org/en/about/newsroom.html) |  | INTERIM ECONOMIC OUTLOOK |  | [The conflict in the Middle East is testing the resilience of the global economy](https://www.oecd`
 - Notes: `Homepage and publications pages returned 403 from this environment on 2026-04-03.`
 
@@ -220,8 +220,8 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Attempt `browser` via `browser`: status=`403` words=`15` links=`0` kind=`html` passed=`no` reason=`blocked_interstitial`
 - Attempt URL: `https://www.undp.org`
 - Final URL: `https://www.undp.org/`
-- Request user agent: `web-listening-bot/1.0`
-- Head: `# Access Denied |  | You don't have permission to access "http://www.undp.org/" on this server. |  | Reference #18.e21df17.1775243037.69a4407 |  | https://errors.edgesuite.net/18.e21df17.1775243037.69a4407`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
+- Head: `# Access Denied |  | You don't have permission to access "http://www.undp.org/" on this server. |  | Reference #18.9ec44543.1775243669.186d276 |  | https://errors.edgesuite.net/18.9ec44543.1775243669.186d276`
 - Attempt `sitemap` via `http`: status=`200` words=`14` links=`7` kind=`xml_sitemap` passed=`yes` reason=`sitemap_inventory`
 - Attempt URL: `https://www.undp.org/sitemap.xml`
 - Final URL: `https://www.undp.org/sitemap.xml`
@@ -261,7 +261,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Attempt `browser` via `browser`: status=`200` words=`9185` links=`131` kind=`html` passed=`yes` reason=`content_ok`
 - Attempt URL: `https://www.weforum.org`
 - Final URL: `https://www.weforum.org/`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Head: `![logo](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAC4AAAAuCAYAAABXuSs3AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAdMSURBVGhD7ZdrcFXVFce3JhFM7vueewlJSCJEbMNDIKKiMmEMEsi9ASJGqa+gqEBQRsH4JEaFe/`
 - Notes: `Homepage and tested section pages returned 403 from this environment on 2026-04-03.`
 
@@ -299,7 +299,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Attempt `browser` via `browser`: status=`200` words=`317` links=`222` kind=`html` passed=`yes` reason=`content_ok`
 - Attempt URL: `https://www.afdb.org/en`
 - Final URL: `https://www.afdb.org/en`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Head: `[![Africa's Economic Resilience Holds Firm Amid Global Headwinds, Says New AfDB Report](https://www.afdb.org/sites/default/files/a1-2026-meo-launch-photo_0.jpg)](https://www.afdb.org/en/news-and-events/press-releases/afr`
 - Notes: `Homepage and news page returned 403 from this environment on 2026-04-03.`
 
@@ -334,7 +334,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Attempt `browser` via `browser`: status=`200` words=`1184` links=`87` kind=`html` passed=`yes` reason=`content_ok`
 - Attempt URL: `https://www.caf.com/en/`
 - Final URL: `https://www.caf.com/en/`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Head: `![Previous slide](https://www.caf.com/css/design-2024/images/svg/chevron-left.svg) |  | ![Next slide](https://www.caf.com/css/design-2024/images/svg/chevron-right.svg) |  | ### [CAF Approves St. Vincent and the Grenadines as New`
 - Notes: `Homepage currently fails certificate validation from this environment.`
 
@@ -474,12 +474,12 @@ Call log:
 - Attempt URL: `https://unfccc.int/news`
 - Final URL: `https://unfccc.int/news`
 - Request user agent: `web-listening-bot/1.0`
-- Head: `Request unsuccessful. Incapsula incident ID: 575000201446846062-1272774242076656942`
+- Head: `Request unsuccessful. Incapsula incident ID: 575000201446999431-780219863493707049`
 - Attempt `browser` via `browser`: status=`200` words=`6` links=`0` kind=`html` passed=`no` reason=`blocked_interstitial`
 - Attempt URL: `https://unfccc.int/news`
 - Final URL: `https://unfccc.int/news`
-- Request user agent: `web-listening-bot/1.0`
-- Head: `Request unsuccessful. Incapsula incident ID: 575000201446846062-695991989996291368`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
+- Head: `Request unsuccessful. Incapsula incident ID: 575000201446999431-1899582181571757365`
 - Attempt `sitemap` via `http`: status=`200` words=`88` links=`44` kind=`xml_sitemap` passed=`yes` reason=`sitemap_inventory`
 - Attempt URL: `https://unfccc.int/sitemap.xml`
 - Final URL: `https://unfccc.int/sitemap.xml`
@@ -510,7 +510,7 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 - Attempt `browser` via `browser`: status=`200` words=`475` links=`85` kind=`html` passed=`yes` reason=`content_ok`
 - Attempt URL: `https://wmo.int/`
 - Final URL: `https://wmo.int/`
-- Request user agent: `web-listening-bot/1.0`
+- Request user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36`
 - Head: `Let us ensure that Earth information is not only collected — but also understood, accessible, and actionable for all. |  | Celeste Saulo, WMO Secretary-General |  | [Publication State of the Global Climate 2025![Numerous small b`
 - Notes: `Homepage and news page returned 403 from this environment on 2026-04-03.`
 

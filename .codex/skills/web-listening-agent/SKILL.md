@@ -18,6 +18,7 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 5. Prefer the REST API for agent-facing usage; fall back to the CLI when the API server is not running.
 6. Keep the building-block split intact: crawling, diffing, storage, document download, analysis, and scheduling should remain composable.
 7. Before closing crawler or download changes, run the required live dev targets through `tools/validate_real_sites.py` and `tools/run_dev_regression.py`.
+8. When a task starts from a spreadsheet or site list, treat the raw input as local-only and convert it into a curated tracked catalog before wiring it into smoke or regression scripts.
 
 ## Current Usage Pattern
 
@@ -53,3 +54,5 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 - Read `references/agent-roadmap.md` for the target architecture and implementation order.
 - Read `references/interface-strategy.md` for the protocol and compatibility decisions.
 - Read `DEV_TEST_TARGETS.md` for the required live targets, regression matrix, and SHA-256 policy.
+- Read `SMOKE_SITE_MANAGEMENT.md` for list-driven smoke monitoring and catalog management.
+- Read `SMOKE_SITE_VALIDATION.md` for the current supranational smoke baseline before changing the catalog.

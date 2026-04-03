@@ -67,19 +67,32 @@ Reference commit:
 
 - `e379f84` `Harden dev-target regression and hashing`
 
+### 7. List-driven smoke catalog groundwork
+
+- Added site-level HTTP user-agent overrides so selected targets can use a browser-like UA without changing the global default.
+- Added `config/smoke_site_catalog.json` as the tracked curated smoke target list for the current supranational organization spreadsheet.
+- Added `web_listening/smoke_sites.py` and `tools/run_smoke_site_catalog.py` so larger site lists can be validated without hardcoding spreadsheet logic into the runner.
+- Added `SMOKE_SITE_MANAGEMENT.md` to document how raw ignored inputs should flow into tracked monitor targets.
+- Recorded the first smoke validation baseline in `SMOKE_SITE_VALIDATION.md`.
+
 ## Current state
 
-- Tests passing: `49`
+- Tests passing: `53`
 - Validation command: `.venv\Scripts\python -m pytest tests -q`
 - Local validation environment: project-local `.venv`
 - Required live targets: `SOA`, `CAS`, `IAA`
 - Required live validation commands:
   - `.venv\Scripts\python tools\validate_real_sites.py`
   - `.venv\Scripts\python tools\run_dev_regression.py`
+  - `.venv\Scripts\python tools\run_smoke_site_catalog.py --report-only`
 - Live regression fallback:
   - `.venv\Scripts\python tools\run_dev_regression.py --report-only`
 - Live regression policy doc:
   - `DEV_TEST_TARGETS.md`
+- List-driven smoke policy doc:
+  - `SMOKE_SITE_MANAGEMENT.md`
+- List-driven smoke baseline report:
+  - `SMOKE_SITE_VALIDATION.md`
 
 ## Key decisions still in force
 

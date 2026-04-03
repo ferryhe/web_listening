@@ -64,7 +64,10 @@ All settings can be overridden via environment variables (prefix `WL_`) or a `.e
 Site-level acquisition options are stored per site:
 
 - `fetch_mode`: `http`, `browser`, or `auto`
-- `fetch_config_json`: optional hints such as `wait_for`, `wait_until`, or `timeout_ms`
+- `fetch_config_json`: optional hints such as `wait_for`, `wait_until`, `timeout_ms`, `user_agent`, `user_agent_profile`, or request `headers`
+
+For larger monitored lists, keep raw upstream spreadsheets in a git-ignored local folder such as `input/` or `list/`, then promote the curated monitor targets into tracked config.
+The current curated smoke list lives in `config/smoke_site_catalog.json`.
 
 ## CLI Usage
 
@@ -317,12 +320,14 @@ pytest tests/ -v
 Required live development targets are `SOA`, `CAS`, and `IAA` (`actuaries.org`).
 The canonical target list and thresholds live in `config/dev_test_sites.json`.
 See `DEV_TEST_TARGETS.md` for the current live regression matrix and SHA-256 policy.
+For larger list-driven monitoring, see `SMOKE_SITE_MANAGEMENT.md` and `config/smoke_site_catalog.json`.
 
 Recommended live validation commands:
 
 ```powershell
 .venv\Scripts\python tools\validate_real_sites.py
 .venv\Scripts\python tools\run_dev_regression.py
+.venv\Scripts\python tools\run_smoke_site_catalog.py --report-only
 ```
 
 `tools/run_dev_regression.py` now fails on live regressions by default.

@@ -45,11 +45,41 @@ Reference commit:
 
 - `e193124` `Prefer main content in HTML normalization`
 
+### 5. Required live dev-site regression
+
+- Added canonical required development targets for `SOA`, `CAS`, and `IAA`.
+- Added `config/dev_test_sites.json` as the single source of truth for live regression targets.
+- Added a live validation script and a live regression script that cover monitoring, hash stability, document discovery, and sample downloads.
+- Tightened content hashing so whitespace-only differences do not create noisy SHA-256 changes.
+
+Reference commit:
+
+- `b85f024` `Add required dev-site regression scripts`
+
+### 6. Dev-target validation and SHA strategy
+
+- Added `web_listening/dev_targets.py` so scripts and tests validate the required target set instead of trusting ad-hoc JSON shape.
+- Added minimum word-count thresholds per live target to catch empty or broken extractions earlier.
+- Added repeat-download SHA-256 checks so sample downloads prove both byte stability and blob-path reuse.
+- Added snapshot hash metadata so reports now show the hash basis and normalization strategy.
+
+Reference commit:
+
+- `e379f84` `Harden dev-target regression and hashing`
+
 ## Current state
 
-- Tests passing: `43`
+- Tests passing: `49`
 - Validation command: `.venv\Scripts\python -m pytest tests -q`
 - Local validation environment: project-local `.venv`
+- Required live targets: `SOA`, `CAS`, `IAA`
+- Required live validation commands:
+  - `.venv\Scripts\python tools\validate_real_sites.py`
+  - `.venv\Scripts\python tools\run_dev_regression.py`
+- Live regression fallback:
+  - `.venv\Scripts\python tools\run_dev_regression.py --report-only`
+- Live regression policy doc:
+  - `DEV_TEST_TARGETS.md`
 
 ## Key decisions still in force
 

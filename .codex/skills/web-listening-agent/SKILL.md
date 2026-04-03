@@ -17,6 +17,7 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 4. Read `references/interface-strategy.md` before changing how agents or traditional programs call the system.
 5. Prefer the REST API for agent-facing usage; fall back to the CLI when the API server is not running.
 6. Keep the building-block split intact: crawling, diffing, storage, document download, analysis, and scheduling should remain composable.
+7. Before closing crawler or download changes, run the required live dev targets through `tools/validate_real_sites.py` and `tools/run_dev_regression.py`.
 
 ## Current Usage Pattern
 
@@ -36,6 +37,7 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 - Add structured extraction and field-level diff before adding more delivery channels.
 - Add persistent jobs and webhooks before scaling out scheduling.
 - Add an MCP server only after the REST and storage contracts are stable.
+- Keep the required live dev targets (`SOA`, `CAS`, `IAA`) in the regression loop while evolving the crawler and download logic.
 
 ## Guardrails
 
@@ -50,3 +52,4 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 - Read `references/current-api.md` for current capabilities and gaps.
 - Read `references/agent-roadmap.md` for the target architecture and implementation order.
 - Read `references/interface-strategy.md` for the protocol and compatibility decisions.
+- Read `DEV_TEST_TARGETS.md` for the required live targets, regression matrix, and SHA-256 policy.

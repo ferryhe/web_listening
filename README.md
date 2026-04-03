@@ -314,6 +314,20 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
+Required live development targets are `SOA`, `CAS`, and `IAA` (`actuaries.org`).
+The canonical target list and thresholds live in `config/dev_test_sites.json`.
+See `DEV_TEST_TARGETS.md` for the current live regression matrix and SHA-256 policy.
+
+Recommended live validation commands:
+
+```powershell
+.venv\Scripts\python tools\validate_real_sites.py
+.venv\Scripts\python tools\run_dev_regression.py
+```
+
+`tools/run_dev_regression.py` now fails on live regressions by default.
+Use `--report-only` if you only want the Markdown report without a failing exit code.
+
 ## Architecture
 
 ```

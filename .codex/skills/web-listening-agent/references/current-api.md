@@ -10,6 +10,7 @@
 - `web_listening/blocks/storage.py`: SQLite storage for sites, snapshots, changes, documents, blobs, and analyses.
 - `web_listening/blocks/analyzer.py`: weekly Markdown summary via OpenAI or local fallback.
 - `web_listening/blocks/scheduler.py`: APScheduler-based periodic execution.
+- `web_listening/dev_targets.py`: required live development target validation for `SOA`, `CAS`, and `IAA`.
 
 ## Implemented REST endpoints
 
@@ -50,3 +51,16 @@
 - Keep document conversion outside this repo; use `content_md` and its status fields as handoff fields.
 - Treat browser support as optional capability rather than a required install.
 - Reuse existing blocks when adding new interfaces; do not duplicate core crawling or storage logic.
+
+## Required live dev targets
+
+Every live development validation should include the required default target set:
+
+- `SOA`
+- `CAS`
+- `IAA`
+
+The canonical definition lives in `config/dev_test_sites.json`.
+Use `tools/validate_real_sites.py` and `tools/run_dev_regression.py` to exercise them.
+`tools/run_dev_regression.py` fails on regression issues by default; use `--report-only` only when you need a non-failing report.
+Use `DEV_TEST_TARGETS.md` for the current baseline expectations and SHA-256 rules.

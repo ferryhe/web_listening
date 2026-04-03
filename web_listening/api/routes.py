@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
-from web_listening.models import AnalysisReport, Change, Document, Site
+from web_listening.models import AnalysisReport, Change, Document, Site, SiteSnapshot
 
 router = APIRouter()
 
@@ -81,6 +81,21 @@ def get_site(site_id: int):
         storage.close()
 
 
+@router.get("/sites/{site_id}/snapshots/latest", response_model=SiteSnapshot)
+def get_latest_snapshot(site_id: int):
+    storage = get_storage()
+    try:
+        site = storage.get_site(site_id)
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+        snapshot = storage.get_latest_snapshot(site_id)
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        return snapshot
+    finally:
+        storage.close()
+
+
 @router.delete("/sites/{site_id}", status_code=204)
 def deactivate_site(site_id: int):
     storage = get_storage()
@@ -107,7 +122,7 @@ def check_site(site_id: int, background_tasks: BackgroundTasks):
 
 def _do_check(site_id: int):
     from web_listening.blocks.crawler import Crawler
-    from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links
+    from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links, select_compare_text
     from web_listening.models import Change
 
     storage = get_storage()
@@ -122,7 +137,18 @@ def _do_check(site_id: int):
             old_snap = storage.get_latest_snapshot(site.id)
 
             if old_snap:
-                has_changed, diff_snippet = compute_diff(old_snap.content_text, new_snap.content_text)
+                has_changed, diff_snippet = compute_diff(
+                    select_compare_text(
+                        fit_markdown=old_snap.fit_markdown,
+                        markdown=old_snap.markdown,
+                        content_text=old_snap.content_text,
+                    ),
+                    select_compare_text(
+                        fit_markdown=new_snap.fit_markdown,
+                        markdown=new_snap.markdown,
+                        content_text=new_snap.content_text,
+                    ),
+                )
                 if has_changed:
                     storage.add_change(Change(
                         site_id=site.id,

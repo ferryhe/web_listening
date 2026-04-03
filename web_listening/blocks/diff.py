@@ -8,6 +8,11 @@ def compute_hash(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def select_compare_text(*, fit_markdown: str = "", markdown: str = "", content_text: str = "") -> str:
+    """Pick the most agent-friendly representation available for comparisons."""
+    return (fit_markdown or "").strip() or (markdown or "").strip() or content_text
+
+
 def compute_diff(old: str, new: str) -> Tuple[bool, str]:
     """Returns (has_changed, diff_snippet)."""
     if compute_hash(old) == compute_hash(new):

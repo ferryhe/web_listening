@@ -42,7 +42,15 @@ class Storage:
                 site_id INTEGER NOT NULL,
                 captured_at TEXT,
                 content_hash TEXT NOT NULL,
+                raw_html TEXT DEFAULT '',
+                cleaned_html TEXT DEFAULT '',
                 content_text TEXT DEFAULT '',
+                markdown TEXT DEFAULT '',
+                fit_markdown TEXT DEFAULT '',
+                metadata_json TEXT DEFAULT '{}',
+                fetch_mode TEXT DEFAULT 'http',
+                final_url TEXT DEFAULT '',
+                status_code INTEGER,
                 links TEXT DEFAULT '[]',
                 FOREIGN KEY (site_id) REFERENCES sites(id)
             );
@@ -75,6 +83,8 @@ class Storage:
                 etag TEXT DEFAULT '',
                 last_modified TEXT DEFAULT '',
                 content_md TEXT DEFAULT '',
+                content_md_status TEXT DEFAULT 'pending',
+                content_md_updated_at TEXT,
                 FOREIGN KEY (site_id) REFERENCES sites(id)
             );
 
@@ -97,11 +107,21 @@ class Storage:
                 change_count INTEGER DEFAULT 0
             );
         """)
+        self._ensure_column("site_snapshots", "raw_html", "TEXT DEFAULT ''")
+        self._ensure_column("site_snapshots", "cleaned_html", "TEXT DEFAULT ''")
+        self._ensure_column("site_snapshots", "markdown", "TEXT DEFAULT ''")
+        self._ensure_column("site_snapshots", "fit_markdown", "TEXT DEFAULT ''")
+        self._ensure_column("site_snapshots", "metadata_json", "TEXT DEFAULT '{}'")
+        self._ensure_column("site_snapshots", "fetch_mode", "TEXT DEFAULT 'http'")
+        self._ensure_column("site_snapshots", "final_url", "TEXT DEFAULT ''")
+        self._ensure_column("site_snapshots", "status_code", "INTEGER")
         self._ensure_column("documents", "sha256", "TEXT DEFAULT ''")
         self._ensure_column("documents", "file_size", "INTEGER")
         self._ensure_column("documents", "content_type", "TEXT DEFAULT ''")
         self._ensure_column("documents", "etag", "TEXT DEFAULT ''")
         self._ensure_column("documents", "last_modified", "TEXT DEFAULT ''")
+        self._ensure_column("documents", "content_md_status", "TEXT DEFAULT 'pending'")
+        self._ensure_column("documents", "content_md_updated_at", "TEXT")
         self.conn.commit()
 
     def _ensure_column(self, table_name: str, column_name: str, column_sql: str):
@@ -179,12 +199,23 @@ class Storage:
     def add_snapshot(self, snapshot: SiteSnapshot) -> SiteSnapshot:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.execute(
-            "INSERT INTO site_snapshots (site_id, captured_at, content_hash, content_text, links) VALUES (?,?,?,?,?)",
+            """INSERT INTO site_snapshots (
+                   site_id, captured_at, content_hash, raw_html, cleaned_html, content_text,
+                   markdown, fit_markdown, metadata_json, fetch_mode, final_url, status_code, links
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 snapshot.site_id,
                 snapshot.captured_at.isoformat() if snapshot.captured_at else now,
                 snapshot.content_hash,
+                snapshot.raw_html,
+                snapshot.cleaned_html,
                 snapshot.content_text,
+                snapshot.markdown,
+                snapshot.fit_markdown,
+                json.dumps(snapshot.metadata_json),
+                snapshot.fetch_mode,
+                snapshot.final_url,
+                snapshot.status_code,
                 json.dumps(snapshot.links),
             ),
         )
@@ -192,14 +223,7 @@ class Storage:
         row = self.conn.execute(
             "SELECT * FROM site_snapshots WHERE id=?", (cur.lastrowid,)
         ).fetchone()
-        return SiteSnapshot(
-            id=row["id"],
-            site_id=row["site_id"],
-            captured_at=_parse_dt(row["captured_at"]),
-            content_hash=row["content_hash"],
-            content_text=row["content_text"] or "",
-            links=json.loads(row["links"] or "[]"),
-        )
+        return self._row_to_snapshot(row)
 
     def get_latest_snapshot(self, site_id: int) -> Optional[SiteSnapshot]:
         row = self.conn.execute(
@@ -208,12 +232,23 @@ class Storage:
         ).fetchone()
         if row is None:
             return None
+        return self._row_to_snapshot(row)
+
+    def _row_to_snapshot(self, row) -> SiteSnapshot:
         return SiteSnapshot(
             id=row["id"],
             site_id=row["site_id"],
             captured_at=_parse_dt(row["captured_at"]),
             content_hash=row["content_hash"],
+            raw_html=row["raw_html"] or "",
+            cleaned_html=row["cleaned_html"] or "",
             content_text=row["content_text"] or "",
+            markdown=row["markdown"] or "",
+            fit_markdown=row["fit_markdown"] or "",
+            metadata_json=json.loads(row["metadata_json"] or "{}"),
+            fetch_mode=row["fetch_mode"] or "http",
+            final_url=row["final_url"] or "",
+            status_code=row["status_code"],
             links=json.loads(row["links"] or "[]"),
         )
 
@@ -280,8 +315,9 @@ class Storage:
                 """INSERT INTO documents
                    (site_id, title, url, download_url, institution, page_url,
                     published_at, downloaded_at, local_path, doc_type, sha256,
-                    file_size, content_type, etag, last_modified, content_md)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    file_size, content_type, etag, last_modified, content_md,
+                    content_md_status, content_md_updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     doc.site_id,
                     doc.title,
@@ -299,6 +335,8 @@ class Storage:
                     doc.etag,
                     doc.last_modified,
                     doc.content_md,
+                    doc.content_md_status,
+                    doc.content_md_updated_at.isoformat() if doc.content_md_updated_at else None,
                 ),
             )
             row_id = cur.lastrowid
@@ -320,7 +358,9 @@ class Storage:
                        content_type = ?,
                        etag = ?,
                        last_modified = ?,
-                       content_md = ?
+                       content_md = ?,
+                       content_md_status = ?,
+                       content_md_updated_at = ?
                    WHERE id = ?""",
                 (
                     doc.site_id,
@@ -338,6 +378,8 @@ class Storage:
                     doc.etag,
                     doc.last_modified,
                     doc.content_md,
+                    doc.content_md_status,
+                    doc.content_md_updated_at.isoformat() if doc.content_md_updated_at else None,
                     row_id,
                 ),
             )
@@ -366,6 +408,8 @@ class Storage:
             etag=row["etag"] or "",
             last_modified=row["last_modified"] or "",
             content_md=row["content_md"] or "",
+            content_md_status=row["content_md_status"] or "pending",
+            content_md_updated_at=_parse_dt(row["content_md_updated_at"]),
         )
 
     def get_document_by_download_url(self, download_url: str) -> Optional[Document]:

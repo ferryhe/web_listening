@@ -2,7 +2,7 @@ import pytest
 import httpx
 from web_listening.blocks.crawler import Crawler
 from web_listening.models import Site
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 def make_mock_transport(html: str, status_code: int = 200):
@@ -43,6 +43,21 @@ def test_crawler_fetch_returns_html_and_text():
     assert "var x = 1" not in text
 
 
+def test_crawler_fetch_page_returns_normalized_artifacts():
+    transport = make_mock_transport(SAMPLE_HTML)
+    client = httpx.Client(transport=transport)
+    crawler = Crawler(client=client)
+
+    page = crawler.fetch_page("https://example.com")
+
+    assert "<nav>" not in page.cleaned_html
+    assert page.status_code == 200
+    assert page.final_url == "https://example.com"
+    assert page.markdown.startswith("# Main Content")
+    assert "This is a test paragraph" in page.fit_markdown
+    assert page.metadata_json["link_count"] == 2
+
+
 def test_crawler_fetch_http_error():
     transport = make_mock_transport("Not Found", status_code=404)
     client = httpx.Client(transport=transport)
@@ -63,6 +78,14 @@ def test_crawler_snapshot_creates_snapshot():
     assert snapshot.site_id == 1
     assert snapshot.content_hash != ""
     assert "Main Content" in snapshot.content_text
+    assert snapshot.markdown.startswith("# Main Content")
+    assert snapshot.fit_markdown != ""
+    assert snapshot.raw_html != ""
+    assert snapshot.cleaned_html != ""
+    assert snapshot.fetch_mode == "http"
+    assert snapshot.final_url == "https://example.com"
+    assert snapshot.status_code == 200
+    assert snapshot.metadata_json["word_count"] > 0
     assert isinstance(snapshot.captured_at, datetime)
     assert isinstance(snapshot.links, list)
 

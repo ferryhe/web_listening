@@ -67,7 +67,7 @@ def check(
 ):
     """Check sites for changes."""
     from web_listening.blocks.crawler import Crawler
-    from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links
+    from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links, select_compare_text
     from web_listening.models import Change
 
     storage = _get_storage()
@@ -96,7 +96,18 @@ def check(
                     continue
 
                 # Check content change
-                has_changed, diff_snippet = compute_diff(old_snap.content_text, new_snap.content_text)
+                has_changed, diff_snippet = compute_diff(
+                    select_compare_text(
+                        fit_markdown=old_snap.fit_markdown,
+                        markdown=old_snap.markdown,
+                        content_text=old_snap.content_text,
+                    ),
+                    select_compare_text(
+                        fit_markdown=new_snap.fit_markdown,
+                        markdown=new_snap.markdown,
+                        content_text=new_snap.content_text,
+                    ),
+                )
                 if has_changed:
                     change = storage.add_change(Change(
                         site_id=site.id,

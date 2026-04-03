@@ -5,6 +5,7 @@ from web_listening.blocks.diff import (
     extract_links,
     find_new_links,
     find_document_links,
+    select_compare_text,
 )
 
 
@@ -26,6 +27,24 @@ def test_compute_diff_with_change():
     changed, snippet = compute_diff("old content", "new content")
     assert changed is True
     assert len(snippet) > 0
+
+
+def test_select_compare_text_prefers_fit_markdown():
+    selected = select_compare_text(
+        fit_markdown="# Fit",
+        markdown="# Markdown",
+        content_text="plain text",
+    )
+    assert selected == "# Fit"
+
+
+def test_select_compare_text_falls_back_to_content_text():
+    selected = select_compare_text(
+        fit_markdown="",
+        markdown="",
+        content_text="plain text",
+    )
+    assert selected == "plain text"
 
 
 def test_extract_links_basic():

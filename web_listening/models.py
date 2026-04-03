@@ -36,8 +36,26 @@ class SiteSnapshot(BaseModel):
     site_id: int
     captured_at: Optional[datetime] = None
     content_hash: str
+    raw_html: str = ""
+    cleaned_html: str = ""
     content_text: str = ""
+    markdown: str = ""
+    fit_markdown: str = ""
+    metadata_json: dict = {}
+    fetch_mode: str = "http"
+    final_url: str = ""
+    status_code: Optional[int] = None
     links: List[str] = []
+
+    @field_validator("metadata_json", mode="before")
+    @classmethod
+    def parse_metadata_json(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return {}
+        return v or {}
 
     @field_validator("links", mode="before")
     @classmethod
@@ -81,6 +99,8 @@ class Document(BaseModel):
     etag: str = ""
     last_modified: str = ""
     content_md: str = ""
+    content_md_status: str = "pending"
+    content_md_updated_at: Optional[datetime] = None
 
 
 class AnalysisReport(BaseModel):

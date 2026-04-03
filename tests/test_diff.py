@@ -88,6 +88,30 @@ def test_extract_links_filters_non_http():
     assert all(l.startswith("http") for l in links)
 
 
+def test_extract_links_from_sitemap_xml():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <urlset>
+      <url><loc>https://example.com/a</loc></url>
+      <url><loc>https://example.com/b</loc></url>
+    </urlset>
+    """
+    links = extract_links(xml, "https://example.com")
+    assert links == ["https://example.com/a", "https://example.com/b"]
+
+
+def test_extract_links_from_rss_xml():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <item><title>One</title><link>https://example.com/one</link></item>
+        <item><title>Two</title><link>https://example.com/two</link></item>
+      </channel>
+    </rss>
+    """
+    links = extract_links(xml, "https://example.com")
+    assert links == ["https://example.com/one", "https://example.com/two"]
+
+
 def test_find_new_links():
     old = ["https://a.com", "https://b.com"]
     new = ["https://a.com", "https://b.com", "https://c.com"]

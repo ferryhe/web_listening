@@ -60,6 +60,22 @@ def extract_links(html: str, base_url: str) -> List[str]:
     """Extract all absolute HTTP/HTTPS links from HTML."""
     from bs4 import BeautifulSoup
 
+    sample = (html or "").lstrip()[:256].lower()
+    if sample.startswith("<?xml") or "<rss" in sample or "<feed" in sample or "<urlset" in sample or "<sitemapindex" in sample:
+        soup = BeautifulSoup(html, "xml")
+        links = []
+        for loc in soup.find_all("loc"):
+            href = (loc.get_text(" ", strip=True) or "").strip()
+            parsed = urlparse(href)
+            if parsed.scheme in ("http", "https"):
+                links.append(href)
+        for tag in soup.find_all("link"):
+            href = (tag.get("href") or tag.get_text(" ", strip=True) or "").strip()
+            parsed = urlparse(href)
+            if parsed.scheme in ("http", "https"):
+                links.append(href)
+        return sorted(set(links))
+
     soup = BeautifulSoup(html, "lxml")
     links = []
     for tag in soup.find_all("a", href=True):

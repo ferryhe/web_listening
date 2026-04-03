@@ -87,6 +87,52 @@ def test_crawler_fetch_page_prefers_main_content():
     assert page.markdown.startswith("# Actuarial Research")
 
 
+def test_crawler_fetch_page_uses_richer_main_when_first_main_is_thin():
+    html = """
+    <html>
+    <body>
+      <main><a href="#content">Skip to content</a></main>
+      <main>
+        <h1>News Hub</h1>
+        <p>Paragraph one with useful content for monitoring.</p>
+        <p>Paragraph two adds more context and real page text.</p>
+      </main>
+    </body>
+    </html>
+    """
+    transport = make_mock_transport(html)
+    client = httpx.Client(transport=transport)
+    crawler = Crawler(client=client)
+
+    page = crawler.fetch_page("https://example.com")
+
+    assert "Skip to content" not in page.fit_markdown
+    assert "Paragraph one with useful content" in page.fit_markdown
+    assert page.metadata_json["word_count"] >= 10
+
+
+def test_crawler_fetch_page_falls_back_to_content_like_div():
+    html = """
+    <html>
+    <body>
+      <div class="header-wrapper">Header content</div>
+      <div class="main_content">
+        <h1>Institution Update</h1>
+        <p>This content lives in a div instead of a semantic main tag.</p>
+      </div>
+    </body>
+    </html>
+    """
+    transport = make_mock_transport(html)
+    client = httpx.Client(transport=transport)
+    crawler = Crawler(client=client)
+
+    page = crawler.fetch_page("https://example.com")
+
+    assert "Institution Update" in page.fit_markdown
+    assert "Header content" not in page.fit_markdown
+
+
 def test_resolve_request_headers_supports_browser_profile():
     headers = resolve_request_headers({"user_agent_profile": "browser"})
     assert "Mozilla/5.0" in headers["User-Agent"]
@@ -205,3 +251,67 @@ def test_crawler_snapshot_uses_browser_mode(monkeypatch):
     assert snapshot.fetch_mode == "browser"
     assert snapshot.metadata_json["driver"] == "browser"
     assert snapshot.markdown.startswith("# Main Content")
+
+
+def test_crawler_fetch_page_normalizes_sitemap_xml():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <urlset>
+      <url>
+        <loc>https://example.com/page-a</loc>
+        <lastmod>2026-04-03</lastmod>
+      </url>
+      <url>
+        <loc>https://example.com/page-b</loc>
+        <lastmod>2026-04-02</lastmod>
+      </url>
+    </urlset>
+    """
+
+    def handler(request):
+        return httpx.Response(
+            status_code=200,
+            content=xml.encode(),
+            headers={"content-type": "application/xml"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    crawler = Crawler(client=client)
+
+    page = crawler.fetch_page("https://example.com/sitemap.xml")
+
+    assert page.status_code == 200
+    assert page.metadata_json["source_kind"] == "xml_sitemap"
+    assert page.metadata_json["link_count"] == 2
+    assert "https://example.com/page-a" in page.fit_markdown
+
+
+def test_crawler_fetch_page_normalizes_rss_xml():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Example Feed</title>
+        <item>
+          <title>Item One</title>
+          <link>https://example.com/one</link>
+          <pubDate>2026-04-03</pubDate>
+        </item>
+      </channel>
+    </rss>
+    """
+
+    def handler(request):
+        return httpx.Response(
+            status_code=200,
+            content=xml.encode(),
+            headers={"content-type": "application/rss+xml"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    crawler = Crawler(client=client)
+
+    page = crawler.fetch_page("https://example.com/rss.xml")
+
+    assert page.status_code == 200
+    assert page.metadata_json["source_kind"] == "xml_feed"
+    assert page.metadata_json["link_count"] == 1
+    assert "Example Feed" in page.fit_markdown

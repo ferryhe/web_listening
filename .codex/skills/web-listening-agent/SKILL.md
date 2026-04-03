@@ -21,6 +21,7 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 ## Current Usage Pattern
 
 - Register or inspect sites with `POST /api/v1/sites`, `GET /api/v1/sites`, or the matching CLI commands.
+- Set `fetch_mode` per site when a target may need browser rendering later.
 - Trigger monitoring with `POST /api/v1/sites/{id}/check`.
 - Read normalized page artifacts with `GET /api/v1/sites/{id}/snapshots/latest`.
 - Trigger document downloads with `POST /api/v1/sites/{id}/download-docs`.

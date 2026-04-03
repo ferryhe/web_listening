@@ -3,6 +3,7 @@
 ## Implemented blocks
 
 - `web_listening/blocks/crawler.py`: HTTP fetch via `httpx`, HTML cleanup via BeautifulSoup, snapshot text plus link extraction.
+- `web_listening/blocks/crawler.py`: HTTP and optional browser dispatch via `fetch_mode`, returning normalized snapshot artifacts.
 - `web_listening/blocks/normalizer.py`: HTML normalization into cleaned HTML, Markdown, fit-Markdown, and metadata.
 - `web_listening/blocks/diff.py`: SHA-256 hash comparison, unified diff, new-link detection, document-link filtering.
 - `web_listening/blocks/document.py`: document download, blob dedupe by SHA-256, metadata persistence, no content conversion.
@@ -38,7 +39,7 @@
 
 ## Current limitations
 
-- No JS rendering or browser automation.
+- Browser mode is scaffolded, but still needs live Playwright validation and operational hardening.
 - No selector-based or schema-based watch rules.
 - No persistent job table, webhook delivery, or idempotency keys.
 - No MCP server yet.
@@ -47,4 +48,5 @@
 
 - Keep SQLite as the default store until agent-facing contracts stabilize.
 - Keep document conversion outside this repo; use `content_md` and its status fields as handoff fields.
+- Treat browser support as optional capability rather than a required install.
 - Reuse existing blocks when adding new interfaces; do not duplicate core crawling or storage logic.

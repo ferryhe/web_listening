@@ -21,6 +21,13 @@ pip install -e .
 
 Requires Python ≥ 3.10.
 
+Optional browser crawling support:
+
+```bash
+pip install -e ".[browser]"
+playwright install chromium
+```
+
 ## Configuration
 
 For local development, the standard approach is to put non-secret defaults and local secrets in a project-level `.env` file.
@@ -54,12 +61,18 @@ All settings can be overridden via environment variables (prefix `WL_`) or a `.e
 | `WL_USER_AGENT` | `web-listening-bot/1.0` | HTTP User-Agent header |
 | `WL_REQUEST_TIMEOUT` | `30` | HTTP request timeout (seconds) |
 
+Site-level acquisition options are stored per site:
+
+- `fetch_mode`: `http`, `browser`, or `auto`
+- `fetch_config_json`: optional hints such as `wait_for`, `wait_until`, or `timeout_ms`
+
 ## CLI Usage
 
 ### Add a site to monitor
 
 ```bash
 web-listening add-site https://example.com --name "Example" --tags "news,tech"
+web-listening add-site https://example.com --name "Example" --fetch-mode browser --fetch-config "{\"wait_for\":\"main\"}"
 ```
 
 ### List monitored sites

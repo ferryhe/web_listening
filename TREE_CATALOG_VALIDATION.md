@@ -1,70 +1,232 @@
-# Tree Catalog Validation
+﻿# Tree Catalog Validation
 
-> Validation date: 2026-04-03  
-> Validation source: `config/smoke_site_catalog.json`  
-> Validation command: `.venv\Scripts\python tools\run_tree_catalog_validation.py`
+- Generated at: `2026-04-03T19:05:33.722145+00:00`
+- Catalog path: `C:\Project\web_listening\config\smoke_site_catalog.json`
+- Max depth: `3`
+- Max pages per scope: `8`
+- Max files per scope: `1`
+- Download files: `no`
+- Sites checked: `37`
+- Sites not meeting current tree expectation: `12`
 
-## What this checks
+| Site | Required | Outcome | Pages | Child pages | Files | Failures |
+|---|---:|---|---:|---:|---:|---:|
+| A2ii | no | blocked_root | 0 | 0 | 0 | 1 |
+| IAIS | no | ok | 8 | 7 | 1 | 0 |
+| IEA | yes | ok | 8 | 7 | 0 | 0 |
+| IPCC | yes | ok | 8 | 7 | 1 | 0 |
+| IRFF | yes | ok | 8 | 7 | 1 | 0 |
+| ISSA | no | blocked_root | 0 | 0 | 0 | 1 |
+| ISSB | yes | ok | 8 | 7 | 1 | 0 |
+| OECD | no | blocked_root | 0 | 0 | 0 | 1 |
+| PCAF | yes | ok | 8 | 7 | 1 | 0 |
+| PSI | yes | ok | 8 | 7 | 1 | 0 |
+| TNFD | no | unstable_tree | 6 | 5 | 0 | 128 |
+| UNDP | no | blocked_root | 0 | 0 | 0 | 1 |
+| FAO | yes | ok | 8 | 7 | 0 | 0 |
+| UNEP | yes | unstable_tree | 3 | 2 | 0 | 123 |
+| WEF | no | blocked_root | 0 | 0 | 0 | 1 |
+| World Bank | yes | ok | 8 | 7 | 0 | 0 |
+| ADB | yes | ok | 8 | 7 | 1 | 0 |
+| AFDB | no | blocked_root | 0 | 0 | 0 | 1 |
+| BCBS | yes | ok | 8 | 7 | 0 | 0 |
+| BIS | yes | ok | 8 | 7 | 0 | 0 |
+| CAF | no | blocked_root | 0 | 0 | 0 | 1 |
+| FIT | yes | ok | 8 | 7 | 1 | 0 |
+| FSB | yes | ok | 8 | 7 | 1 | 0 |
+| G20 | yes | ok | 7 | 6 | 0 | 2 |
+| GCA | yes | ok | 8 | 7 | 1 | 0 |
+| IFAC | yes | ok | 8 | 7 | 0 | 0 |
+| ILO | yes | ok | 8 | 7 | 1 | 0 |
+| IMF | yes | ok | 8 | 7 | 1 | 0 |
+| NGFS | yes | ok | 8 | 7 | 1 | 0 |
+| SIF | no | blocked_root | 0 | 0 | 0 | 1 |
+| UN Water | yes | ok | 8 | 7 | 1 | 0 |
+| UNCTAD | yes | ok | 8 | 7 | 1 | 0 |
+| UNFCCC | no | root_only | 1 | 0 | 0 | 0 |
+| WHO | no | ok | 8 | 7 | 0 | 0 |
+| WMO | no | blocked_root | 0 | 0 | 0 | 1 |
+| WRI | yes | ok | 8 | 7 | 0 | 0 |
+| WTO | yes | ok | 8 | 7 | 1 | 0 |
 
-This report answers a narrower question than the normal smoke pass:
+## Sites Not Meeting Current Tree Expectation
 
-- can the site root or curated `monitor_url` be fetched
-- can the system discover child pages within a bounded tree
-- can the tree stay stable enough for recursive monitoring
-- can same-origin file links still be accepted inside the tree scope
+### A2ii
 
-Run configuration for this baseline:
+- Homepage URL: `https://a2ii.org/`
+- Monitor URL: `https://a2ii.org/`
+- Outcome: `blocked_root`
+- Required smoke target: `no`
+- Pages discovered: `0`
+- Child pages discovered: `0`
+- File links accepted: `0`
+- Page failures: `1`
+- Skipped external pages: `0`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `Official URL was supplemented. Requests from this environment redirected to a CGAP collection and returned 403 on 2026-04-03.`
 
-- `max_depth = 3`
-- `max_pages = 8`
-- `max_files = 1`
-- file downloads were disabled for the full-catalog tree run
+### ISSA
 
-Download behavior is still covered separately by the required live dev regression on `SOA`, `CAS`, and `IAA`.
+- Homepage URL: `https://www.issa.int/`
+- Monitor URL: `https://www.issa.int/`
+- Outcome: `blocked_root`
+- Required smoke target: `no`
+- Pages discovered: `0`
+- Child pages discovered: `0`
+- File links accepted: `0`
+- Page failures: `1`
+- Skipped external pages: `0`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `Homepage returned 403 from this environment on 2026-04-03.`
 
-## Summary
+### OECD
 
-- Catalog size: `37`
-- Sites meeting current bounded-tree expectation: `25`
-- Sites not meeting current bounded-tree expectation: `12`
-- Required smoke targets meeting bounded-tree expectation: `23 / 24`
-- Required smoke targets currently below tree expectation: `UNEP`
+- Homepage URL: `https://www.oecd.org/`
+- Monitor URL: `https://www.oecd.org/`
+- Outcome: `blocked_root`
+- Required smoke target: `no`
+- Pages discovered: `0`
+- Child pages discovered: `0`
+- File links accepted: `0`
+- Page failures: `1`
+- Skipped external pages: `0`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `Homepage and publications pages returned 403 from this environment on 2026-04-03.`
 
-## Current interpretation
+### TNFD
 
-- `ok`: root is reachable and the bounded crawl can discover at least one child page without excessive failures
-- `root_only`: root is reachable, but no child pages are discovered inside the current scope
-- `unstable_tree`: child pages exist, but failure volume is high enough that the tree is not yet reliable for automation
-- `blocked_root`: the root or monitor entry point cannot be fetched from the current environment
+- Homepage URL: `https://tnfd.global/`
+- Monitor URL: `https://tnfd.global/news/`
+- Outcome: `unstable_tree`
+- Required smoke target: `no`
+- Pages discovered: `6`
+- Child pages discovered: `5`
+- File links accepted: `0`
+- Page failures: `128`
+- Skipped external pages: `18`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `Homepage returned 403; the news page is reachable but still exposes very little server-rendered text.`
 
-## Sites Not Yet Meeting Tree Expectation
+### UNDP
 
-| Site | Required | Outcome | Pages | Child pages | Files | Failures | Notes |
-|---|---:|---|---:|---:|---:|---:|---|
-| A2ii | no | blocked_root | 0 | 0 | 0 | 1 | Redirects to CGAP collection and returns `403` |
-| ISSA | no | blocked_root | 0 | 0 | 0 | 1 | `403` from this environment |
-| OECD | no | blocked_root | 0 | 0 | 0 | 1 | `403` from this environment |
-| TNFD | no | unstable_tree | 6 | 5 | 0 | 128 | Reachable news root, but recursive fetches fail heavily |
-| UNDP | no | blocked_root | 0 | 0 | 0 | 1 | `403` from this environment |
-| UNEP | yes | unstable_tree | 3 | 2 | 0 | 123 | Reachable root, but recursive fetches fail heavily |
-| WEF | no | blocked_root | 0 | 0 | 0 | 1 | `403` from this environment |
-| AFDB | no | blocked_root | 0 | 0 | 0 | 1 | `403` from this environment |
-| CAF | no | blocked_root | 0 | 0 | 0 | 1 | TLS certificate validation fails in this environment |
-| SIF | no | blocked_root | 0 | 0 | 0 | 1 | Upstream domain appears broken or parked |
-| UNFCCC | no | root_only | 1 | 0 | 0 | 0 | Curated news root is reachable, but still behaves like a thin single page |
-| WMO | no | blocked_root | 0 | 0 | 0 | 1 | `403` from this environment |
+- Homepage URL: `https://www.undp.org`
+- Monitor URL: `https://www.undp.org`
+- Outcome: `blocked_root`
+- Required smoke target: `no`
+- Pages discovered: `0`
+- Child pages discovered: `0`
+- File links accepted: `0`
+- Page failures: `1`
+- Skipped external pages: `0`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `Homepage and tested section pages returned 403 from this environment on 2026-04-03.`
 
-## Key findings
+### UNEP
 
-- The trailing-slash-sensitive seed issue was real. After splitting request URL sanitation from canonical identity, `TNFD` moved from `blocked_root` to `unstable_tree`, which is a much more accurate classification.
-- `IEA` now passes bounded-tree validation when the catalog uses a dedicated recursive seed at `/news` instead of the homepage.
-- `TNFD` and `UNEP` are the most important recursive-protocol failures right now. They are reachable, but the current bounded crawl sees too many failing descendants for dependable automation.
-- The major hard blockers are still environment or upstream access problems: `A2ii`, `ISSA`, `OECD`, `UNDP`, `WEF`, `AFDB`, `CAF`, `SIF`, `WMO`.
-- Some previously thin-HTML candidates are structurally better than expected. `WHO` now passes bounded-tree discovery even though its root-page text is still sparse over raw HTTP.
+- Homepage URL: `https://www.unep.org`
+- Monitor URL: `https://www.unep.org`
+- Outcome: `unstable_tree`
+- Required smoke target: `yes`
+- Pages discovered: `3`
+- Child pages discovered: `2`
+- File links accepted: `0`
+- Page failures: `123`
+- Skipped external pages: `52`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
 
-## Recommended next actions
+### WEF
 
-- Add per-site `tree_scope` overrides so a catalog entry can choose a better recursive seed than the homepage.
-- Add include/exclude patterns before promoting unstable trees like `TNFD` or `UNEP` into required recursive targets.
-- Keep `SOA`, `CAS`, and `IAA` as the download-and-hash regression set while tree monitoring is still maturing.
-- Validate Playwright on at least one of `TNFD`, `UNFCCC`, `WHO`, or `IAIS` before deciding whether browser mode should be used for recursive expansion.
+- Homepage URL: `https://www.weforum.org`
+- Monitor URL: `https://www.weforum.org`
+- Outcome: `blocked_root`
+- Required smoke target: `no`
+- Pages discovered: `0`
+- Child pages discovered: `0`
+- File links accepted: `0`
+- Page failures: `1`
+- Skipped external pages: `0`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `Homepage and tested section pages returned 403 from this environment on 2026-04-03.`
+
+### AFDB
+
+- Homepage URL: `https://www.afdb.org/en`
+- Monitor URL: `https://www.afdb.org/en`
+- Outcome: `blocked_root`
+- Required smoke target: `no`
+- Pages discovered: `0`
+- Child pages discovered: `0`
+- File links accepted: `0`
+- Page failures: `1`
+- Skipped external pages: `0`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `Homepage and news page returned 403 from this environment on 2026-04-03.`
+
+### CAF
+
+- Homepage URL: `https://www.caf.com/en/`
+- Monitor URL: `https://www.caf.com/en/`
+- Outcome: `blocked_root`
+- Required smoke target: `no`
+- Pages discovered: `0`
+- Child pages discovered: `0`
+- File links accepted: `0`
+- Page failures: `1`
+- Skipped external pages: `0`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `Homepage currently fails certificate validation from this environment.`
+
+### SIF
+
+- Homepage URL: `https://www.sustainableinsuranceforum.org/`
+- Monitor URL: `https://www.sustainableinsuranceforum.org/`
+- Outcome: `blocked_root`
+- Required smoke target: `no`
+- Pages discovered: `0`
+- Child pages discovered: `0`
+- File links accepted: `0`
+- Page failures: `1`
+- Skipped external pages: `0`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `The domain currently resolves to a parked Linkila 404 page in this environment.`
+
+### UNFCCC
+
+- Homepage URL: `https://unfccc.int/`
+- Monitor URL: `https://unfccc.int/documents`
+- Outcome: `root_only`
+- Required smoke target: `no`
+- Pages discovered: `1`
+- Child pages discovered: `0`
+- File links accepted: `0`
+- Page failures: `0`
+- Skipped external pages: `0`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `Smoke monitor uses the news page, which is reachable but still exposes almost no server-rendered text.`
+
+### WMO
+
+- Homepage URL: `https://wmo.int/`
+- Monitor URL: `https://wmo.int/`
+- Outcome: `blocked_root`
+- Required smoke target: `no`
+- Pages discovered: `0`
+- Child pages discovered: `0`
+- File links accepted: `0`
+- Page failures: `1`
+- Skipped external pages: `0`
+- Skipped external files: `0`
+- Off-prefix same-origin files: `0`
+- Notes: `Homepage and news page returned 403 from this environment on 2026-04-03.`
+

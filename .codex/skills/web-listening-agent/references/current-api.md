@@ -5,6 +5,7 @@
 - `web_listening/blocks/crawler.py`: HTTP fetch via `httpx`, HTML cleanup via BeautifulSoup, snapshot text plus link extraction.
 - `web_listening/blocks/crawler.py`: HTTP and optional browser dispatch via `fetch_mode`, returning normalized snapshot artifacts.
 - `web_listening/blocks/normalizer.py`: HTML normalization into cleaned HTML, Markdown, fit-Markdown, and metadata, plus XML feed and sitemap normalization for agent fallback inputs.
+- `web_listening/blocks/rescue.py`: shared rescue ladder across the catalog target, browser retry, and official sitemap or RSS fallback.
 - `web_listening/blocks/diff.py`: SHA-256 hash comparison, unified diff, new-link detection, document-link filtering.
 - `web_listening/blocks/document.py`: document download, blob dedupe by SHA-256, metadata persistence, no content conversion.
 - `web_listening/blocks/storage.py`: SQLite storage for sites, snapshots, changes, documents, blobs, and analyses.
@@ -21,6 +22,7 @@
 - `POST /api/v1/sites`
 - `GET /api/v1/sites/{id}`
 - `GET /api/v1/sites/{id}/snapshots/latest`
+- `POST /api/v1/sites/{id}/rescue-check`
 - `DELETE /api/v1/sites/{id}`
 - `POST /api/v1/sites/{id}/check`
 - `POST /api/v1/sites/{id}/download-docs`
@@ -43,7 +45,7 @@
 
 ## Current limitations
 
-- Browser mode is scaffolded, but still needs live Playwright validation and operational hardening.
+- Browser mode now participates in the shared rescue ladder and has live validation on selected public sites, but still needs broader operational hardening.
 - Recursive tree bootstrap exists as an internal block, but is not yet exposed via REST or CLI.
 - No selector-based or schema-based watch rules.
 - No persistent job table, webhook delivery, or idempotency keys.
@@ -83,5 +85,6 @@ Use:
 
 Read `SMOKE_SITE_MANAGEMENT.md` for the catalog lifecycle, expectation types, and JS-heavy handling.
 Read `SMOKE_SITE_VALIDATION.md` for the current live baseline.
+`tools/run_smoke_site_catalog.py` now runs the shared rescue ladder by default; use `--primary-only` when you want the catalog target without browser or feed fallback.
 Use `tools/run_tree_catalog_validation.py` and `TREE_CATALOG_VALIDATION.md` when evaluating whether a list target can support bounded recursive tree monitoring instead of only root-page smoke checks.
-Use `tools/run_agent_rescue_validation.py` and `AGENT_RESCUE_VALIDATION.md` when a site fails the primary smoke target and you need to know whether browser or official feed fallback can still make it agent-usable.
+Use `tools/run_agent_rescue_validation.py` and `AGENT_RESCUE_VALIDATION.md` when you want a dedicated rescue-only baseline across the full catalog.

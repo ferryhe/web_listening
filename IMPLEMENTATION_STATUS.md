@@ -97,9 +97,17 @@ Reference commit:
 - Added `tools/run_agent_rescue_validation.py` to evaluate the rescue ladder: catalog target, browser retry, then official sitemap or RSS.
 - Confirmed a full-catalog rescue baseline where `35 / 37` sites are usable with either the primary target or an agent fallback strategy.
 
+### 11. Shared rescue ladder in main smoke and REST
+
+- Added `web_listening/blocks/rescue.py` as the shared rescue implementation for scripts and API callers.
+- Switched `tools/run_smoke_site_catalog.py` to use the same rescue ladder by default, with `--primary-only` available when we need strict catalog-only checks.
+- Added `POST /api/v1/sites/{id}/rescue-check` so AI agents can request a rescue evaluation and receive the winning normalized snapshot without changing the stored monitoring baseline.
+- Refactored `tools/run_agent_rescue_validation.py` to reuse the same core ladder instead of maintaining a duplicate script-only implementation.
+- Added local tests for the rescue endpoint and smoke outcome handling.
+
 ## Current state
 
-- Tests passing: `66`
+- Tests passing: `70`
 - Validation command: `.venv\Scripts\python -m pytest tests -q`
 - Local validation environment: project-local `.venv`
 - Required live targets: `SOA`, `CAS`, `IAA`
@@ -107,6 +115,7 @@ Reference commit:
   - `.venv\Scripts\python tools\validate_real_sites.py`
   - `.venv\Scripts\python tools\run_dev_regression.py`
   - `.venv\Scripts\python tools\run_smoke_site_catalog.py --report-only`
+  - `.venv\Scripts\python tools\run_smoke_site_catalog.py --primary-only --report-only`
   - `.venv\Scripts\python tools\run_tree_catalog_validation.py`
   - `.venv\Scripts\python tools\run_agent_rescue_validation.py`
 - Live regression fallback:
@@ -123,6 +132,8 @@ Reference commit:
   - `TREE_CATALOG_VALIDATION.md`
 - Agent rescue live baseline report:
   - `AGENT_RESCUE_VALIDATION.md`
+- PR recommendation:
+  - `PR_RECOMMENDATION.md`
 
 ## Key decisions still in force
 
@@ -133,25 +144,31 @@ Reference commit:
 
 ## Next recommended implementation steps
 
-### 1. Jobs and async envelopes
+### 1. PR cut and review
+
+- Open a draft PR now from `docs/ai-agent-roadmap`
+- Treat the current branch as the first agent-ready foundation milestone
+- Keep follow-up work such as jobs, watch rules, and MCP in later PRs
+
+### 2. Jobs and async envelopes
 
 - Add a `jobs` table
 - Return `job_id`, `status`, and `accepted_at` from long-running write operations
 - Add `GET /api/v1/jobs/{id}`
 
-### 2. Browser execution hardening
+### 3. Browser execution hardening
 
 - Validate Playwright mode on at least one live JS-heavy site
 - Add richer browser config support such as `wait_for`, `wait_until`, and extra wait logic
 - Consider page screenshot artifacts for failed browser crawls
 
-### 3. Structured watch rules
+### 4. Structured watch rules
 
 - Add `watch_rules`
 - Add structured extraction results
 - Add field-level change payloads and evidence pointers
 
-### 4. MCP layer
+### 5. MCP layer
 
 - Expose the stabilized REST-backed workflows as MCP tools and resources
 - Keep MCP as an adapter over the same backend, not a separate execution path

@@ -143,6 +143,7 @@ Start the server with `web-listening serve`, then browse to `http://localhost:80
 | `POST` | `/api/v1/sites` | Add a site |
 | `GET` | `/api/v1/sites/{id}` | Get site details |
 | `GET` | `/api/v1/sites/{id}/snapshots/latest` | Get the latest normalized snapshot for a site |
+| `POST` | `/api/v1/sites/{id}/rescue-check` | Try the agent rescue ladder without changing the stored baseline |
 | `DELETE` | `/api/v1/sites/{id}` | Deactivate a site |
 | `POST` | `/api/v1/sites/{id}/check` | Queue a check (background) |
 | `POST` | `/api/v1/sites/{id}/download-docs` | Queue document download |
@@ -163,6 +164,18 @@ Recommended flow:
 3. the converted Markdown is written back through `PATCH /api/v1/documents/{id}/content`
 
 This keeps `web_listening` focused on tracking, evidence, and retrieval while allowing conversion quality to evolve independently.
+
+### Rescue checks for agent callers
+
+`POST /api/v1/sites/{id}/rescue-check` runs the shared rescue ladder:
+
+1. the configured catalog target
+2. browser retry on the same target
+3. official `sitemap.xml`
+4. official `rss.xml`
+
+The endpoint returns the attempt log plus the winning normalized snapshot, but does not persist that snapshot as the site's new baseline.
+That keeps agent fallback usable without polluting the main monitoring history.
 
 ## Production Deployment
 
@@ -328,10 +341,13 @@ Recommended live validation commands:
 .venv\Scripts\python tools\validate_real_sites.py
 .venv\Scripts\python tools\run_dev_regression.py
 .venv\Scripts\python tools\run_smoke_site_catalog.py --report-only
+.venv\Scripts\python tools\run_smoke_site_catalog.py --primary-only --report-only
+.venv\Scripts\python tools\run_agent_rescue_validation.py
 ```
 
-`tools/run_dev_regression.py` now fails on live regressions by default.
-Use `--report-only` if you only want the Markdown report without a failing exit code.
+`tools/run_smoke_site_catalog.py` now uses the rescue ladder by default.
+Use `--primary-only` when you want the strict catalog target without browser or feed fallback.
+`tools/run_dev_regression.py` still fails on live regressions by default; use `--report-only` if you only want the Markdown report without a failing exit code.
 
 ## Architecture
 
@@ -345,6 +361,7 @@ web_listening/
 │   ├── blocks/
 │   │   ├── crawler.py     # HTTP crawling + normalized snapshot creation
 │   │   ├── normalizer.py  # HTML → cleaned HTML / Markdown / fit-Markdown
+│   │   ├── rescue.py      # Shared rescue ladder across smoke, API, and validation tools
 │   │   ├── diff.py        # Hashing, diffing, link extraction
 │   │   ├── document.py    # Document download (no conversion; content_md left for doc_to_md module)
 │   │   ├── storage.py     # SQLite persistence

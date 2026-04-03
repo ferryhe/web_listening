@@ -87,6 +87,13 @@ Run the curated site smoke catalog:
 .venv\Scripts\python tools\run_smoke_site_catalog.py
 ```
 
+This now uses the shared rescue ladder by default:
+
+1. catalog target
+2. browser retry on the same target
+3. official `sitemap.xml`
+4. official `rss.xml`
+
 Run only a subset:
 
 ```powershell
@@ -97,6 +104,12 @@ If you only want the report and do not want a failing exit code:
 
 ```powershell
 .venv\Scripts\python tools\run_smoke_site_catalog.py --report-only
+```
+
+If you want the older strict behavior that checks only the curated catalog target:
+
+```powershell
+.venv\Scripts\python tools\run_smoke_site_catalog.py --primary-only --report-only
 ```
 
 Run the agent rescue ladder:
@@ -124,3 +137,13 @@ Run the agent rescue ladder:
   - catalog target first
   - browser on the same target second
   - official `sitemap.xml` or `rss.xml` third when HTML is blocked but inventory feeds stay public
+
+## Current development workflow
+
+For list-driven work, the branch now has a stable default flow:
+
+1. update the curated catalog in `config/smoke_site_catalog.json`
+2. run `tools/run_smoke_site_catalog.py` to see whether the list is agent-usable with the shared rescue ladder
+3. run `tools/run_smoke_site_catalog.py --primary-only --report-only` when you need to understand the raw catalog target without rescue help
+4. run `tools/run_tree_catalog_validation.py` for sites that are candidates for recursive monitoring
+5. keep `SOA`, `CAS`, and `IAA` in the live regression loop with `tools/validate_real_sites.py` and `tools/run_dev_regression.py`

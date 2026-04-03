@@ -44,6 +44,10 @@
     "monitor_url": "https://iea.org",
     "fetch_mode": "http",
     "fetch_config_json": {},
+    "tree_seed_url": "https://www.iea.org/news",
+    "tree_page_prefixes": [
+      "/news"
+    ],
     "smoke_required": true,
     "smoke_expectation": "pass_http",
     "expected_min_words": 200,
@@ -588,6 +592,10 @@
     "monitor_url": "https://unfccc.int/news",
     "fetch_mode": "http",
     "fetch_config_json": {},
+    "tree_seed_url": "https://unfccc.int/documents",
+    "tree_page_prefixes": [
+      "/documents"
+    ],
     "smoke_required": false,
     "smoke_expectation": "pass_http_limited",
     "expected_min_words": 3,

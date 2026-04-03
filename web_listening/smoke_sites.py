@@ -31,6 +31,12 @@ REQUIRED_SMOKE_SITE_FIELDS = {
     "notes",
 }
 
+OPTIONAL_SMOKE_SITE_FIELDS = {
+    "tree_seed_url",
+    "tree_page_prefixes",
+    "tree_file_prefixes",
+}
+
 
 def validate_smoke_sites(payload: list[dict]) -> list[dict]:
     if not isinstance(payload, list) or not payload:
@@ -73,6 +79,17 @@ def validate_smoke_sites(payload: list[dict]) -> list[dict]:
         if not isinstance(fetch_config_json, dict):
             raise ValueError(f"{site_key}.fetch_config_json must be an object")
 
+        tree_seed_url = str(item.get("tree_seed_url", "")).strip()
+        if tree_seed_url and not tree_seed_url.startswith("https://"):
+            raise ValueError(f"{site_key}.tree_seed_url must start with https:// when provided")
+
+        tree_page_prefixes = item.get("tree_page_prefixes", [])
+        if tree_page_prefixes and not isinstance(tree_page_prefixes, list):
+            raise ValueError(f"{site_key}.tree_page_prefixes must be a list when provided")
+        tree_file_prefixes = item.get("tree_file_prefixes", [])
+        if tree_file_prefixes and not isinstance(tree_file_prefixes, list):
+            raise ValueError(f"{site_key}.tree_file_prefixes must be a list when provided")
+
         validated.append(
             {
                 "site_key": site_key,
@@ -91,6 +108,9 @@ def validate_smoke_sites(payload: list[dict]) -> list[dict]:
                 "source_name": str(item["source_name"]).strip(),
                 "source_row": int(item["source_row"]),
                 "notes": str(item["notes"]).strip(),
+                "tree_seed_url": tree_seed_url,
+                "tree_page_prefixes": [str(value).strip() for value in tree_page_prefixes if str(value).strip()],
+                "tree_file_prefixes": [str(value).strip() for value in tree_file_prefixes if str(value).strip()],
             }
         )
 

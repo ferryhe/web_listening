@@ -65,7 +65,7 @@ def run_validation(
         try:
             with TreeCrawler(storage=storage) as tree:
                 for entry in entries:
-                    seed_url = entry.get("monitor_url") or entry["homepage_url"]
+                    seed_url = entry.get("tree_seed_url") or entry.get("monitor_url") or entry["homepage_url"]
                     site = storage.add_site(
                         Site(
                             url=seed_url,
@@ -79,8 +79,8 @@ def run_validation(
                         max_depth=max_depth,
                         max_pages=max_pages,
                         max_files=max_files,
-                        allowed_page_prefixes=["/"],
-                        allowed_file_prefixes=["/"],
+                        allowed_page_prefixes=entry.get("tree_page_prefixes") or ["/"],
+                        allowed_file_prefixes=entry.get("tree_file_prefixes") or ["/"],
                     )
                     try:
                         crawl = tree.bootstrap_scope(

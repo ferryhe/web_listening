@@ -12,6 +12,9 @@ def test_smoke_site_catalog_loads():
     assert len(entries) == 37
     assert any(item["site_key"] == "un-water" for item in entries)
     assert any(item["site_key"] == "g20" for item in entries)
+    iea = next(item for item in entries if item["site_key"] == "iea")
+    assert iea["tree_seed_url"] == "https://www.iea.org/news"
+    assert iea["tree_page_prefixes"] == ["/news"]
 
 
 def test_smoke_site_catalog_contains_browser_ua_targets():

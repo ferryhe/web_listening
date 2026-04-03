@@ -1,6 +1,12 @@
 import pytest
 import httpx
-from web_listening.blocks.crawler import BrowserCrawler, Crawler, FetchResult, normalize_fetch_mode
+from web_listening.blocks.crawler import (
+    BrowserCrawler,
+    Crawler,
+    FetchResult,
+    normalize_fetch_mode,
+    resolve_request_headers,
+)
 from web_listening.models import Site
 from datetime import datetime
 
@@ -79,6 +85,35 @@ def test_crawler_fetch_page_prefers_main_content():
 
     assert "Home" not in page.fit_markdown
     assert page.markdown.startswith("# Actuarial Research")
+
+
+def test_resolve_request_headers_supports_browser_profile():
+    headers = resolve_request_headers({"user_agent_profile": "browser"})
+    assert "Mozilla/5.0" in headers["User-Agent"]
+
+
+def test_crawler_fetch_page_uses_custom_user_agent():
+    captured_user_agent = ""
+
+    def handler(request):
+        nonlocal captured_user_agent
+        captured_user_agent = request.headers.get("User-Agent", "")
+        return httpx.Response(
+            status_code=200,
+            content=SAMPLE_HTML.encode(),
+            headers={"content-type": "text/html"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    crawler = Crawler(client=client)
+
+    page = crawler.fetch_page(
+        "https://example.com",
+        fetch_config_json={"user_agent_profile": "browser"},
+    )
+
+    assert "Mozilla/5.0" in captured_user_agent
+    assert page.metadata_json["request_user_agent"] == captured_user_agent
 
 
 def test_crawler_fetch_http_error():

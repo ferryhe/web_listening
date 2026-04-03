@@ -12,6 +12,10 @@ from web_listening.config import settings
 from web_listening.models import Site, SiteSnapshot
 
 _ALLOWED_FETCH_MODES = {"http", "browser", "auto"}
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+)
 
 
 @dataclass(slots=True)
@@ -33,6 +37,27 @@ def normalize_fetch_mode(mode: str | None) -> str:
     if resolved == "auto":
         return "http"
     return resolved
+
+
+def resolve_user_agent(fetch_config_json: Optional[dict] = None) -> str:
+    config = fetch_config_json or {}
+    explicit = str(config.get("user_agent", "")).strip()
+    if explicit:
+        return explicit
+    profile = str(config.get("user_agent_profile", "")).strip().lower()
+    if profile == "browser":
+        return _BROWSER_USER_AGENT
+    return settings.user_agent
+
+
+def resolve_request_headers(fetch_config_json: Optional[dict] = None) -> dict:
+    config = fetch_config_json or {}
+    headers = {}
+    raw_headers = config.get("headers")
+    if isinstance(raw_headers, dict):
+        headers.update({str(key): str(value) for key, value in raw_headers.items()})
+    headers["User-Agent"] = resolve_user_agent(fetch_config_json)
+    return headers
 
 
 def _snapshot_from_page(site: Site, page: FetchResult, fetch_mode: str) -> SiteSnapshot:
@@ -72,11 +97,13 @@ class HttpCrawler:
         self._owns_client = client is None
 
     def fetch_page(self, url: str, *, fetch_config_json: Optional[dict] = None) -> FetchResult:
-        resp = self.client.get(url)
+        request_headers = resolve_request_headers(fetch_config_json)
+        resp = self.client.get(url, headers=request_headers)
         resp.raise_for_status()
         normalized = normalize_html(resp.text, base_url=str(resp.url))
         metadata = dict(normalized.metadata)
         metadata["driver"] = "http"
+        metadata["request_user_agent"] = request_headers.get("User-Agent", settings.user_agent)
         return FetchResult(
             raw_html=normalized.raw_html,
             cleaned_html=normalized.cleaned_html,
@@ -129,7 +156,7 @@ class BrowserCrawler:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=headless)
             try:
-                page = browser.new_page(user_agent=settings.user_agent)
+                page = browser.new_page(user_agent=resolve_user_agent(fetch_config_json))
                 response = page.goto(url, wait_until=wait_until, timeout=timeout_ms)
                 if wait_for_selector:
                     page.wait_for_selector(wait_for_selector, timeout=timeout_ms)
@@ -144,6 +171,7 @@ class BrowserCrawler:
         normalized = normalize_html(html, base_url=final_url or url)
         metadata = dict(normalized.metadata)
         metadata["driver"] = "browser"
+        metadata["request_user_agent"] = resolve_user_agent(fetch_config_json)
         metadata["wait_until"] = wait_until
         metadata["wait_for"] = wait_for_selector or ""
         return FetchResult(

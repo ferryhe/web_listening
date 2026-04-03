@@ -98,6 +98,11 @@ The scope should be defined by:
 - `allowed_file_prefixes`
 - `max_depth`
 
+When a curated site catalog provides both `homepage_url` and `monitor_url`, use:
+
+- `monitor_url` as the recursive `seed_url`
+- `homepage_url` only as descriptive metadata
+
 ## URL handling rules
 
 Every discovered URL should be canonicalized before matching or persistence:
@@ -115,6 +120,18 @@ This canonical form should drive:
 - tracked page identity
 - tracked file identity
 - subtree hashing
+
+Do not blindly use the canonical identity URL as the network request URL.
+
+Recommended split:
+
+- request URL sanitation:
+  - drop `#fragment`
+  - drop tracking parameters
+  - preserve path shape such as trailing `/` when requesting
+- canonical identity:
+  - use the final URL after fetch when possible
+  - then normalize trailing slash rules for dedupe and hashing
 
 ## Recommended SQLite model
 
@@ -160,6 +177,23 @@ The logical split should be by `scope_id`, not by file.
   - `is_active`
   - `latest_snapshot_id`
   - `latest_hash`
+- `page_snapshots`
+  - `id`
+  - `scope_id`
+  - `page_id`
+  - `run_id`
+  - `captured_at`
+  - `content_hash`
+  - `raw_html`
+  - `cleaned_html`
+  - `content_text`
+  - `markdown`
+  - `fit_markdown`
+  - `metadata_json`
+  - `fetch_mode`
+  - `final_url`
+  - `status_code`
+  - `links`
 - `page_edges`
   - `id`
   - `scope_id`

@@ -81,9 +81,17 @@ Reference commit:
 - Split the proposed recursive boundary into `page scope` and `file scope`, so centralized file storage can still be tracked without opening unrestricted page recursion.
 - Kept byte-level SHA-256 as the final dedupe authority for downloaded files, even when files are discovered from multiple pages.
 
+### 9. Recursive tree bootstrap scaffold
+
+- Added bounded recursive bootstrap storage for `crawl_scopes`, `crawl_runs`, `tracked_pages`, `page_snapshots`, `page_edges`, `tracked_files`, and `file_observations`.
+- Added `web_listening/blocks/tree_crawler.py` with BFS-based bootstrap, page snapshot persistence, page-edge recording, and same-origin file tracking.
+- Split request-URL sanitation from canonical identity so trailing-slash-sensitive sites can still be fetched without breaking dedupe.
+- Added `tools/run_tree_catalog_validation.py` so the curated smoke catalog can be tested as recursive trees rather than only single-page smoke checks.
+- Added unit coverage for page/file scope rules, bootstrap persistence, and trailing-slash-sensitive recursive seeds.
+
 ## Current state
 
-- Tests passing: `53`
+- Tests passing: `60`
 - Validation command: `.venv\Scripts\python -m pytest tests -q`
 - Local validation environment: project-local `.venv`
 - Required live targets: `SOA`, `CAS`, `IAA`
@@ -91,6 +99,7 @@ Reference commit:
   - `.venv\Scripts\python tools\validate_real_sites.py`
   - `.venv\Scripts\python tools\run_dev_regression.py`
   - `.venv\Scripts\python tools\run_smoke_site_catalog.py --report-only`
+  - `.venv\Scripts\python tools\run_tree_catalog_validation.py`
 - Live regression fallback:
   - `.venv\Scripts\python tools\run_dev_regression.py --report-only`
 - Live regression policy doc:
@@ -101,6 +110,8 @@ Reference commit:
   - `SMOKE_SITE_VALIDATION.md`
 - Recursive tree design doc:
   - `TREE_MONITORING_DESIGN.md`
+- Recursive tree live baseline report:
+  - `TREE_CATALOG_VALIDATION.md`
 
 ## Key decisions still in force
 

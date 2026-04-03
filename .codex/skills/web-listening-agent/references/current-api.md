@@ -8,6 +8,7 @@
 - `web_listening/blocks/diff.py`: SHA-256 hash comparison, unified diff, new-link detection, document-link filtering.
 - `web_listening/blocks/document.py`: document download, blob dedupe by SHA-256, metadata persistence, no content conversion.
 - `web_listening/blocks/storage.py`: SQLite storage for sites, snapshots, changes, documents, blobs, and analyses.
+- `web_listening/blocks/tree_crawler.py`: bounded recursive bootstrap for page inventories, page snapshots, page edges, tracked files, and file observations.
 - `web_listening/blocks/analyzer.py`: weekly Markdown summary via OpenAI or local fallback.
 - `web_listening/blocks/scheduler.py`: APScheduler-based periodic execution.
 - `web_listening/dev_targets.py`: required live development target validation for `SOA`, `CAS`, and `IAA`.
@@ -42,6 +43,7 @@
 ## Current limitations
 
 - Browser mode is scaffolded, but still needs live Playwright validation and operational hardening.
+- Recursive tree bootstrap exists as an internal block, but is not yet exposed via REST or CLI.
 - No selector-based or schema-based watch rules.
 - No persistent job table, webhook delivery, or idempotency keys.
 - No MCP server yet.
@@ -80,3 +82,4 @@ Use:
 
 Read `SMOKE_SITE_MANAGEMENT.md` for the catalog lifecycle, expectation types, and JS-heavy handling.
 Read `SMOKE_SITE_VALIDATION.md` for the current live baseline.
+Use `tools/run_tree_catalog_validation.py` and `TREE_CATALOG_VALIDATION.md` when evaluating whether a list target can support bounded recursive tree monitoring instead of only root-page smoke checks.

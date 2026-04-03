@@ -75,6 +75,12 @@ Reference commit:
 - Added `SMOKE_SITE_MANAGEMENT.md` to document how raw ignored inputs should flow into tracked monitor targets.
 - Recorded the first smoke validation baseline in `SMOKE_SITE_VALIDATION.md`.
 
+### 8. Recursive tree monitoring design
+
+- Added `TREE_MONITORING_DESIGN.md` to capture the next-step architecture for bounded recursive monitoring.
+- Split the proposed recursive boundary into `page scope` and `file scope`, so centralized file storage can still be tracked without opening unrestricted page recursion.
+- Kept byte-level SHA-256 as the final dedupe authority for downloaded files, even when files are discovered from multiple pages.
+
 ## Current state
 
 - Tests passing: `53`
@@ -93,6 +99,8 @@ Reference commit:
   - `SMOKE_SITE_MANAGEMENT.md`
 - List-driven smoke baseline report:
   - `SMOKE_SITE_VALIDATION.md`
+- Recursive tree design doc:
+  - `TREE_MONITORING_DESIGN.md`
 
 ## Key decisions still in force
 

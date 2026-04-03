@@ -105,3 +105,4 @@ If you only want the report and do not want a failing exit code:
 - validate browser mode on a small number of confirmed JS-heavy targets
 - add topic-specific monitor pages for blocked homepages where a stable public page exists
 - add document-oriented monitor URLs for institutions where download tracking matters more than homepage monitoring
+- when smoke targets graduate into deep recursive monitoring, use the separate page-scope and file-scope model from `TREE_MONITORING_DESIGN.md`

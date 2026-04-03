@@ -56,3 +56,4 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 - Read `DEV_TEST_TARGETS.md` for the required live targets, regression matrix, and SHA-256 policy.
 - Read `SMOKE_SITE_MANAGEMENT.md` for list-driven smoke monitoring and catalog management.
 - Read `SMOKE_SITE_VALIDATION.md` for the current supranational smoke baseline before changing the catalog.
+- Read `TREE_MONITORING_DESIGN.md` before implementing recursive tree or section monitoring.

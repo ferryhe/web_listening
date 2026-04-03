@@ -127,6 +127,7 @@ Goal: move from full-page diff toward rule-driven and schema-driven change detec
 
 Deliverables:
 
+- recursive scope and tree monitoring
 - selector-based watch rules
 - document-link watch rules
 - JSON schema extraction
@@ -137,6 +138,7 @@ Deliverables:
 Primary files:
 
 - `web_listening/blocks/diff.py`
+- `web_listening/blocks/tree_crawler.py` (new)
 - `web_listening/blocks/extractor.py` (new)
 - `web_listening/blocks/storage.py`
 - `web_listening/models.py`
@@ -239,6 +241,26 @@ Acceptance criteria:
 - Browser mode remains optional and does not break HTTP-only installs.
 
 ## Phase 3: Structured Watch Rules
+
+Before moving fully into selector or schema watch rules, the project should add bounded recursive scope monitoring.
+See `TREE_MONITORING_DESIGN.md` for the recommended model.
+
+Key rules from that design:
+
+- default recursive depth should be `3`
+- HTML recursion should stay inside the scope page prefix
+- file acceptance should be allowed to leave the direct parent path as long as the file stays under the same root web
+- file dedupe should be driven by byte-level SHA-256, not just by file URL
+- first recursive runs should bootstrap inventory rather than emitting normal change alerts
+
+Suggested new tables before or alongside `watch_rules`:
+
+- `crawl_scopes`
+- `crawl_runs`
+- `tracked_pages`
+- `tracked_files`
+- `page_edges`
+- `file_observations`
 
 Goal: model monitoring intent explicitly instead of treating all sites the same.
 

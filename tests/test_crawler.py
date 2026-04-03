@@ -58,6 +58,29 @@ def test_crawler_fetch_page_returns_normalized_artifacts():
     assert page.metadata_json["link_count"] == 2
 
 
+def test_crawler_fetch_page_prefers_main_content():
+    html = """
+    <html>
+    <body>
+      <header><a href="/home">Home</a></header>
+      <main>
+        <h1>Actuarial Research</h1>
+        <p>Important update.</p>
+      </main>
+      <footer>Footer</footer>
+    </body>
+    </html>
+    """
+    transport = make_mock_transport(html)
+    client = httpx.Client(transport=transport)
+    crawler = Crawler(client=client)
+
+    page = crawler.fetch_page("https://example.com")
+
+    assert "Home" not in page.fit_markdown
+    assert page.markdown.startswith("# Actuarial Research")
+
+
 def test_crawler_fetch_http_error():
     transport = make_mock_transport("Not Found", status_code=404)
     client = httpx.Client(transport=transport)

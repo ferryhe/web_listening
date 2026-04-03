@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
-_NOISE_TAGS = {"script", "style", "nav", "footer", "noscript"}
+_NOISE_TAGS = {"script", "style", "nav", "footer", "noscript", "header", "aside"}
 _HEADING_LEVELS = {f"h{level}": level for level in range(1, 7)}
 
 
@@ -27,7 +27,14 @@ def normalize_html(raw_html: str, base_url: str) -> NormalizedContent:
     for tag in soup(_NOISE_TAGS):
         tag.decompose()
 
-    root = soup.body or soup
+    root = (
+        soup.find("main")
+        or soup.find("article")
+        or soup.find(id="content")
+        or soup.find(attrs={"role": "main"})
+        or soup.body
+        or soup
+    )
     cleaned_html = str(root)
     content_text = root.get_text(separator="\n", strip=True)
     markdown = _normalize_markdown(_render_block(root, base_url))

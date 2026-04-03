@@ -25,10 +25,10 @@ Download behavior is still covered separately by the required live dev regressio
 ## Summary
 
 - Catalog size: `37`
-- Sites meeting current bounded-tree expectation: `24`
-- Sites not meeting current bounded-tree expectation: `13`
-- Required smoke targets meeting bounded-tree expectation: `22 / 24`
-- Required smoke targets currently below tree expectation: `IEA`, `UNEP`
+- Sites meeting current bounded-tree expectation: `25`
+- Sites not meeting current bounded-tree expectation: `12`
+- Required smoke targets meeting bounded-tree expectation: `23 / 24`
+- Required smoke targets currently below tree expectation: `UNEP`
 
 ## Current interpretation
 
@@ -42,7 +42,6 @@ Download behavior is still covered separately by the required live dev regressio
 | Site | Required | Outcome | Pages | Child pages | Files | Failures | Notes |
 |---|---:|---|---:|---:|---:|---:|---|
 | A2ii | no | blocked_root | 0 | 0 | 0 | 1 | Redirects to CGAP collection and returns `403` |
-| IEA | yes | root_only | 1 | 0 | 0 | 0 | Homepage is reachable but no child pages stay inside the current root scope |
 | ISSA | no | blocked_root | 0 | 0 | 0 | 1 | `403` from this environment |
 | OECD | no | blocked_root | 0 | 0 | 0 | 1 | `403` from this environment |
 | TNFD | no | unstable_tree | 6 | 5 | 0 | 128 | Reachable news root, but recursive fetches fail heavily |
@@ -58,8 +57,8 @@ Download behavior is still covered separately by the required live dev regressio
 ## Key findings
 
 - The trailing-slash-sensitive seed issue was real. After splitting request URL sanitation from canonical identity, `TNFD` moved from `blocked_root` to `unstable_tree`, which is a much more accurate classification.
+- `IEA` now passes bounded-tree validation when the catalog uses a dedicated recursive seed at `/news` instead of the homepage.
 - `TNFD` and `UNEP` are the most important recursive-protocol failures right now. They are reachable, but the current bounded crawl sees too many failing descendants for dependable automation.
-- `IEA` is not blocked, but its homepage is a poor recursive seed. It likely needs a more specific section root such as a news or publications area.
 - The major hard blockers are still environment or upstream access problems: `A2ii`, `ISSA`, `OECD`, `UNDP`, `WEF`, `AFDB`, `CAF`, `SIF`, `WMO`.
 - Some previously thin-HTML candidates are structurally better than expected. `WHO` now passes bounded-tree discovery even though its root-page text is still sparse over raw HTTP.
 

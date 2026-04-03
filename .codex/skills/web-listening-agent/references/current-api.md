@@ -4,7 +4,7 @@
 
 - `web_listening/blocks/crawler.py`: HTTP fetch via `httpx`, HTML cleanup via BeautifulSoup, snapshot text plus link extraction.
 - `web_listening/blocks/crawler.py`: HTTP and optional browser dispatch via `fetch_mode`, returning normalized snapshot artifacts.
-- `web_listening/blocks/normalizer.py`: HTML normalization into cleaned HTML, Markdown, fit-Markdown, and metadata.
+- `web_listening/blocks/normalizer.py`: HTML normalization into cleaned HTML, Markdown, fit-Markdown, and metadata, plus XML feed and sitemap normalization for agent fallback inputs.
 - `web_listening/blocks/diff.py`: SHA-256 hash comparison, unified diff, new-link detection, document-link filtering.
 - `web_listening/blocks/document.py`: document download, blob dedupe by SHA-256, metadata persistence, no content conversion.
 - `web_listening/blocks/storage.py`: SQLite storage for sites, snapshots, changes, documents, blobs, and analyses.
@@ -13,6 +13,7 @@
 - `web_listening/blocks/scheduler.py`: APScheduler-based periodic execution.
 - `web_listening/dev_targets.py`: required live development target validation for `SOA`, `CAS`, and `IAA`.
 - `web_listening/smoke_sites.py`: curated smoke site catalog validation for larger list-driven monitoring.
+- `tools/run_agent_rescue_validation.py`: agent-style fallback validation across catalog target, browser retry, and official sitemap or RSS fallback.
 
 ## Implemented REST endpoints
 
@@ -83,3 +84,4 @@ Use:
 Read `SMOKE_SITE_MANAGEMENT.md` for the catalog lifecycle, expectation types, and JS-heavy handling.
 Read `SMOKE_SITE_VALIDATION.md` for the current live baseline.
 Use `tools/run_tree_catalog_validation.py` and `TREE_CATALOG_VALIDATION.md` when evaluating whether a list target can support bounded recursive tree monitoring instead of only root-page smoke checks.
+Use `tools/run_agent_rescue_validation.py` and `AGENT_RESCUE_VALIDATION.md` when a site fails the primary smoke target and you need to know whether browser or official feed fallback can still make it agent-usable.

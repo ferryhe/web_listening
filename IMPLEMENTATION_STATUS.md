@@ -89,9 +89,17 @@ Reference commit:
 - Added `tools/run_tree_catalog_validation.py` so the curated smoke catalog can be tested as recursive trees rather than only single-page smoke checks.
 - Added unit coverage for page/file scope rules, bootstrap persistence, and trailing-slash-sensitive recursive seeds.
 
+### 10. Agent rescue and feed fallback
+
+- Improved content root selection so thin placeholder `main` nodes no longer beat richer content containers.
+- Added XML sitemap and RSS normalization plus XML link extraction, so official `sitemap.xml` and `rss.xml` endpoints can act as agent-friendly fallback inputs.
+- Added optional `tree_seed_url` and `tree_page_prefixes` to the smoke catalog so recursive validation can use a better section root than the smoke monitor target.
+- Added `tools/run_agent_rescue_validation.py` to evaluate the rescue ladder: catalog target, browser retry, then official sitemap or RSS.
+- Confirmed a full-catalog rescue baseline where `35 / 37` sites are usable with either the primary target or an agent fallback strategy.
+
 ## Current state
 
-- Tests passing: `60`
+- Tests passing: `66`
 - Validation command: `.venv\Scripts\python -m pytest tests -q`
 - Local validation environment: project-local `.venv`
 - Required live targets: `SOA`, `CAS`, `IAA`
@@ -100,6 +108,7 @@ Reference commit:
   - `.venv\Scripts\python tools\run_dev_regression.py`
   - `.venv\Scripts\python tools\run_smoke_site_catalog.py --report-only`
   - `.venv\Scripts\python tools\run_tree_catalog_validation.py`
+  - `.venv\Scripts\python tools\run_agent_rescue_validation.py`
 - Live regression fallback:
   - `.venv\Scripts\python tools\run_dev_regression.py --report-only`
 - Live regression policy doc:
@@ -112,6 +121,8 @@ Reference commit:
   - `TREE_MONITORING_DESIGN.md`
 - Recursive tree live baseline report:
   - `TREE_CATALOG_VALIDATION.md`
+- Agent rescue live baseline report:
+  - `AGENT_RESCUE_VALIDATION.md`
 
 ## Key decisions still in force
 

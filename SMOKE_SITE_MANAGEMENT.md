@@ -29,6 +29,7 @@ That split keeps the repository reproducible while still letting us ingest sprea
 - mark whether the site should currently pass the smoke suite with `smoke_required`
 - record the current access expectation in `smoke_expectation`
 - mark `js_heavy_candidate=true` when raw HTTP only exposes thin shell HTML
+- add `tree_seed_url` and `tree_page_prefixes` when recursive monitoring should start from a different section than the smoke monitor target
 
 This is the file that scripts should load:
 
@@ -44,6 +45,13 @@ For example:
 - some news or publications pages are much richer and more stable for smoke tests
 
 By keeping both fields, we preserve the official source while still giving the crawler the best current smoke target.
+
+For recursive monitoring, `tree_seed_url` can point at a different HTML section root than `monitor_url`.
+This matters when:
+
+- the best smoke target is a feed or sitemap
+- the homepage is a poor recursive seed
+- a section page such as `/news` is much better for bounded tree crawling
 
 ## Current expectation values
 
@@ -91,6 +99,12 @@ If you only want the report and do not want a failing exit code:
 .venv\Scripts\python tools\run_smoke_site_catalog.py --report-only
 ```
 
+Run the agent rescue ladder:
+
+```powershell
+.venv\Scripts\python tools\run_agent_rescue_validation.py
+```
+
 ## Current findings from the imported supranational list
 
 - `G20` and `ILO` are currently reachable when the request uses a browser-like user agent.
@@ -106,3 +120,7 @@ If you only want the report and do not want a failing exit code:
 - add topic-specific monitor pages for blocked homepages where a stable public page exists
 - add document-oriented monitor URLs for institutions where download tracking matters more than homepage monitoring
 - when smoke targets graduate into deep recursive monitoring, use the separate page-scope and file-scope model from `TREE_MONITORING_DESIGN.md`
+- keep the rescue order explicit for agent usage:
+  - catalog target first
+  - browser on the same target second
+  - official `sitemap.xml` or `rss.xml` third when HTML is blocked but inventory feeds stay public

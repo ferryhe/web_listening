@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
 from web_listening.blocks.storage import Storage
+from web_listening.blocks.rescue import run_site_rescue
 from web_listening.config import settings
 from web_listening.models import AnalysisReport, Change, Document, Site, SiteSnapshot
 
@@ -52,6 +53,43 @@ class DownloadDocsRequest(BaseModel):
 class UpdateDocumentContentRequest(BaseModel):
     content_md: str
     content_md_status: str = "converted"
+
+
+class RescueCheckRequest(BaseModel):
+    expected_min_words: int = 50
+    min_inventory_links: int = 5
+    allow_browser: bool = True
+    allow_official_feeds: bool = True
+    sitemap_url: Optional[str] = None
+    rss_url: Optional[str] = None
+    browser_fetch_config: dict = {}
+
+
+class RescueAttemptResponse(BaseModel):
+    strategy: str
+    url: str
+    fetch_mode: str
+    status_code: Optional[int] = None
+    final_url: str = ""
+    request_user_agent: str = ""
+    word_count: int = 0
+    link_count: int = 0
+    source_kind: str = ""
+    passed: bool = False
+    reason: str = ""
+    head: str = ""
+    error: str = ""
+
+
+class RescueCheckResponse(BaseModel):
+    site_id: int
+    site_name: str
+    monitor_url: str
+    primary_strategy: str
+    resolved_strategy: str = ""
+    resolved: bool
+    attempts: List[RescueAttemptResponse]
+    winning_snapshot: Optional[SiteSnapshot] = None
 
 
 # ── Sites ───────────────────────────────────────────────────────────────────
@@ -109,6 +147,62 @@ def get_latest_snapshot(site_id: int):
         return snapshot
     finally:
         storage.close()
+
+
+@router.post("/sites/{site_id}/rescue-check", response_model=RescueCheckResponse)
+def rescue_check_site(site_id: int, body: RescueCheckRequest):
+    if body.sitemap_url is not None:
+        _validate_url(body.sitemap_url)
+    if body.rss_url is not None:
+        _validate_url(body.rss_url)
+
+    storage = get_storage()
+    try:
+        site = storage.get_site(site_id)
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+    finally:
+        storage.close()
+
+    result = run_site_rescue(
+        site,
+        expected_min_words=body.expected_min_words,
+        min_inventory_links=body.min_inventory_links,
+        allow_browser=body.allow_browser,
+        allow_official_feeds=body.allow_official_feeds,
+        sitemap_url=body.sitemap_url,
+        rss_url=body.rss_url,
+        browser_fetch_config=body.browser_fetch_config,
+    )
+    attempts = [
+        RescueAttemptResponse(
+            strategy=attempt.strategy,
+            url=attempt.url,
+            fetch_mode=attempt.fetch_mode,
+            status_code=attempt.status_code,
+            final_url=attempt.final_url,
+            request_user_agent=attempt.request_user_agent,
+            word_count=attempt.word_count,
+            link_count=attempt.link_count,
+            source_kind=attempt.source_kind,
+            passed=attempt.passed,
+            reason=attempt.reason,
+            head=attempt.head,
+            error=attempt.error,
+        )
+        for attempt in result.attempts
+    ]
+    winning_attempt = result.winning_attempt
+    return RescueCheckResponse(
+        site_id=site.id,
+        site_name=site.name,
+        monitor_url=site.url,
+        primary_strategy=result.primary_strategy,
+        resolved_strategy=result.resolved_strategy,
+        resolved=result.resolved,
+        attempts=attempts,
+        winning_snapshot=winning_attempt.snapshot if winning_attempt is not None else None,
+    )
 
 
 @router.delete("/sites/{site_id}", status_code=204)

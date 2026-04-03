@@ -32,6 +32,8 @@ class Storage:
                 url TEXT NOT NULL,
                 name TEXT DEFAULT '',
                 tags TEXT DEFAULT '[]',
+                fetch_mode TEXT DEFAULT 'http',
+                fetch_config_json TEXT DEFAULT '{}',
                 created_at TEXT,
                 last_checked_at TEXT,
                 is_active INTEGER DEFAULT 1
@@ -107,6 +109,8 @@ class Storage:
                 change_count INTEGER DEFAULT 0
             );
         """)
+        self._ensure_column("sites", "fetch_mode", "TEXT DEFAULT 'http'")
+        self._ensure_column("sites", "fetch_config_json", "TEXT DEFAULT '{}'")
         self._ensure_column("site_snapshots", "raw_html", "TEXT DEFAULT ''")
         self._ensure_column("site_snapshots", "cleaned_html", "TEXT DEFAULT ''")
         self._ensure_column("site_snapshots", "markdown", "TEXT DEFAULT ''")
@@ -138,11 +142,13 @@ class Storage:
     def add_site(self, site: Site) -> Site:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.execute(
-            "INSERT INTO sites (url, name, tags, created_at, last_checked_at, is_active) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO sites (url, name, tags, fetch_mode, fetch_config_json, created_at, last_checked_at, is_active) VALUES (?,?,?,?,?,?,?,?)",
             (
                 site.url,
                 site.name,
                 json.dumps(site.tags),
+                site.fetch_mode,
+                json.dumps(site.fetch_config_json),
                 site.created_at.isoformat() if site.created_at else now,
                 site.last_checked_at.isoformat() if site.last_checked_at else None,
                 int(site.is_active),
@@ -160,6 +166,8 @@ class Storage:
             url=row["url"],
             name=row["name"] or "",
             tags=json.loads(row["tags"] or "[]"),
+            fetch_mode=row["fetch_mode"] or "http",
+            fetch_config_json=json.loads(row["fetch_config_json"] or "{}"),
             created_at=_parse_dt(row["created_at"]),
             last_checked_at=_parse_dt(row["last_checked_at"]),
             is_active=bool(row["is_active"]),
@@ -176,6 +184,8 @@ class Storage:
                 url=r["url"],
                 name=r["name"] or "",
                 tags=json.loads(r["tags"] or "[]"),
+                fetch_mode=r["fetch_mode"] or "http",
+                fetch_config_json=json.loads(r["fetch_config_json"] or "{}"),
                 created_at=_parse_dt(r["created_at"]),
                 last_checked_at=_parse_dt(r["last_checked_at"]),
                 is_active=bool(r["is_active"]),

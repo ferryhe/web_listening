@@ -93,3 +93,25 @@ def test_update_document_content_endpoint(tmp_path, monkeypatch):
     assert payload["content_md"].startswith("# Report")
     assert payload["content_md_status"] == "converted"
     assert payload["content_md_updated_at"] is not None
+
+
+def test_add_site_with_fetch_mode(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/sites",
+        json={
+            "url": "https://example.com",
+            "name": "Example",
+            "tags": ["news"],
+            "fetch_mode": "browser",
+            "fetch_config_json": {"wait_for": "#main"},
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["fetch_mode"] == "browser"
+    assert payload["fetch_config_json"]["wait_for"] == "#main"

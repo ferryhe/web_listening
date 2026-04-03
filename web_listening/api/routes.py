@@ -36,6 +36,8 @@ class AddSiteRequest(BaseModel):
     url: str
     name: str = ""
     tags: List[str] = []
+    fetch_mode: str = "http"
+    fetch_config_json: dict = {}
 
 
 class AnalyzeRequest(BaseModel):
@@ -68,7 +70,15 @@ def add_site(body: AddSiteRequest):
     _validate_url(body.url)
     storage = get_storage()
     try:
-        site = storage.add_site(Site(url=body.url, name=body.name or body.url, tags=body.tags))
+        site = storage.add_site(
+            Site(
+                url=body.url,
+                name=body.name or body.url,
+                tags=body.tags,
+                fetch_mode=body.fetch_mode,
+                fetch_config_json=body.fetch_config_json,
+            )
+        )
         return site
     finally:
         storage.close()

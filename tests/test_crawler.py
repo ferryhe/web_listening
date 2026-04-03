@@ -1,6 +1,6 @@
 import pytest
 import httpx
-from web_listening.blocks.crawler import Crawler
+from web_listening.blocks.crawler import BrowserCrawler, Crawler, FetchResult, normalize_fetch_mode
 from web_listening.models import Site
 from datetime import datetime
 
@@ -109,3 +109,39 @@ def test_crawler_context_manager():
     with Crawler(client=client) as crawler:
         html, text = crawler.fetch("https://example.com")
     assert "Main Content" in text
+
+
+def test_normalize_fetch_mode_auto_falls_back_to_http():
+    assert normalize_fetch_mode("auto") == "http"
+
+
+def test_crawler_snapshot_uses_browser_mode(monkeypatch):
+    def fake_fetch_page(self, url: str, *, fetch_config_json=None):
+        assert fetch_config_json == {"wait_for": "main"}
+        return FetchResult(
+            raw_html=SAMPLE_HTML,
+            cleaned_html="<body><h1>Main Content</h1></body>",
+            content_text="Main Content\nThis is a test paragraph with important content.",
+            markdown="# Main Content\n\nThis is a test paragraph with important content.",
+            fit_markdown="# Main Content\n\nThis is a test paragraph with important content.",
+            metadata_json={"driver": "browser"},
+            final_url=url,
+            status_code=200,
+        )
+
+    monkeypatch.setattr(BrowserCrawler, "fetch_page", fake_fetch_page)
+
+    crawler = Crawler()
+    site = Site(
+        id=1,
+        url="https://example.com",
+        name="Test",
+        fetch_mode="browser",
+        fetch_config_json={"wait_for": "main"},
+    )
+
+    snapshot = crawler.snapshot(site)
+
+    assert snapshot.fetch_mode == "browser"
+    assert snapshot.metadata_json["driver"] == "browser"
+    assert snapshot.markdown.startswith("# Main Content")

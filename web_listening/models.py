@@ -14,6 +14,8 @@ class Site(BaseModel):
     url: str
     name: str = ""
     tags: List[str] = []
+    fetch_mode: str = "http"
+    fetch_config_json: dict = {}
     created_at: Optional[datetime] = None
     last_checked_at: Optional[datetime] = None
     is_active: bool = True
@@ -27,6 +29,24 @@ class Site(BaseModel):
             except json.JSONDecodeError:
                 return [t.strip() for t in v.split(",") if t.strip()]
         return v or []
+
+    @field_validator("fetch_mode", mode="before")
+    @classmethod
+    def parse_fetch_mode(cls, v):
+        mode = (v or "http").strip().lower()
+        if mode not in {"http", "browser", "auto"}:
+            raise ValueError("fetch_mode must be one of: http, browser, auto")
+        return mode
+
+    @field_validator("fetch_config_json", mode="before")
+    @classmethod
+    def parse_fetch_config_json(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return {}
+        return v or {}
 
 
 class SiteSnapshot(BaseModel):

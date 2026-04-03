@@ -14,17 +14,27 @@ def storage(tmp_path):
 
 
 def test_add_and_get_site(storage):
-    site = Site(url="https://example.com", name="Example", tags=["news"])
+    site = Site(
+        url="https://example.com",
+        name="Example",
+        tags=["news"],
+        fetch_mode="browser",
+        fetch_config_json={"wait_for": "#main"},
+    )
     saved = storage.add_site(site)
     assert saved.id is not None
     assert saved.url == "https://example.com"
     assert saved.name == "Example"
     assert "news" in saved.tags
+    assert saved.fetch_mode == "browser"
+    assert saved.fetch_config_json["wait_for"] == "#main"
 
     retrieved = storage.get_site(saved.id)
     assert retrieved is not None
     assert retrieved.id == saved.id
     assert retrieved.url == saved.url
+    assert retrieved.fetch_mode == "browser"
+    assert retrieved.fetch_config_json["wait_for"] == "#main"
 
 
 def test_get_site_not_found(storage):

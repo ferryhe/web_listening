@@ -56,7 +56,9 @@ def resolve_request_headers(fetch_config_json: Optional[dict] = None) -> dict:
     raw_headers = config.get("headers")
     if isinstance(raw_headers, dict):
         headers.update({str(key): str(value) for key, value in raw_headers.items()})
-    headers["User-Agent"] = resolve_user_agent(fetch_config_json)
+    has_user_agent = any(str(key).lower() == "user-agent" for key in headers)
+    if not has_user_agent or str(config.get("user_agent", "")).strip() or str(config.get("user_agent_profile", "")).strip():
+        headers["User-Agent"] = resolve_user_agent(fetch_config_json)
     return headers
 
 

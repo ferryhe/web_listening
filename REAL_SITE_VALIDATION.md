@@ -1,4 +1,4 @@
-﻿# Real Site Validation
+# Real Site Validation
 
 - Generated at: `2026-04-03T19:03:43.685747+00:00`
 - Validation mode: `http`

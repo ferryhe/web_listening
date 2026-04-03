@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Site(BaseModel):
@@ -13,9 +13,9 @@ class Site(BaseModel):
     id: Optional[int] = None
     url: str
     name: str = ""
-    tags: List[str] = []
+    tags: List[str] = Field(default_factory=list)
     fetch_mode: str = "http"
-    fetch_config_json: dict = {}
+    fetch_config_json: dict = Field(default_factory=dict)
     created_at: Optional[datetime] = None
     last_checked_at: Optional[datetime] = None
     is_active: bool = True
@@ -61,11 +61,11 @@ class SiteSnapshot(BaseModel):
     content_text: str = ""
     markdown: str = ""
     fit_markdown: str = ""
-    metadata_json: dict = {}
+    metadata_json: dict = Field(default_factory=dict)
     fetch_mode: str = "http"
     final_url: str = ""
     status_code: Optional[int] = None
-    links: List[str] = []
+    links: List[str] = Field(default_factory=list)
 
     @field_validator("metadata_json", mode="before")
     @classmethod
@@ -130,7 +130,7 @@ class AnalysisReport(BaseModel):
     period_start: datetime
     period_end: datetime
     generated_at: Optional[datetime] = None
-    site_ids: List[int] = []
+    site_ids: List[int] = Field(default_factory=list)
     summary_md: str = ""
     change_count: int = 0
 
@@ -152,14 +152,14 @@ class CrawlScope(BaseModel):
     site_id: int
     seed_url: str
     allowed_origin: str = ""
-    allowed_page_prefixes: List[str] = []
-    allowed_file_prefixes: List[str] = []
+    allowed_page_prefixes: List[str] = Field(default_factory=list)
+    allowed_file_prefixes: List[str] = Field(default_factory=list)
     max_depth: int = 3
     max_pages: int = 100
     max_files: int = 20
     follow_files: bool = True
     fetch_mode: str = "http"
-    fetch_config_json: dict = {}
+    fetch_config_json: dict = Field(default_factory=dict)
     is_initialized: bool = False
     baseline_run_id: Optional[int] = None
     created_at: Optional[datetime] = None
@@ -239,11 +239,11 @@ class PageSnapshot(BaseModel):
     content_text: str = ""
     markdown: str = ""
     fit_markdown: str = ""
-    metadata_json: dict = {}
+    metadata_json: dict = Field(default_factory=dict)
     fetch_mode: str = "http"
     final_url: str = ""
     status_code: Optional[int] = None
-    links: List[str] = []
+    links: List[str] = Field(default_factory=list)
 
     @field_validator("metadata_json", mode="before")
     @classmethod

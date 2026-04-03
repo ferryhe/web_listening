@@ -38,6 +38,20 @@ OPTIONAL_SMOKE_SITE_FIELDS = {
 }
 
 
+def _parse_bool(value, *, field_name: str, site_key: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    raise ValueError(f"{site_key}.{field_name} must be a boolean value")
+
+
 def validate_smoke_sites(payload: list[dict]) -> list[dict]:
     if not isinstance(payload, list) or not payload:
         raise ValueError("Smoke site catalog must be a non-empty list.")
@@ -95,15 +109,19 @@ def validate_smoke_sites(payload: list[dict]) -> list[dict]:
                 "site_key": site_key,
                 "abbreviation": str(item["abbreviation"]).strip(),
                 "full_name": str(item["full_name"]).strip(),
-                "priority": bool(item["priority"]),
+                "priority": _parse_bool(item["priority"], field_name="priority", site_key=site_key),
                 "homepage_url": str(item["homepage_url"]).strip(),
                 "monitor_url": str(item["monitor_url"]).strip(),
                 "fetch_mode": fetch_mode,
                 "fetch_config_json": fetch_config_json,
-                "smoke_required": bool(item["smoke_required"]),
+                "smoke_required": _parse_bool(
+                    item["smoke_required"], field_name="smoke_required", site_key=site_key
+                ),
                 "smoke_expectation": smoke_expectation,
                 "expected_min_words": int(item["expected_min_words"]),
-                "js_heavy_candidate": bool(item["js_heavy_candidate"]),
+                "js_heavy_candidate": _parse_bool(
+                    item["js_heavy_candidate"], field_name="js_heavy_candidate", site_key=site_key
+                ),
                 "website_status": str(item["website_status"]).strip(),
                 "source_name": str(item["source_name"]).strip(),
                 "source_row": int(item["source_row"]),

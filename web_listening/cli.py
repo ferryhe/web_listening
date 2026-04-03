@@ -31,7 +31,13 @@ def add_site(
     from web_listening.models import Site
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-    fetch_config_json = json.loads(fetch_config) if fetch_config else {}
+    if fetch_config:
+        try:
+            fetch_config_json = json.loads(fetch_config)
+        except json.JSONDecodeError as exc:
+            raise typer.BadParameter(f"Invalid JSON for --fetch-config: {exc.msg}") from exc
+    else:
+        fetch_config_json = {}
     storage = _get_storage()
     site = storage.add_site(
         Site(

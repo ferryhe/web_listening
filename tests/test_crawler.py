@@ -138,6 +138,21 @@ def test_resolve_request_headers_supports_browser_profile():
     assert "Mozilla/5.0" in headers["User-Agent"]
 
 
+def test_resolve_request_headers_preserves_explicit_user_agent_header():
+    headers = resolve_request_headers({"headers": {"User-Agent": "custom-agent/1.0"}})
+    assert headers["User-Agent"] == "custom-agent/1.0"
+
+
+def test_resolve_request_headers_prefers_dedicated_user_agent_over_header():
+    headers = resolve_request_headers(
+        {
+            "headers": {"User-Agent": "custom-agent/1.0"},
+            "user_agent_profile": "browser",
+        }
+    )
+    assert "Mozilla/5.0" in headers["User-Agent"]
+
+
 def test_crawler_fetch_page_uses_custom_user_agent():
     captured_user_agent = ""
 

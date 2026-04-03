@@ -1,4 +1,4 @@
-﻿# Smoke Site Catalog Report
+# Smoke Site Catalog Report
 
 - Generated at: `2026-04-03T19:15:00.701687+00:00`
 - Catalog path: `C:\Project\web_listening\config\smoke_site_catalog.json`

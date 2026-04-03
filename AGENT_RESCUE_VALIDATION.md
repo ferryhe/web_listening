@@ -1,4 +1,4 @@
-﻿# Agent Rescue Validation
+# Agent Rescue Validation
 
 - Generated at: `2026-04-03T19:15:00.741618+00:00`
 - Catalog path: `C:\Project\web_listening\config\smoke_site_catalog.json`

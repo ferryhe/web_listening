@@ -5,7 +5,7 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from web_listening.blocks.storage import Storage
 from web_listening.blocks.rescue import run_site_rescue
@@ -36,9 +36,9 @@ def get_storage() -> Storage:
 class AddSiteRequest(BaseModel):
     url: str
     name: str = ""
-    tags: List[str] = []
+    tags: List[str] = Field(default_factory=list)
     fetch_mode: str = "http"
-    fetch_config_json: dict = {}
+    fetch_config_json: dict = Field(default_factory=dict)
 
 
 class AnalyzeRequest(BaseModel):
@@ -62,7 +62,7 @@ class RescueCheckRequest(BaseModel):
     allow_official_feeds: bool = True
     sitemap_url: Optional[str] = None
     rss_url: Optional[str] = None
-    browser_fetch_config: dict = {}
+    browser_fetch_config: dict = Field(default_factory=dict)
 
 
 class RescueAttemptResponse(BaseModel):

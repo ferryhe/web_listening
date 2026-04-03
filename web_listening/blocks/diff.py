@@ -1,11 +1,29 @@
-import hashlib
 import difflib
+import hashlib
+import re
 from typing import List, Tuple
 from urllib.parse import urljoin, urlparse
 
 
+def canonicalize_text_for_hash(content: str) -> str:
+    """Normalize whitespace and blank lines before hashing."""
+    text = (content or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
+    normalized_lines = []
+    blank_pending = False
+    for line in lines:
+        if not line:
+            blank_pending = bool(normalized_lines)
+            continue
+        if blank_pending and normalized_lines:
+            normalized_lines.append("")
+        normalized_lines.append(line)
+        blank_pending = False
+    return "\n".join(normalized_lines).strip()
+
+
 def compute_hash(content: str) -> str:
-    return hashlib.sha256(content.encode()).hexdigest()
+    return hashlib.sha256(canonicalize_text_for_hash(content).encode()).hexdigest()
 
 
 def select_compare_text(*, fit_markdown: str = "", markdown: str = "", content_text: str = "") -> str:

@@ -1,5 +1,6 @@
 import pytest
 from web_listening.blocks.diff import (
+    canonicalize_text_for_hash,
     compute_hash,
     compute_diff,
     extract_links,
@@ -15,6 +16,17 @@ def test_compute_hash_same_content():
 
 def test_compute_hash_different_content():
     assert compute_hash("hello") != compute_hash("world")
+
+
+def test_compute_hash_ignores_whitespace_only_differences():
+    left = "Hello   world\n\nLine two"
+    right = "Hello world\r\n\r\n\r\nLine two   "
+    assert compute_hash(left) == compute_hash(right)
+
+
+def test_canonicalize_text_for_hash_collapses_blank_lines():
+    text = "A\n\n\nB\n   \nC"
+    assert canonicalize_text_for_hash(text) == "A\n\nB\n\nC"
 
 
 def test_compute_diff_no_change():

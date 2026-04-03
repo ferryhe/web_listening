@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from web_listening.blocks.crawler import Crawler
 from web_listening.blocks.diff import find_document_links
@@ -22,12 +24,16 @@ class ValidationResult:
     markdown_head: str
 
 
-DEFAULT_TARGETS = [
-    ("SOA Home", "https://www.soa.org/"),
-    ("SOA Publications", "https://www.soa.org/publications/publications-landing/"),
-    ("CAS Home", "https://www.casact.org/"),
-    ("CAS Annual Reports", "https://www.casact.org/about/governance/annual-reports"),
-]
+TARGETS_PATH = Path(__file__).resolve().parents[1] / "config" / "dev_test_sites.json"
+
+
+def load_targets() -> list[tuple[str, str]]:
+    payload = json.loads(TARGETS_PATH.read_text(encoding="utf-8"))
+    targets = []
+    for item in payload:
+        targets.append((f"{item['site_name']} Monitor", item["monitor_url"]))
+        targets.append((f"{item['site_name']} Documents", item["document_url"]))
+    return targets
 
 
 def validate_targets(targets: list[tuple[str, str]]) -> list[ValidationResult]:
@@ -91,26 +97,10 @@ def render_markdown(results: list[ValidationResult]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate web_listening against real public sites.")
-    parser.add_argument(
-        "--target",
-        action="append",
-        default=[],
-        help="Custom target in the format Name|URL. May be repeated.",
-    )
-    args = parser.parse_args()
-
-    if args.target:
-        targets = []
-        for raw in args.target:
-            if "|" not in raw:
-                raise SystemExit(f"Invalid --target '{raw}'. Expected Name|URL.")
-            name, url = raw.split("|", 1)
-            targets.append((name.strip(), url.strip()))
-    else:
-        targets = DEFAULT_TARGETS
-
-    print(render_markdown(validate_targets(targets)))
+    argparse.ArgumentParser(
+        description="Validate web_listening against the required development test sites."
+    ).parse_args()
+    print(render_markdown(validate_targets(load_targets())))
 
 
 if __name__ == "__main__":

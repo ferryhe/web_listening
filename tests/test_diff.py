@@ -6,6 +6,7 @@ from web_listening.blocks.diff import (
     extract_links,
     find_new_links,
     find_document_links,
+    select_compare_artifact,
     select_compare_text,
 )
 
@@ -57,6 +58,16 @@ def test_select_compare_text_falls_back_to_content_text():
         content_text="plain text",
     )
     assert selected == "plain text"
+
+
+def test_select_compare_artifact_returns_source_name():
+    source, selected = select_compare_artifact(
+        fit_markdown="",
+        markdown="# Markdown",
+        content_text="plain text",
+    )
+    assert source == "markdown"
+    assert selected == "# Markdown"
 
 
 def test_extract_links_basic():

@@ -109,6 +109,8 @@ def test_crawler_snapshot_creates_snapshot():
     assert snapshot.final_url == "https://example.com"
     assert snapshot.status_code == 200
     assert snapshot.metadata_json["word_count"] > 0
+    assert snapshot.metadata_json["hash_basis"] == "fit_markdown"
+    assert snapshot.metadata_json["hash_normalization"] == "whitespace-normalized-v1"
     assert isinstance(snapshot.captured_at, datetime)
     assert isinstance(snapshot.links, list)
 

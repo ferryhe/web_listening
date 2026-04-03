@@ -6,6 +6,7 @@ from unittest.mock import patch
 import httpx
 
 from web_listening.blocks.document import DocumentProcessor
+from web_listening.blocks.storage import Storage
 from web_listening.models import Document
 
 
@@ -68,3 +69,32 @@ def test_processor_has_no_conversion_methods():
     assert not hasattr(DocumentProcessor, "to_markdown")
     assert not hasattr(DocumentProcessor, "_pdf_to_md")
     assert not hasattr(DocumentProcessor, "_html_to_md")
+
+
+def test_download_reuses_same_sha256_and_blob_path(tmp_path):
+    pdf_bytes = b"repeatable-pdf-bytes"
+    client = make_client(pdf_bytes)
+    storage = Storage(tmp_path / "test.db")
+    proc = DocumentProcessor(client=client, storage=storage)
+
+    with patch("web_listening.blocks.document.settings") as mock_settings:
+        mock_settings.user_agent = "test-agent"
+        mock_settings.downloads_dir = tmp_path
+
+        first_doc = proc.process(
+            url="https://example.com/report.pdf",
+            site_id=1,
+            institution="TestOrg",
+            page_url="https://example.com/reports",
+        )
+        saved = storage.add_document(first_doc)
+        repeated = proc.download(
+            "https://example.com/report.pdf",
+            institution="TestOrg",
+            page_url="https://example.com/reports",
+        )
+
+    assert saved.sha256 == repeated.sha256
+    assert saved.local_path == str(repeated.local_path)
+    assert repeated.local_path.exists()
+    storage.close()

@@ -26,9 +26,25 @@ def compute_hash(content: str) -> str:
     return hashlib.sha256(canonicalize_text_for_hash(content).encode()).hexdigest()
 
 
+def select_compare_artifact(
+    *, fit_markdown: str = "", markdown: str = "", content_text: str = ""
+) -> Tuple[str, str]:
+    """Return the best comparison artifact and its source name."""
+    if (fit_markdown or "").strip():
+        return "fit_markdown", fit_markdown.strip()
+    if (markdown or "").strip():
+        return "markdown", markdown.strip()
+    return "content_text", content_text
+
+
 def select_compare_text(*, fit_markdown: str = "", markdown: str = "", content_text: str = "") -> str:
     """Pick the most agent-friendly representation available for comparisons."""
-    return (fit_markdown or "").strip() or (markdown or "").strip() or content_text
+    _, content = select_compare_artifact(
+        fit_markdown=fit_markdown,
+        markdown=markdown,
+        content_text=content_text,
+    )
+    return content
 
 
 def compute_diff(old: str, new: str) -> Tuple[bool, str]:

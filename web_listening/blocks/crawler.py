@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 
 import httpx
 
-from web_listening.blocks.diff import compute_hash, extract_links, select_compare_text
+from web_listening.blocks.diff import compute_hash, extract_links, select_compare_artifact
 from web_listening.blocks.normalizer import normalize_html
 from web_listening.config import settings
 from web_listening.models import Site, SiteSnapshot
@@ -37,11 +37,14 @@ def normalize_fetch_mode(mode: str | None) -> str:
 
 def _snapshot_from_page(site: Site, page: FetchResult, fetch_mode: str) -> SiteSnapshot:
     links = extract_links(page.raw_html, page.final_url or site.url)
-    compare_text = select_compare_text(
+    hash_basis, compare_text = select_compare_artifact(
         fit_markdown=page.fit_markdown,
         markdown=page.markdown,
         content_text=page.content_text,
     )
+    metadata = dict(page.metadata_json)
+    metadata["hash_basis"] = hash_basis
+    metadata["hash_normalization"] = "whitespace-normalized-v1"
     return SiteSnapshot(
         site_id=site.id,
         captured_at=datetime.now(timezone.utc),
@@ -51,7 +54,7 @@ def _snapshot_from_page(site: Site, page: FetchResult, fetch_mode: str) -> SiteS
         content_text=page.content_text,
         markdown=page.markdown,
         fit_markdown=page.fit_markdown,
-        metadata_json=page.metadata_json,
+        metadata_json=metadata,
         fetch_mode=fetch_mode,
         final_url=page.final_url,
         status_code=page.status_code,

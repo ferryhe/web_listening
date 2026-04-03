@@ -1,11 +1,13 @@
 # web_listening
 
-Monitor websites for changes, download documents, and generate AI summaries.
+Monitor websites for changes, download documents, expose normalized snapshots, and generate AI summaries.
 
 ## Features
 
 - **Website monitoring** – crawl sites, compute content diffs, detect new links and documents
+- **Normalized snapshots** – store raw HTML, cleaned HTML, Markdown, fit-Markdown, and fetch metadata for agent-friendly consumption
 - **Document downloading** – fetch PDFs, DOCX, XLSX and save locally; content conversion is handled by the separate `doc_to_md` module
+- **Document handoff state** – keep `content_md` write-back fields so an external agent or `doc_to_md` pipeline can populate converted Markdown later
 - **AI analysis** – summarise weekly changes with OpenAI (falls back to local summary)
 - **SQLite storage** – lightweight, no external DB required
 - **CLI** – `web-listening` command with rich terminal output
@@ -124,13 +126,27 @@ Start the server with `web-listening serve`, then browse to `http://localhost:80
 | `GET` | `/api/v1/sites` | List active sites |
 | `POST` | `/api/v1/sites` | Add a site |
 | `GET` | `/api/v1/sites/{id}` | Get site details |
+| `GET` | `/api/v1/sites/{id}/snapshots/latest` | Get the latest normalized snapshot for a site |
 | `DELETE` | `/api/v1/sites/{id}` | Deactivate a site |
 | `POST` | `/api/v1/sites/{id}/check` | Queue a check (background) |
 | `POST` | `/api/v1/sites/{id}/download-docs` | Queue document download |
 | `GET` | `/api/v1/changes` | List changes (filter by `site_id`, `since`) |
 | `GET` | `/api/v1/documents` | List documents (filter by `institution`, `site_id`) |
+| `PATCH` | `/api/v1/documents/{id}/content` | Write converted Markdown back to a downloaded document |
 | `POST` | `/api/v1/analyze` | Run analysis and store report |
 | `GET` | `/api/v1/analyses` | List analysis reports |
+
+### Downstream document conversion
+
+This project still treats document conversion as an external concern.
+
+Recommended flow:
+
+1. `web_listening` downloads the source file and records document metadata
+2. an external AI agent or `doc_to_md` converts the file into Markdown
+3. the converted Markdown is written back through `PATCH /api/v1/documents/{id}/content`
+
+This keeps `web_listening` focused on tracking, evidence, and retrieval while allowing conversion quality to evolve independently.
 
 ## Production Deployment
 
@@ -295,7 +311,8 @@ web_listening/
 │   ├── models.py          # Data models
 │   ├── cli.py             # Typer CLI
 │   ├── blocks/
-│   │   ├── crawler.py     # HTTP crawling + text extraction
+│   │   ├── crawler.py     # HTTP crawling + normalized snapshot creation
+│   │   ├── normalizer.py  # HTML → cleaned HTML / Markdown / fit-Markdown
 │   │   ├── diff.py        # Hashing, diffing, link extraction
 │   │   ├── document.py    # Document download (no conversion; content_md left for doc_to_md module)
 │   │   ├── storage.py     # SQLite persistence

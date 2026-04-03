@@ -22,7 +22,9 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 
 - Register or inspect sites with `POST /api/v1/sites`, `GET /api/v1/sites`, or the matching CLI commands.
 - Trigger monitoring with `POST /api/v1/sites/{id}/check`.
+- Read normalized page artifacts with `GET /api/v1/sites/{id}/snapshots/latest`.
 - Trigger document downloads with `POST /api/v1/sites/{id}/download-docs`.
+- Let downstream agents write converted Markdown back with `PATCH /api/v1/documents/{id}/content`.
 - Generate analysis with `POST /api/v1/analyze`, then consume stored reports from `GET /api/v1/analyses`.
 - Pull machine-consumable outputs from `GET /api/v1/changes`, `GET /api/v1/documents`, and `GET /api/v1/analyses`.
 

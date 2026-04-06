@@ -12,7 +12,7 @@
 2. [方向 E：搜索 API 抽象层](#2-方向-e搜索-api-抽象层)
 3. [方向 C：结构化变化元数据](#3-方向-c结构化变化元数据)
 4. [方向 B：变化后自动搜索背景](#4-方向-b变化后自动搜索背景)
-5. [方向 D：MCP 工具规范](#5-方向-dmcp-工具规范)
+5. [方向 D：MCP 工具规范与实现](#5-方向-dmcp-工具规范与实现)
 6. [测试策略总览](#6-测试策略总览)
 7. [审核检查清单](#7-审核检查清单)
 8. [依赖关系图](#8-依赖关系图)
@@ -23,21 +23,22 @@
 
 ```
 迭代 1（2-3 周）
-  ├── 方向 E：搜索抽象层（基础设施）
+  ├── 方向 E：搜索抽象层（基础设施，5 个 provider）
   └── 方向 C：结构化 Change 元数据（独立，无外部依赖）
 
 迭代 2（2-3 周）
   └── 方向 B：变化后自动搜索背景（依赖 E）
 
 迭代 3（2-3 周）
-  └── 方向 D：MCP 工具规范（依赖 E + C + B 全部就绪）
+  ├── 方向 D 阶段一：MCP 工具规范文档（依赖 E + C + B 全部就绪）
+  └── 方向 D 阶段二：MCP Server 实现（fastmcp，依赖阶段一）
 ```
 
 交付顺序的理由：
-- **E 先行**：其他三个方向都需要"搜索能力"这个基础设施。
+- **E 先行**：其他三个方向都需要"搜索能力"这个基础设施。E 提供 5 个 provider（Desearch、Tavily、Brave、SerpAPI、DuckDuckGo），agent 框架（OpenClaw 等）可按需选择。
 - **C 可并行**：结构化 Change 元数据只改 `models.py` + `storage.py`，不引入新依赖，可与 E 同步进行。
 - **B 依赖 E**：必须先有 `SearchProvider` 抽象才能在分析流水线中调用搜索。
-- **D 最后**：MCP 工具描述需要稳定的后端契约，等 E/C/B 都落地后再写工具定义最准确。
+- **D 分两阶段**：阶段一（规范文档）等 E/C/B 都落地后再写工具定义最准确；阶段二（MCP Server 实现）紧跟阶段一，在同一迭代中交付。
 
 ---
 
@@ -46,26 +47,42 @@
 ### 2.1 目标
 
 引入 `SearchProvider` 抽象，让其他模块可以调用"搜索"而不耦合具体搜索服务商。  
-默认 provider 为 `NullSearchProvider`（不做任何事），避免破坏现有功能。
+默认 provider 为 `NullSearchProvider`（不做任何事），避免破坏现有功能。  
+同时提供 **5 个 provider** 供 OpenClaw 等 agent 框架按需选择。
+
+> **关于 AI API 依赖**：当前项目的 OpenAI 分析功能是**完全可选的**。`Analyzer._generate_summary()` 在 `WL_OPENAI_API_KEY` 为空时自动降级为本地规则摘要（`_local_summary`），不调用任何外部服务。搜索 provider 同理，`NullSearchProvider` 为默认值，零外部依赖。
 
 ### 2.2 涉及文件
 
 | 文件 | 操作 | 说明 |
 |---|---|---|
-| `web_listening/blocks/searcher.py` | **新建** | Provider 抽象 + 三个实现 |
-| `web_listening/config.py` | **修改** | 增加 `search_provider`、`desearch_api_key`、`search_max_results` 配置项 |
-| `pyproject.toml` | **修改** | 新增 `[project.optional-dependencies]` `search` 组 |
-| `tests/test_searcher.py` | **新建** | 单元测试 |
+| `web_listening/blocks/searcher.py` | **新建** | Provider 抽象 + 6 个实现（含 Null） |
+| `web_listening/config.py` | **修改** | 增加 `search_provider` + 各 provider 的 API key 配置项 |
+| `pyproject.toml` | **修改** | 每个 provider 独立可选依赖组 |
+| `tests/test_searcher.py` | **新建** | 单元测试（全部 provider） |
 | `README.md` | **修改** | 新增配置表行、安装说明 |
 
 ### 2.3 详细实现规格
+
+#### 支持的 Provider 一览
+
+| Provider | 类名 | `WL_SEARCH_PROVIDER` 值 | 需要 API Key | 安装命令 | 特点 |
+|---|---|---|---|---|---|
+| 无操作（默认） | `NullSearchProvider` | `none` | ❌ | 无需安装 | 零依赖，安全默认值 |
+| Desearch | `DesearchProvider` | `desearch` | ✅ `WL_DESEARCH_API_KEY` | `pip install 'web-listening[search-desearch]'` | Bittensor 去中心化，含 `quality_score` |
+| Tavily | `TavilyProvider` | `tavily` | ✅ `WL_TAVILY_API_KEY` | `pip install 'web-listening[search-tavily]'` | AI 优化搜索，支持深度搜索，有免费额度 |
+| Brave Search | `BraveSearchProvider` | `brave` | ✅ `WL_BRAVE_API_KEY` | `pip install 'web-listening[search-brave]'` | 隐私优先，有免费/付费计划，无需第三方 SDK |
+| SerpAPI | `SerpAPIProvider` | `serpapi` | ✅ `WL_SERPAPI_API_KEY` | `pip install 'web-listening[search-serpapi]'` | Google/Bing/Yahoo 结果，稳定可靠 |
+| DuckDuckGo | `DuckDuckGoProvider` | `duckduckgo` | ❌ | `pip install 'web-listening[search-duckduckgo]'` | 完全免费，无需注册，隐私友好 |
+
+---
 
 #### `web_listening/blocks/searcher.py`
 
 ```python
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 
 
@@ -96,47 +113,31 @@ class SearchProvider(ABC):
 class NullSearchProvider(SearchProvider):
     """无操作实现，默认值；搜索未配置时不报错。"""
 
-    async def search(
-        self,
-        query: str,
-        count: int = 10,
-        start: int = 0,
-    ) -> List[SearchResult]:
+    async def search(self, query: str, count: int = 10, start: int = 0) -> List[SearchResult]:
         return []
 
 
 class DesearchProvider(SearchProvider):
-    """基于 desearch-py SDK 的网页搜索实现。"""
+    """基于 desearch-py SDK 的网页搜索实现（Bittensor Subnet 22）。"""
 
     def __init__(self, api_key: str, max_results: int = 10):
         self._api_key = api_key
         self._max_results = max_results
 
-    async def search(
-        self,
-        query: str,
-        count: int = 10,
-        start: int = 0,
-    ) -> List[SearchResult]:
+    async def search(self, query: str, count: int = 10, start: int = 0) -> List[SearchResult]:
         try:
-            from desearch_py import Desearch  # noqa: PLC0415
+            from desearch_py import Desearch
         except ImportError as exc:
             raise ImportError(
-                "desearch-py is required for DesearchProvider. "
-                "Install it with: pip install 'web-listening[search]'"
+                "Install with: pip install 'web-listening[search-desearch]'"
             ) from exc
 
         limit = min(count, self._max_results)
         async with Desearch(api_key=self._api_key) as client:
-            resp = await client.basic_web_search(
-                query=query,
-                count=limit,
-                start=start,
-            )
+            resp = await client.basic_web_search(query=query, count=limit, start=start)
 
-        results = []
-        for item in (resp.get("data") or []):
-            results.append(SearchResult(
+        return [
+            SearchResult(
                 title=item.get("title", ""),
                 url=item.get("link") or item.get("url", ""),
                 snippet=item.get("snippet") or item.get("description", ""),
@@ -144,50 +145,253 @@ class DesearchProvider(SearchProvider):
                 quality_score=item.get("quality_score"),
                 published_date=item.get("published_date"),
                 relevance=item.get("relevance"),
-            ))
+            )
+            for item in (resp.get("data") or [])
+        ]
+
+
+class TavilyProvider(SearchProvider):
+    """基于 tavily-python SDK 的 AI 增强网页搜索实现。"""
+
+    def __init__(self, api_key: str, search_depth: str = "basic", max_results: int = 10):
+        self._api_key = api_key
+        self._search_depth = search_depth   # "basic" 或 "advanced"
+        self._max_results = max_results
+
+    async def search(self, query: str, count: int = 10, start: int = 0) -> List[SearchResult]:
+        try:
+            from tavily import AsyncTavilyClient
+        except ImportError as exc:
+            raise ImportError(
+                "Install with: pip install 'web-listening[search-tavily]'"
+            ) from exc
+
+        client = AsyncTavilyClient(api_key=self._api_key)
+        limit = min(count, self._max_results)
+        resp = await client.search(query=query, search_depth=self._search_depth, max_results=limit)
+
+        return [
+            SearchResult(
+                title=item.get("title", ""),
+                url=item.get("url", ""),
+                snippet=item.get("content", ""),
+                domain=item.get("url", "").split("/")[2] if item.get("url") else "",
+                relevance=item.get("score"),
+                published_date=item.get("published_date"),
+            )
+            for item in (resp.get("results") or [])
+        ]
+
+
+class BraveSearchProvider(SearchProvider):
+    """基于 Brave Search REST API 的实现（使用 httpx，已是基础依赖，无需额外安装）。"""
+
+    _BASE_URL = "https://api.search.brave.com/res/v1/web/search"
+
+    def __init__(self, api_key: str, max_results: int = 10):
+        self._api_key = api_key
+        self._max_results = max_results
+
+    async def search(self, query: str, count: int = 10, start: int = 0) -> List[SearchResult]:
+        import httpx
+
+        limit = min(count, self._max_results)
+        headers = {
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "X-Subscription-Token": self._api_key,
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                self._BASE_URL,
+                headers=headers,
+                params={"q": query, "count": limit, "offset": start},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        return [
+            SearchResult(
+                title=item.get("title", ""),
+                url=item.get("url", ""),
+                snippet=item.get("description", ""),
+                domain=item.get("meta_url", {}).get("hostname", ""),
+                published_date=item.get("age"),
+            )
+            for item in (data.get("web", {}).get("results") or [])
+        ]
+
+
+class SerpAPIProvider(SearchProvider):
+    """基于 SerpAPI 的搜索实现，支持 Google/Bing/Yahoo 结果。"""
+
+    def __init__(self, api_key: str, engine: str = "google", max_results: int = 10):
+        self._api_key = api_key
+        self._engine = engine           # "google" | "bing" | "yahoo"
+        self._max_results = max_results
+
+    async def search(self, query: str, count: int = 10, start: int = 0) -> List[SearchResult]:
+        try:
+            from serpapi import GoogleSearch
+        except ImportError as exc:
+            raise ImportError(
+                "Install with: pip install 'web-listening[search-serpapi]'"
+            ) from exc
+
+        import asyncio
+        limit = min(count, self._max_results)
+        params = {
+            "q": query, "api_key": self._api_key,
+            "engine": self._engine, "num": limit, "start": start,
+        }
+        loop = asyncio.get_event_loop()
+        search_obj = GoogleSearch(params)
+        raw = await loop.run_in_executor(None, search_obj.get_dict)
+
+        return [
+            SearchResult(
+                title=item.get("title", ""),
+                url=item.get("link", ""),
+                snippet=item.get("snippet", ""),
+                domain=item.get("displayed_link", ""),
+                published_date=item.get("date"),
+            )
+            for item in (raw.get("organic_results") or [])
+        ]
+
+
+class DuckDuckGoProvider(SearchProvider):
+    """基于 duckduckgo_search SDK 的免费搜索实现（无需 API Key）。"""
+
+    def __init__(self, max_results: int = 10, region: str = "wt-wt"):
+        self._max_results = max_results
+        self._region = region           # "wt-wt" = 全球，"cn-zh" = 中文
+
+    async def search(self, query: str, count: int = 10, start: int = 0) -> List[SearchResult]:
+        try:
+            from duckduckgo_search import AsyncDDGS
+        except ImportError as exc:
+            raise ImportError(
+                "Install with: pip install 'web-listening[search-duckduckgo]'"
+            ) from exc
+
+        limit = min(count, self._max_results)
+        results = []
+        async with AsyncDDGS() as ddgs:
+            async for item in ddgs.text(keywords=query, region=self._region, max_results=limit):
+                results.append(SearchResult(
+                    title=item.get("title", ""),
+                    url=item.get("href", ""),
+                    snippet=item.get("body", ""),
+                    domain=item.get("href", "").split("/")[2] if item.get("href") else "",
+                ))
         return results
 
 
 def build_search_provider() -> SearchProvider:
     """根据 Settings 构建并返回合适的 SearchProvider 实例。"""
-    from web_listening.config import settings  # noqa: PLC0415
+    from web_listening.config import settings
 
     provider = getattr(settings, "search_provider", "none").lower()
+
     if provider == "desearch":
         api_key = getattr(settings, "desearch_api_key", "")
         if not api_key:
-            raise ValueError(
-                "WL_DESEARCH_API_KEY must be set when WL_SEARCH_PROVIDER=desearch"
-            )
-        max_results = getattr(settings, "search_max_results", 10)
-        return DesearchProvider(api_key=api_key, max_results=max_results)
-    # 默认：none / 任何未知值
+            raise ValueError("WL_DESEARCH_API_KEY must be set when WL_SEARCH_PROVIDER=desearch")
+        return DesearchProvider(api_key=api_key, max_results=settings.search_max_results)
+
+    if provider == "tavily":
+        api_key = getattr(settings, "tavily_api_key", "")
+        if not api_key:
+            raise ValueError("WL_TAVILY_API_KEY must be set when WL_SEARCH_PROVIDER=tavily")
+        depth = getattr(settings, "tavily_search_depth", "basic")
+        return TavilyProvider(api_key=api_key, search_depth=depth, max_results=settings.search_max_results)
+
+    if provider == "brave":
+        api_key = getattr(settings, "brave_api_key", "")
+        if not api_key:
+            raise ValueError("WL_BRAVE_API_KEY must be set when WL_SEARCH_PROVIDER=brave")
+        return BraveSearchProvider(api_key=api_key, max_results=settings.search_max_results)
+
+    if provider == "serpapi":
+        api_key = getattr(settings, "serpapi_api_key", "")
+        if not api_key:
+            raise ValueError("WL_SERPAPI_API_KEY must be set when WL_SEARCH_PROVIDER=serpapi")
+        engine = getattr(settings, "serpapi_engine", "google")
+        return SerpAPIProvider(api_key=api_key, engine=engine, max_results=settings.search_max_results)
+
+    if provider == "duckduckgo":
+        region = getattr(settings, "duckduckgo_region", "wt-wt")
+        return DuckDuckGoProvider(max_results=settings.search_max_results, region=region)
+
     return NullSearchProvider()
 ```
 
 #### `web_listening/config.py` 新增字段
 
 ```python
-search_provider: str = "none"       # none | desearch
-desearch_api_key: str = ""
+# 搜索 provider 选择
+search_provider: str = "none"           # none | desearch | tavily | brave | serpapi | duckduckgo
 search_max_results: int = 10
+
+# Desearch（Bittensor Subnet 22）
+desearch_api_key: str = ""
+
+# Tavily
+tavily_api_key: str = ""
+tavily_search_depth: str = "basic"      # basic | advanced
+
+# Brave Search
+brave_api_key: str = ""
+
+# SerpAPI
+serpapi_api_key: str = ""
+serpapi_engine: str = "google"          # google | bing | yahoo
+
+# DuckDuckGo（无需 API Key）
+duckduckgo_region: str = "wt-wt"       # wt-wt（全球）| cn-zh（中文）等
 ```
 
-#### `pyproject.toml` 新增可选依赖
+#### `pyproject.toml` 新增可选依赖（每 provider 独立组）
 
 ```toml
 [project.optional-dependencies]
-search = [
+search-desearch    = ["desearch-py>=0.1.0"]
+search-tavily      = ["tavily-python>=0.3.0"]
+search-brave       = []                          # 仅用 httpx（已是基础依赖）
+search-serpapi     = ["google-search-results>=2.4.0"]
+search-duckduckgo  = ["duckduckgo-search>=6.2.0"]
+search             = [                           # 一键安装全部 provider
     "desearch-py>=0.1.0",
+    "tavily-python>=0.3.0",
+    "google-search-results>=2.4.0",
+    "duckduckgo-search>=6.2.0",
 ]
 ```
 
 #### `.env.example` 新增行
 
 ```dotenv
-WL_SEARCH_PROVIDER=none             # none | desearch
-WL_DESEARCH_API_KEY=                # 仅当 SEARCH_PROVIDER=desearch 时需要
+# 搜索 Provider（选一个）
+WL_SEARCH_PROVIDER=none       # none | desearch | tavily | brave | serpapi | duckduckgo
 WL_SEARCH_MAX_RESULTS=10
+
+# Desearch（Bittensor 去中心化搜索）
+WL_DESEARCH_API_KEY=
+
+# Tavily（AI 增强搜索）
+WL_TAVILY_API_KEY=
+WL_TAVILY_SEARCH_DEPTH=basic  # basic | advanced
+
+# Brave Search（隐私优先）
+WL_BRAVE_API_KEY=
+
+# SerpAPI（Google/Bing/Yahoo）
+WL_SERPAPI_API_KEY=
+WL_SERPAPI_ENGINE=google      # google | bing | yahoo
+
+# DuckDuckGo（免费，无需 Key）
+WL_DUCKDUCKGO_REGION=wt-wt   # wt-wt（全球）| cn-zh（中文）
 ```
 
 ### 2.4 测试规格（`tests/test_searcher.py`）
@@ -196,18 +400,31 @@ WL_SEARCH_MAX_RESULTS=10
 |---|---|---|
 | `NullSearchProvider` 返回空列表 | `asyncio.run(NullSearchProvider().search("test"))` | `== []` |
 | `build_search_provider` 默认返回 `NullSearchProvider` | 不设置任何环境变量 | `isinstance(result, NullSearchProvider)` |
-| `build_search_provider` 配置 desearch 无 key 时抛出 `ValueError` | `settings.search_provider = "desearch"`，不设 key | `raises(ValueError)` |
-| `DesearchProvider.search` 正确解析 API 响应 | mock `desearch_py.Desearch`，返回固定 dict | `len(results) == 2`，字段映射正确 |
-| `SearchResult` 字段可选，缺失不报错 | 传入空 dict 构造 `SearchResult` | 无异常，可选字段为 `None` |
+| `build_search_provider` 未知 provider 名降级为 `NullSearchProvider` | `search_provider = "unknown_engine"` | `isinstance(result, NullSearchProvider)` |
+| `build_search_provider(desearch)` 无 key 抛出 `ValueError` | `search_provider="desearch"`，不设 key | `raises(ValueError)` |
+| `build_search_provider(tavily)` 无 key 抛出 `ValueError` | `search_provider="tavily"`，不设 key | `raises(ValueError)` |
+| `build_search_provider(brave)` 无 key 抛出 `ValueError` | `search_provider="brave"`，不设 key | `raises(ValueError)` |
+| `build_search_provider(serpapi)` 无 key 抛出 `ValueError` | `search_provider="serpapi"`，不设 key | `raises(ValueError)` |
+| `build_search_provider(duckduckgo)` 无需 key 正常返回 | `search_provider="duckduckgo"` | `isinstance(result, DuckDuckGoProvider)` |
+| `DesearchProvider.search` 解析 API 响应 | mock `desearch_py.Desearch`，返回固定 dict | `len == 2`，`quality_score` 字段映射正确 |
+| `TavilyProvider.search` 解析 API 响应 | mock `AsyncTavilyClient`，返回固定 dict | `relevance` 字段映射到 `score` |
+| `BraveSearchProvider.search` 解析 API 响应 | mock `httpx.AsyncClient.get`，返回固定 JSON | `domain` 从 `meta_url.hostname` 提取 |
+| `SerpAPIProvider.search` 解析 API 响应 | mock `GoogleSearch.get_dict`，返回固定 dict | `url` 从 `link` 字段映射 |
+| `DuckDuckGoProvider.search` 解析 API 响应 | mock `AsyncDDGS.text`，yield 固定 dict | `snippet` 从 `body` 字段映射 |
+| 任意 provider 的 SDK 未安装时给出清晰 `ImportError` | 对应 SDK 抛出 `ModuleNotFoundError` | `ImportError` 消息含 `pip install` 提示 |
+| `SearchResult` 可选字段缺失不报错 | 最小参数构造 | `quality_score is None`，`published_date is None` |
 
 ### 2.5 审核检查点
 
 - [ ] `NullSearchProvider` 是默认值，现有流程无任何改变
-- [ ] `desearch-py` 只在 `[search]` 可选依赖中，不污染基础安装
-- [ ] `DesearchProvider` 在 `desearch-py` 未安装时给出清晰 `ImportError` 消息
+- [ ] 每个 provider 的 SDK 都只在对应的可选依赖组中，不污染基础安装
+- [ ] `BraveSearchProvider` 使用 `httpx`（已是基础依赖），**不需要**额外 SDK
+- [ ] `DuckDuckGoProvider` 不需要 API Key，`build_search_provider` 中不做 key 校验
+- [ ] 所有需要 API Key 的 provider 在 key 为空时给出清晰的 `ValueError`（含 env var 名称）
+- [ ] 所有 provider 的 SDK 未安装时给出清晰的 `ImportError`（含 `pip install` 命令）
 - [ ] `Settings` 新字段全部有默认值，`WL_` 前缀，`.env.example` 同步更新
 - [ ] `build_search_provider` 是纯工厂函数，不持有模块级状态
-- [ ] 所有测试覆盖 happy path + error path
+- [ ] 所有测试覆盖 happy path + error path（包括 SDK 未安装 mock）
 
 ---
 
@@ -575,7 +792,7 @@ def analyze(since: str = typer.Option(None, "--since")):
 
 ---
 
-## 5. 方向 D：MCP 工具规范
+## 5. 方向 D：MCP 工具规范与实现
 
 ### 5.1 目标
 
@@ -590,6 +807,301 @@ def analyze(since: str = typer.Option(None, "--since")):
 | `mcp/README.md` | **新建** | MCP server 概述与快速启动指南 |
 
 > 实际 MCP server 代码（`mcp/server.py` 等）将在后续迭代中实现；本阶段只交付规范。
+
+### 5.6 MCP Server 实现计划
+
+本节将规范文档转化为可运行的 MCP server，作为方向 D 的第二阶段实施。
+
+#### 5.6.1 涉及文件
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `mcp/server.py` | **新建** | MCP server 主入口，使用 `fastmcp` 注册所有工具和资源 |
+| `mcp/__init__.py` | **新建** | 空文件，使 `mcp/` 成为 Python 包 |
+| `mcp/README.md` | **新建** | 快速启动指南 + 与 OpenClaw/LangChain/CrewAI 的集成说明 |
+| `mcp/TOOLS.md` | **新建** | 每个工具的完整接口文档（从 5.3 节生成） |
+| `mcp/RESOURCES.md` | **新建** | 每个资源的 URI 规范文档（从 5.4 节生成） |
+| `pyproject.toml` | **修改** | 新增 `[mcp]` 可选依赖组；新增 `web-listening-mcp` 入口命令 |
+
+#### 5.6.2 依赖选型
+
+使用 [`fastmcp`](https://github.com/jlowin/fastmcp)（MCP 官方 Python SDK 的高层封装），原因：
+- 装饰器语法与 FastAPI 高度一致，团队学习成本低
+- 工具参数自动从函数签名生成 JSON Schema（与 Pydantic 集成）
+- 支持 stdio、SSE、HTTP 三种传输层
+
+```toml
+# pyproject.toml 新增
+[project.optional-dependencies]
+mcp = [
+    "fastmcp>=2.0.0",
+]
+```
+
+```bash
+# 启动命令
+pip install 'web-listening[mcp]'
+web-listening-mcp          # stdio 模式（供 Claude Desktop 等桌面客户端使用）
+web-listening-mcp --transport sse --port 8001   # SSE 模式（供网页 agent 使用）
+```
+
+#### 5.6.3 `mcp/server.py` 详细实现规格
+
+```python
+"""web_listening MCP server — exposes monitoring capabilities as MCP tools."""
+from __future__ import annotations
+
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional
+
+import fastmcp
+from fastmcp import FastMCP
+
+from web_listening.blocks.storage import Storage
+from web_listening.config import settings
+
+mcp = FastMCP(
+    name="web-listening",
+    instructions=(
+        "A website monitoring assistant. "
+        "Use add_site to register URLs, check_site to trigger a crawl, "
+        "list_changes to see what changed, and run_analysis for an AI summary."
+    ),
+)
+
+# ─── 工具实现 ────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+def add_site(url: str, name: str = "", tags: List[str] = None, fetch_mode: str = "http") -> dict:
+    """Add a URL to the monitoring watch list. Returns the created Site object."""
+    from web_listening.models import Site
+    tags = tags or []
+    storage = Storage(settings.db_path)
+    try:
+        site = storage.add_site(Site(url=url, name=name or url, tags=tags, fetch_mode=fetch_mode))
+        return site.model_dump()
+    finally:
+        storage.close()
+
+
+@mcp.tool()
+def list_sites(include_inactive: bool = False) -> List[dict]:
+    """List all monitored websites."""
+    storage = Storage(settings.db_path)
+    try:
+        sites = storage.list_sites()
+        if not include_inactive:
+            sites = [s for s in sites if s.is_active]
+        return [s.model_dump() for s in sites]
+    finally:
+        storage.close()
+
+
+@mcp.tool()
+def check_site(site_id: int) -> dict:
+    """Trigger an immediate crawl and change-detection for the given site (runs in background)."""
+    import threading
+    from web_listening.api.routes import _do_check
+    threading.Thread(target=_do_check, args=(site_id,), daemon=True).start()
+    return {"status": "check queued", "site_id": site_id}
+
+
+@mcp.tool()
+def list_changes(site_id: Optional[int] = None, since: Optional[str] = None) -> List[dict]:
+    """List detected changes, optionally filtered by site or start date (ISO 8601)."""
+    from dateutil import parser as dtparser
+    storage = Storage(settings.db_path)
+    try:
+        since_dt = dtparser.parse(since) if since else None
+        changes = storage.list_changes(site_id=site_id, since=since_dt)
+        return [c.model_dump() for c in changes]
+    finally:
+        storage.close()
+
+
+@mcp.tool()
+def get_latest_snapshot(site_id: int) -> dict:
+    """Return the most recent content snapshot for a site (includes markdown and links)."""
+    storage = Storage(settings.db_path)
+    try:
+        snap = storage.get_latest_snapshot(site_id)
+        if not snap:
+            return {"error": f"No snapshot found for site {site_id}"}
+        return snap.model_dump()
+    finally:
+        storage.close()
+
+
+@mcp.tool()
+def list_documents(institution: Optional[str] = None, site_id: Optional[int] = None) -> List[dict]:
+    """List downloaded documents, optionally filtered by institution or site."""
+    storage = Storage(settings.db_path)
+    try:
+        docs = storage.list_documents(site_id=site_id, institution=institution)
+        return [d.model_dump() for d in docs]
+    finally:
+        storage.close()
+
+
+@mcp.tool()
+def run_analysis(since_date: Optional[str] = None) -> dict:
+    """Run AI analysis on recent changes and return a Markdown report."""
+    import asyncio
+    from dateutil import parser as dtparser
+    from web_listening.blocks.analyzer import Analyzer
+    from web_listening.blocks.searcher import build_search_provider
+
+    storage = Storage(settings.db_path)
+    try:
+        period_end = datetime.now(timezone.utc)
+        period_start = dtparser.parse(since_date) if since_date else period_end - timedelta(days=7)
+        changes = storage.list_changes(since=period_start)
+        analyzer = Analyzer()
+        search_provider = build_search_provider()
+        report = asyncio.run(
+            analyzer.analyze_with_search_context(
+                changes, period_start, period_end,
+                search_provider=search_provider,
+            )
+        )
+        saved = storage.add_analysis(report)
+        return saved.model_dump()
+    finally:
+        storage.close()
+
+
+@mcp.tool()
+def deactivate_site(site_id: int) -> dict:
+    """Stop monitoring a site (soft delete)."""
+    storage = Storage(settings.db_path)
+    try:
+        storage.deactivate_site(site_id)
+        return {"status": "deactivated", "site_id": site_id}
+    finally:
+        storage.close()
+
+
+# ─── 资源实现 ────────────────────────────────────────────────────────────────
+
+@mcp.resource("site://{site_id}/latest")
+def resource_latest_snapshot(site_id: int) -> str:
+    """Latest snapshot markdown for a site."""
+    storage = Storage(settings.db_path)
+    try:
+        snap = storage.get_latest_snapshot(site_id)
+        return snap.fit_markdown or snap.markdown if snap else ""
+    finally:
+        storage.close()
+
+
+@mcp.resource("changes://recent")
+def resource_recent_changes() -> str:
+    """Changes detected in the last 7 days as a formatted list."""
+    from dateutil.relativedelta import relativedelta
+    storage = Storage(settings.db_path)
+    try:
+        since = datetime.now(timezone.utc) - timedelta(days=7)
+        changes = storage.list_changes(since=since)
+        if not changes:
+            return "No changes in the last 7 days."
+        lines = [f"- [{c.change_type}] site={c.site_id}: {c.summary}" for c in changes]
+        return "\n".join(lines)
+    finally:
+        storage.close()
+
+
+@mcp.resource("analysis://latest")
+def resource_latest_analysis() -> str:
+    """Most recent AI analysis report in Markdown."""
+    storage = Storage(settings.db_path)
+    try:
+        reports = storage.list_analyses()
+        return reports[0].summary_md if reports else "No analysis reports yet."
+    finally:
+        storage.close()
+
+
+# ─── 入口 ─────────────────────────────────────────────────────────────────────
+
+def main():
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+#### 5.6.4 `pyproject.toml` 入口脚本
+
+```toml
+[project.scripts]
+web-listening     = "web_listening.cli:app"
+web-listening-mcp = "mcp.server:main"       # 新增 MCP server 入口
+```
+
+#### 5.6.5 `mcp/README.md` 快速启动（规格）
+
+```markdown
+# web-listening MCP Server
+
+## 安装
+pip install 'web-listening[mcp]'
+
+## 启动（stdio 模式，供 Claude Desktop / OpenClaw 使用）
+web-listening-mcp
+
+## 启动（SSE 模式，供网页 agent 使用）
+web-listening-mcp --transport sse --port 8001
+
+## Claude Desktop 配置（~/.claude/config.json）
+{
+  "mcpServers": {
+    "web-listening": {
+      "command": "web-listening-mcp",
+      "env": {
+        "WL_DATA_DIR": "/path/to/data",
+        "WL_OPENAI_API_KEY": "sk-...",
+        "WL_SEARCH_PROVIDER": "duckduckgo"
+      }
+    }
+  }
+}
+
+## 可用工具
+- add_site / list_sites / deactivate_site
+- check_site / get_latest_snapshot
+- list_changes / list_documents
+- run_analysis
+
+## 可用资源
+- site://{id}/latest — 站点最新 Markdown 快照
+- changes://recent  — 最近 7 天变化
+- analysis://latest — 最新分析报告
+```
+
+#### 5.6.6 测试规格（`tests/test_mcp_server.py`）
+
+| 测试用例 | 方法 | 断言 |
+|---|---|---|
+| `add_site` 工具正确调用 `Storage.add_site` | mock Storage，调用工具 | 返回含 `id` 的 dict |
+| `list_sites` 过滤 `include_inactive=False` | 存入 active + inactive 站点 | 只返回 active 站点 |
+| `check_site` 在线程中异步执行 | mock `_do_check`，调用工具 | 立即返回 `{"status": "check queued"}` |
+| `list_changes` 日期过滤正确 | mock Storage，`since="2026-04-01"` | 只返回该日期后的变化 |
+| `get_latest_snapshot` 无快照时返回 error dict | mock Storage 返回 None | `result["error"]` 含 site_id |
+| `run_analysis` 使用 `NullSearchProvider` 正常完成 | mock Analyzer，不设 API key | 返回含 `summary_md` 的 report |
+| `resource_latest_snapshot` 返回 fit_markdown | mock Storage 返回 snap | 返回值为 `snap.fit_markdown` |
+| MCP server 可以正常实例化（不报 ImportError） | `from mcp.server import mcp` | 无异常 |
+
+#### 5.6.7 审核检查点（MCP Server 实现）
+
+- [ ] `mcp/server.py` 中每个工具对应 5.3 节中的一个工具定义
+- [ ] 工具返回值使用 Pydantic `.model_dump()` 序列化，类型稳定
+- [ ] `check_site` 使用 `threading.Thread` 而非 asyncio（MCP stdio 环境不保证事件循环）
+- [ ] `run_analysis` 使用 `asyncio.run()` 包裹异步 Analyzer 调用
+- [ ] `resource_*` 函数返回字符串（MCP 资源内容必须为 str）
+- [ ] MCP server 不自己管理数据库连接池，每次调用新建 Storage 并在 finally 中关闭
+- [ ] `web-listening-mcp` CLI 入口在 `pyproject.toml` 中正确注册
+- [ ] `fastmcp>=2.0.0` 只在 `[mcp]` 可选依赖组中，不影响基础安装
 
 ### 5.3 MCP 工具列表（`mcp/TOOLS.md` 内容）
 
@@ -778,28 +1290,34 @@ def analyze(since: str = typer.Option(None, "--since")):
 
 | 测试文件 | 覆盖方向 | 说明 |
 |---|---|---|
-| `tests/test_searcher.py` | E | Provider 抽象、NullProvider、mock DesearchProvider |
+| `tests/test_searcher.py` | E | Provider 抽象、NullProvider、全部 5 个 provider 的 mock 测试 |
 | `tests/test_storage.py`（扩展） | C | Change 新字段读写、迁移兼容 |
 | `tests/test_api.py`（扩展） | C | Change API 响应新字段 |
 | `tests/test_analyzer_search.py` | B | 搜索上下文注入 Analyzer |
+| `tests/test_mcp_server.py` | D | MCP 工具函数、资源函数的单元测试 |
 
 ### 6.2 集成测试策略
 
 - 所有搜索相关测试使用 `unittest.mock.AsyncMock` mock `SearchProvider.search`，**不发出真实网络请求**。
-- `DesearchProvider` 的集成测试（真实 API 调用）放在 `tests/test_searcher_live.py`，用环境变量 `WL_DESEARCH_API_KEY` 跳过（`pytest.mark.skipif`）。
+- 每个 provider 的实时集成测试（真实 API 调用）放在 `tests/test_searcher_live.py`，用各自的 `WL_*_API_KEY` 环境变量控制跳过（`pytest.mark.skipif`）。
 - 数据库迁移兼容测试用 `tmp_path` 创建旧版 schema 的临时 SQLite 文件，验证新版 `Storage` 启动后能正常读写旧数据。
+- MCP server 测试不启动真正的 MCP 进程，直接调用工具函数本身，用 `unittest.mock.patch` 替换 Storage 调用。
 
 ### 6.3 运行命令
 
 ```bash
 # 单元测试（无网络需求）
-pytest tests/test_searcher.py tests/test_storage.py tests/test_analyzer_search.py tests/test_api.py -v
+pytest tests/test_searcher.py tests/test_storage.py tests/test_analyzer_search.py tests/test_api.py tests/test_mcp_server.py -v
 
 # 完整测试套件（不含 live 测试）
 pytest tests/ -v --ignore=tests/test_searcher_live.py
 
-# 实时搜索测试（需要 API Key）
-WL_DESEARCH_API_KEY=<your-key> pytest tests/test_searcher_live.py -v
+# 实时搜索测试（需要对应的 API Key）
+WL_DESEARCH_API_KEY=<key>  pytest tests/test_searcher_live.py::TestDesearch -v
+WL_TAVILY_API_KEY=<key>    pytest tests/test_searcher_live.py::TestTavily -v
+WL_BRAVE_API_KEY=<key>     pytest tests/test_searcher_live.py::TestBrave -v
+WL_SERPAPI_API_KEY=<key>   pytest tests/test_searcher_live.py::TestSerpAPI -v
+pytest tests/test_searcher_live.py::TestDuckDuckGo -v  # 无需 Key
 ```
 
 ---
@@ -811,11 +1329,13 @@ WL_DESEARCH_API_KEY=<your-key> pytest tests/test_searcher_live.py -v
 #### 方向 E
 
 - [ ] `NullSearchProvider` 存在且为默认值
-- [ ] `desearch-py` 只在 `[search]` optional dependencies 中
-- [ ] `Settings` 新字段全部有合理默认值
+- [ ] 每个 provider 的 SDK 只在对应的可选依赖组中，不污染基础安装
+- [ ] `BraveSearchProvider` 使用 `httpx`（已是基础依赖），不引入新依赖
+- [ ] `DuckDuckGoProvider` 不需要 API Key，`build_search_provider` 不做 key 校验
+- [ ] 所有需要 API Key 的 provider 在 key 为空时抛出清晰的 `ValueError`
+- [ ] `Settings` 新字段全部有合理默认值，`WL_` 前缀，`.env.example` 同步更新
 - [ ] `build_search_provider` 对未知 `search_provider` 值降级到 `NullSearchProvider`
-- [ ] `.env.example` 同步更新
-- [ ] `README.md` 配置表新增 3 行
+- [ ] `README.md` 配置表新增对应行
 
 #### 方向 C
 
@@ -837,7 +1357,7 @@ WL_DESEARCH_API_KEY=<your-key> pytest tests/test_searcher_live.py -v
 
 ### 迭代 3 上线前
 
-#### 方向 D
+#### 方向 D — 阶段一：规范文档
 
 - [ ] 工具文档与实际 REST API 端点 100% 对应
 - [ ] 工具名、参数名全部为 `snake_case`
@@ -845,12 +1365,23 @@ WL_DESEARCH_API_KEY=<your-key> pytest tests/test_searcher_live.py -v
 - [ ] `mcp/README.md` 列明实现 MCP server 的推荐依赖和启动步骤
 - [ ] 规范中未出现现有代码不支持的能力
 
+#### 方向 D — 阶段二：MCP Server 实现
+
+- [ ] `mcp/server.py` 所有工具与 5.3 节规范一一对应
+- [ ] `fastmcp>=2.0.0` 只在 `[mcp]` 可选依赖组中
+- [ ] `web-listening-mcp` 入口命令在 `pyproject.toml` 中正确注册
+- [ ] 工具函数使用 `.model_dump()` 序列化返回值，不返回原始 ORM 对象
+- [ ] `check_site` 工具使用 `threading.Thread` 而非 asyncio（避免 MCP stdio 环境事件循环冲突）
+- [ ] 资源函数（`resource_*`）返回类型为 `str`
+- [ ] `tests/test_mcp_server.py` 覆盖全部工具的 happy path + error path
+- [ ] `mcp/README.md` 包含 Claude Desktop 配置示例
+
 ---
 
 ## 8. 依赖关系图
 
 ```
-方向 E（SearchProvider 抽象层）
+方向 E（SearchProvider 抽象层：5 个 provider）
     │
     ├──────────────────────────┐
     ▼                          ▼
@@ -858,10 +1389,13 @@ WL_DESEARCH_API_KEY=<your-key> pytest tests/test_searcher_live.py -v
     │                          │
     └──────────┬───────────────┘
                ▼
-         方向 D（MCP 工具规范）
+         方向 D 阶段一（MCP 工具规范文档）
+               │
+               ▼
+         方向 D 阶段二（MCP Server 实现 fastmcp）
 ```
 
 **原则**：
-- E 是基础设施，B 依赖它，其余不依赖
+- E 是基础设施，包含 5 个 provider（NullSearchProvider 为默认，零依赖），B 依赖它
 - C 独立于 E 和 B，但 D 的工具规范需要 C 的字段定义才能准确
-- D 是最终交付，需要 E/C/B 都稳定后才能准确描述工具契约
+- D 分两阶段：先规范后实现，阶段二需要 E/C/B 都稳定

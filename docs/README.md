@@ -46,6 +46,7 @@
 - `tools/classify_site_sections.py`
 - `tools/plan_monitor_scope.py`
 - `tools/bootstrap_site_tree.py`
+  - supports `--scope-path data/plans/monitor_scope_<site>_YYYY-MM-DD.yaml`
 - `tools/explain_tree_bootstrap.py`
 - `tools/run_site_tree.py`
 - `tools/run_tree_catalog_validation.py`

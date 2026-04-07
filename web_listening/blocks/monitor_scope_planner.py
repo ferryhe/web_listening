@@ -175,6 +175,47 @@ def load_section_selection(path: str | Path) -> SectionSelection:
     )
 
 
+def load_monitor_scope_plan(path: str | Path) -> MonitorScopePlan:
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    fetch_config_json = payload.get("fetch_config_json", {}) or {}
+    if not isinstance(fetch_config_json, dict):
+        raise ValueError("monitor_scope.fetch_config_json must be an object")
+    based_on = payload.get("based_on", {}) or {}
+    if not isinstance(based_on, dict):
+        based_on = {}
+    selection_summary = payload.get("selection_summary", {}) or {}
+    if not isinstance(selection_summary, dict):
+        selection_summary = {}
+    return MonitorScopePlan(
+        site_key=str(payload.get("site_key", "")).strip().lower(),
+        display_name=str(payload.get("display_name", "")).strip(),
+        catalog=str(payload.get("catalog", "")).strip().lower(),
+        generated_at=str(payload.get("generated_at", "")).strip(),
+        selection_review_status=str(payload.get("selection_review_status", "")).strip(),
+        selection_mode=str(payload.get("selection_mode", "")).strip(),
+        business_goal=str(payload.get("business_goal", "")).strip(),
+        seed_url=str(payload.get("seed_url", "")).strip(),
+        homepage_url=str(payload.get("homepage_url", "")).strip(),
+        fetch_mode=str(payload.get("fetch_mode", "http")).strip() or "http",
+        fetch_config_json=fetch_config_json,
+        tree_strategy=str(payload.get("tree_strategy", "selected_scope")).strip() or "selected_scope",
+        tree_budget_profile=str(payload.get("tree_budget_profile", "selected_scope_default")).strip() or "selected_scope_default",
+        file_scope_mode=str(payload.get("file_scope_mode", "site_root")).strip() or "site_root",
+        allowed_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("allowed_page_prefixes"))],
+        allowed_file_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("allowed_file_prefixes"))],
+        selected_focus_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("selected_focus_prefixes"))],
+        excluded_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("excluded_page_prefixes"))],
+        deferred_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("deferred_page_prefixes"))],
+        excluded_categories=_as_string_list(payload.get("excluded_categories")),
+        max_depth=int(payload.get("max_depth", PRODUCTION_TREE_LIMITS.max_depth) or PRODUCTION_TREE_LIMITS.max_depth),
+        max_pages=int(payload.get("max_pages", PRODUCTION_TREE_LIMITS.max_pages) or PRODUCTION_TREE_LIMITS.max_pages),
+        max_files=int(payload.get("max_files", PRODUCTION_TREE_LIMITS.max_files) or PRODUCTION_TREE_LIMITS.max_files),
+        based_on={str(key): str(value) for key, value in based_on.items()},
+        selection_summary={str(key): int(value) for key, value in selection_summary.items() if str(key).strip()},
+        notes=_as_string_list(payload.get("notes")),
+    )
+
+
 def _load_classification_site(path: str | Path, *, site_key: str) -> tuple[str, dict[str, Any]]:
     payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     catalog = str(payload.get("catalog", "")).strip().lower()
@@ -196,6 +237,26 @@ def _find_tree_target(catalog: str, site_key: str) -> TreeTarget | None:
         if target.site_key == site_key:
             return target
     return None
+
+
+def monitor_scope_to_tree_target(plan: MonitorScopePlan) -> TreeTarget:
+    return TreeTarget(
+        catalog=plan.catalog or "scope",
+        site_key=plan.site_key,
+        display_name=plan.display_name or plan.site_key.upper(),
+        seed_url=plan.seed_url,
+        homepage_url=plan.homepage_url or plan.seed_url,
+        fetch_mode=plan.fetch_mode or "http",
+        fetch_config_json=plan.fetch_config_json,
+        allowed_page_prefixes=plan.allowed_page_prefixes or ["/"],
+        allowed_file_prefixes=plan.allowed_file_prefixes or ["/"],
+        tree_strategy=plan.tree_strategy or "selected_scope",
+        tree_budget_profile=plan.tree_budget_profile or "selected_scope_default",
+        tree_max_depth=plan.max_depth,
+        tree_max_pages=plan.max_pages,
+        tree_max_files=plan.max_files,
+        notes=" ".join(note.strip() for note in plan.notes if str(note).strip()),
+    )
 
 
 def _selected_focus_prefixes(selected: list[str], allowed: list[str]) -> list[str]:

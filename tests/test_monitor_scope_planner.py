@@ -2,7 +2,9 @@ from pathlib import Path
 
 from web_listening.blocks.monitor_scope_planner import (
     build_monitor_scope,
+    load_monitor_scope_plan,
     minimize_prefixes,
+    monitor_scope_to_tree_target,
     render_markdown,
     render_yaml_text,
 )
@@ -175,3 +177,60 @@ selected_sections:
     assert "file_scope_mode" in markdown
     assert "allowed_page_prefixes" in yaml_text
     assert "selected_focus_prefixes" in yaml_text
+
+
+def test_monitor_scope_round_trips_into_tree_target(tmp_path: Path):
+    classification_path = tmp_path / "classification.yaml"
+    classification_path.write_text(
+        """
+catalog: "dev"
+sites:
+  - site_key: "soa"
+    display_name: "SOA"
+    seed_url: "https://www.soa.org/"
+    homepage_url: "https://www.soa.org/"
+    fetch_mode: "http"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    selection_path = tmp_path / "selection.yaml"
+    selection_path.write_text(
+        """
+site_key: "soa"
+generated_at: "2026-04-07T01:20:54-04:00"
+selection_mode: "manual_with_agent_assist"
+review_status: "recommended_draft"
+business_goal: "Keep research and publication surfaces."
+selected_sections:
+  - path: "/research"
+    selection_reason: "Keep research."
+  - path: "/news-and-publications"
+    selection_reason: "Keep publications."
+excluded_prefixes:
+  - "/education"
+selection_notes:
+  - "Test note."
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(render_yaml_text(plan), encoding="utf-8")
+
+    loaded = load_monitor_scope_plan(scope_path)
+    target = monitor_scope_to_tree_target(loaded)
+
+    assert loaded.allowed_page_prefixes == ["/research", "/news-and-publications"]
+    assert loaded.allowed_file_prefixes == ["/"]
+    assert target.site_key == "soa"
+    assert target.catalog == "dev"
+    assert target.seed_url == "https://www.soa.org/"
+    assert target.allowed_page_prefixes == ["/research", "/news-and-publications"]
+    assert target.allowed_file_prefixes == ["/"]
+    assert target.tree_max_depth == 4
+    assert target.tree_max_pages == 120
+    assert target.tree_max_files == 40

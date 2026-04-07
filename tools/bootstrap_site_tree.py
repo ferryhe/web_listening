@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from web_listening.blocks.document import DocumentProcessor
+from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan, monitor_scope_to_tree_target
 from web_listening.blocks.storage import Storage
 from web_listening.blocks.tree_crawler import TreeCrawler, build_scope_from_site
 from web_listening.config import settings
@@ -103,23 +104,27 @@ def run_bootstrap(
     site_keys: set[str] | None = None,
     download_files: bool = False,
     refresh_existing: bool = False,
+    targets: list[TreeTarget] | None = None,
 ) -> list[BootstrapResult]:
-    targets = filter_tree_targets(load_tree_targets(catalog), site_keys)
+    resolved_targets = targets if targets is not None else filter_tree_targets(load_tree_targets(catalog), site_keys)
     storage = Storage(settings.db_path)
     processor = DocumentProcessor(storage=storage) if download_files else None
     results: list[BootstrapResult] = []
 
     try:
         with TreeCrawler(storage=storage, document_processor=processor) as tree:
-            for target in targets:
+            for target in resolved_targets:
+                effective_max_depth = target.tree_max_depth or max_depth
+                effective_max_pages = target.tree_max_pages or max_pages
+                effective_max_files = target.tree_max_files or max_files
                 site = ensure_tree_site(storage, target)
                 scope = ensure_tree_scope(
                     storage,
                     site=site,
                     target=target,
-                    max_depth=max_depth,
-                    max_pages=max_pages,
-                    max_files=max_files,
+                    max_depth=effective_max_depth,
+                    max_pages=effective_max_pages,
+                    max_files=effective_max_files,
                 )
                 if scope.id is not None and scope.is_initialized and not refresh_existing:
                     results.append(
@@ -280,9 +285,10 @@ def main() -> None:
         description="Bootstrap bounded recursive tree monitoring into the main database."
     )
     parser.add_argument("--catalog", choices=("dev", "smoke", "all"), default="dev")
-    parser.add_argument("--max-depth", type=int, default=PRODUCTION_TREE_LIMITS.max_depth)
-    parser.add_argument("--max-pages", type=int, default=PRODUCTION_TREE_LIMITS.max_pages)
-    parser.add_argument("--max-files", type=int, default=PRODUCTION_TREE_LIMITS.max_files)
+    parser.add_argument("--scope-path", type=Path, help="Optional monitor_scope YAML path for a single targeted bootstrap.")
+    parser.add_argument("--max-depth", type=int, default=None)
+    parser.add_argument("--max-pages", type=int, default=None)
+    parser.add_argument("--max-files", type=int, default=None)
     parser.add_argument("--download-files", action="store_true")
     parser.add_argument("--refresh-existing", action="store_true")
     parser.add_argument("--site-key", action="append", help="Limit the run to one or more site keys.")
@@ -293,26 +299,47 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.scope_path and args.site_key:
+        parser.error("--site-key cannot be used together with --scope-path")
+
     site_keys = {value.strip().lower() for value in args.site_key or [] if value.strip()} or None
+    targets: list[TreeTarget] | None = None
+    report_catalog = args.catalog
+    max_depth = args.max_depth or PRODUCTION_TREE_LIMITS.max_depth
+    max_pages = args.max_pages or PRODUCTION_TREE_LIMITS.max_pages
+    max_files = args.max_files or PRODUCTION_TREE_LIMITS.max_files
+
+    if args.scope_path:
+        scope_plan = load_monitor_scope_plan(args.scope_path)
+        targets = [monitor_scope_to_tree_target(scope_plan)]
+        report_catalog = f"scope_{scope_plan.site_key}"
+        if args.max_depth is None:
+            max_depth = scope_plan.max_depth
+        if args.max_pages is None:
+            max_pages = scope_plan.max_pages
+        if args.max_files is None:
+            max_files = scope_plan.max_files
+
     results = run_bootstrap(
         catalog=args.catalog,
-        max_depth=args.max_depth,
-        max_pages=args.max_pages,
-        max_files=args.max_files,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        max_files=max_files,
         site_keys=site_keys,
         download_files=args.download_files,
         refresh_existing=args.refresh_existing,
+        targets=targets,
     )
     markdown = render_markdown(
         results,
-        catalog=args.catalog,
-        max_depth=args.max_depth,
-        max_pages=args.max_pages,
-        max_files=args.max_files,
+        catalog=report_catalog,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        max_files=max_files,
         download_files=args.download_files,
         refresh_existing=args.refresh_existing,
     )
-    report_path = args.report_path or build_default_report_path(args.catalog)
+    report_path = args.report_path or build_default_report_path(report_catalog)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(markdown, encoding="utf-8")
     print(markdown)

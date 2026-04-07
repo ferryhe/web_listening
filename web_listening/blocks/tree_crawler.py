@@ -182,7 +182,8 @@ class TreeCrawler:
         result = TreeCrawlResult(scope=stored_scope, run=run, pages=[], files=[])
         pacer = PolitePacer.from_config(stored_scope.fetch_config_json)
         queued_pages: deque[tuple[str, int, Optional[int]]] = deque([(stored_scope.seed_url, 0, None)])
-        queued_page_urls = {canonicalize_tracked_url(stored_scope.seed_url)}
+        seed_canonical_url = canonicalize_tracked_url(stored_scope.seed_url)
+        queued_page_urls = {seed_canonical_url}
         processed_page_urls: set[str] = set()
         processed_file_urls: set[str] = set()
         page_id_by_url: dict[str, int] = {}
@@ -205,10 +206,12 @@ class TreeCrawler:
                 canonical_page_url = canonicalize_tracked_url(page.final_url or request_url)
                 if not canonical_page_url:
                     continue
-                if not is_page_url_in_scope(stored_scope, canonical_page_url):
+                page_in_scope = is_page_url_in_scope(stored_scope, canonical_page_url)
+                entrypoint_only = canonical_page_url == seed_canonical_url and depth == 0 and not page_in_scope
+                if not page_in_scope and not entrypoint_only:
                     result.skipped_external_pages += 1
                     continue
-                if canonical_page_url in processed_page_urls:
+                if page_in_scope and canonical_page_url in processed_page_urls:
                     result.skipped_duplicate_pages += 1
                     if from_page_id is not None and canonical_page_url in page_id_by_url:
                         self.storage.add_page_edge(
@@ -227,57 +230,59 @@ class TreeCrawler:
                     content_text=page.content_text,
                 )
                 page_links = extract_links(page.raw_html, page.final_url or request_url)
-                tracked_page = self.storage.upsert_tracked_page(
-                    scope_id=stored_scope.id,
-                    canonical_url=canonical_page_url,
-                    depth=depth,
-                    run_id=run.id,
-                )
-                snapshot = self.storage.add_page_snapshot(
-                    PageSnapshot(
+                tracked_page = None
+                if page_in_scope:
+                    tracked_page = self.storage.upsert_tracked_page(
                         scope_id=stored_scope.id,
-                        page_id=tracked_page.id,
+                        canonical_url=canonical_page_url,
+                        depth=depth,
                         run_id=run.id,
-                        captured_at=datetime.now(timezone.utc),
-                        content_hash=compute_hash(compare_text),
-                        raw_html=page.raw_html,
-                        cleaned_html=page.cleaned_html,
-                        content_text=page.content_text,
-                        markdown=page.markdown,
-                        fit_markdown=page.fit_markdown,
-                        metadata_json={
-                            **page.metadata_json,
-                            "hash_basis": hash_basis,
-                            "hash_normalization": "whitespace-normalized-v1",
-                            "tree_depth": depth,
-                        },
-                        fetch_mode=stored_scope.fetch_mode,
-                        final_url=page.final_url,
-                        status_code=page.status_code,
-                        links=page_links,
                     )
-                )
-                tracked_page = self.storage.upsert_tracked_page(
-                    scope_id=stored_scope.id,
-                    canonical_url=canonical_page_url,
-                    depth=depth,
-                    run_id=run.id,
-                    latest_hash=snapshot.content_hash,
-                    latest_snapshot_id=snapshot.id,
-                )
-                result.pages.append(tracked_page)
-                processed_page_urls.add(canonical_page_url)
-                page_id_by_url[canonical_page_url] = tracked_page.id
-
-                if from_page_id is not None:
-                    self.storage.add_page_edge(
-                        PageEdge(
+                    snapshot = self.storage.add_page_snapshot(
+                        PageSnapshot(
                             scope_id=stored_scope.id,
+                            page_id=tracked_page.id,
                             run_id=run.id,
-                            from_page_id=from_page_id,
-                            to_page_id=tracked_page.id,
+                            captured_at=datetime.now(timezone.utc),
+                            content_hash=compute_hash(compare_text),
+                            raw_html=page.raw_html,
+                            cleaned_html=page.cleaned_html,
+                            content_text=page.content_text,
+                            markdown=page.markdown,
+                            fit_markdown=page.fit_markdown,
+                            metadata_json={
+                                **page.metadata_json,
+                                "hash_basis": hash_basis,
+                                "hash_normalization": "whitespace-normalized-v1",
+                                "tree_depth": depth,
+                            },
+                            fetch_mode=stored_scope.fetch_mode,
+                            final_url=page.final_url,
+                            status_code=page.status_code,
+                            links=page_links,
                         )
                     )
+                    tracked_page = self.storage.upsert_tracked_page(
+                        scope_id=stored_scope.id,
+                        canonical_url=canonical_page_url,
+                        depth=depth,
+                        run_id=run.id,
+                        latest_hash=snapshot.content_hash,
+                        latest_snapshot_id=snapshot.id,
+                    )
+                    result.pages.append(tracked_page)
+                    processed_page_urls.add(canonical_page_url)
+                    page_id_by_url[canonical_page_url] = tracked_page.id
+
+                    if from_page_id is not None:
+                        self.storage.add_page_edge(
+                            PageEdge(
+                                scope_id=stored_scope.id,
+                                run_id=run.id,
+                                from_page_id=from_page_id,
+                                to_page_id=tracked_page.id,
+                            )
+                        )
 
                 document_links = set(find_document_links(page_links))
                 for link in page_links:
@@ -285,6 +290,8 @@ class TreeCrawler:
                     if not canonical_link:
                         continue
                     if link in document_links:
+                        if not page_in_scope:
+                            continue
                         if not is_file_url_in_scope(stored_scope, canonical_link):
                             result.skipped_external_files += 1
                             continue
@@ -322,7 +329,7 @@ class TreeCrawler:
                     if canonical_link in queued_page_urls or canonical_link in processed_page_urls:
                         result.skipped_duplicate_pages += 1
                         continue
-                    queued_pages.append((sanitize_request_url(link) or link, depth + 1, tracked_page.id))
+                    queued_pages.append((sanitize_request_url(link) or link, depth + 1, tracked_page.id if tracked_page else None))
                     queued_page_urls.add(canonical_link)
 
             updated_run = self.storage.update_crawl_run(
@@ -392,7 +399,8 @@ class TreeCrawler:
         result = TreeCrawlResult(scope=stored_scope, run=run, pages=[], files=[])
         pacer = PolitePacer.from_config(stored_scope.fetch_config_json)
         queued_pages: deque[tuple[str, int, Optional[int]]] = deque([(stored_scope.seed_url, 0, None)])
-        queued_page_urls = {canonicalize_tracked_url(stored_scope.seed_url)}
+        seed_canonical_url = canonicalize_tracked_url(stored_scope.seed_url)
+        queued_page_urls = {seed_canonical_url}
         processed_page_urls: set[str] = set()
         processed_file_urls: set[str] = set()
         page_id_by_url: dict[str, int] = {}
@@ -417,10 +425,12 @@ class TreeCrawler:
                 canonical_page_url = canonicalize_tracked_url(page.final_url or request_url)
                 if not canonical_page_url:
                     continue
-                if not is_page_url_in_scope(stored_scope, canonical_page_url):
+                page_in_scope = is_page_url_in_scope(stored_scope, canonical_page_url)
+                entrypoint_only = canonical_page_url == seed_canonical_url and depth == 0 and not page_in_scope
+                if not page_in_scope and not entrypoint_only:
                     result.skipped_external_pages += 1
                     continue
-                if canonical_page_url in processed_page_urls:
+                if page_in_scope and canonical_page_url in processed_page_urls:
                     result.skipped_duplicate_pages += 1
                     if from_page_id is not None and canonical_page_url in page_id_by_url:
                         self.storage.add_page_edge(
@@ -441,61 +451,63 @@ class TreeCrawler:
                     content_text=page.content_text,
                 )
                 page_links = extract_links(page.raw_html, page.final_url or request_url)
-                tracked_page = self.storage.upsert_tracked_page(
-                    scope_id=stored_scope.id,
-                    canonical_url=canonical_page_url,
-                    depth=depth,
-                    run_id=run.id,
-                )
-                snapshot = self.storage.add_page_snapshot(
-                    PageSnapshot(
+                tracked_page = None
+                if page_in_scope:
+                    tracked_page = self.storage.upsert_tracked_page(
                         scope_id=stored_scope.id,
-                        page_id=tracked_page.id,
+                        canonical_url=canonical_page_url,
+                        depth=depth,
                         run_id=run.id,
-                        captured_at=datetime.now(timezone.utc),
-                        content_hash=compute_hash(compare_text),
-                        raw_html=page.raw_html,
-                        cleaned_html=page.cleaned_html,
-                        content_text=page.content_text,
-                        markdown=page.markdown,
-                        fit_markdown=page.fit_markdown,
-                        metadata_json={
-                            **page.metadata_json,
-                            "hash_basis": hash_basis,
-                            "hash_normalization": "whitespace-normalized-v1",
-                            "tree_depth": depth,
-                        },
-                        fetch_mode=stored_scope.fetch_mode,
-                        final_url=page.final_url,
-                        status_code=page.status_code,
-                        links=page_links,
                     )
-                )
-                tracked_page = self.storage.upsert_tracked_page(
-                    scope_id=stored_scope.id,
-                    canonical_url=canonical_page_url,
-                    depth=depth,
-                    run_id=run.id,
-                    latest_hash=snapshot.content_hash,
-                    latest_snapshot_id=snapshot.id,
-                )
-                result.pages.append(tracked_page)
-                processed_page_urls.add(canonical_page_url)
-                page_id_by_url[canonical_page_url] = tracked_page.id
-                if previous_page is None:
-                    result.new_pages.append(canonical_page_url)
-                elif previous_hash and previous_hash != snapshot.content_hash:
-                    result.changed_pages.append(canonical_page_url)
-
-                if from_page_id is not None:
-                    self.storage.add_page_edge(
-                        PageEdge(
+                    snapshot = self.storage.add_page_snapshot(
+                        PageSnapshot(
                             scope_id=stored_scope.id,
+                            page_id=tracked_page.id,
                             run_id=run.id,
-                            from_page_id=from_page_id,
-                            to_page_id=tracked_page.id,
+                            captured_at=datetime.now(timezone.utc),
+                            content_hash=compute_hash(compare_text),
+                            raw_html=page.raw_html,
+                            cleaned_html=page.cleaned_html,
+                            content_text=page.content_text,
+                            markdown=page.markdown,
+                            fit_markdown=page.fit_markdown,
+                            metadata_json={
+                                **page.metadata_json,
+                                "hash_basis": hash_basis,
+                                "hash_normalization": "whitespace-normalized-v1",
+                                "tree_depth": depth,
+                            },
+                            fetch_mode=stored_scope.fetch_mode,
+                            final_url=page.final_url,
+                            status_code=page.status_code,
+                            links=page_links,
                         )
                     )
+                    tracked_page = self.storage.upsert_tracked_page(
+                        scope_id=stored_scope.id,
+                        canonical_url=canonical_page_url,
+                        depth=depth,
+                        run_id=run.id,
+                        latest_hash=snapshot.content_hash,
+                        latest_snapshot_id=snapshot.id,
+                    )
+                    result.pages.append(tracked_page)
+                    processed_page_urls.add(canonical_page_url)
+                    page_id_by_url[canonical_page_url] = tracked_page.id
+                    if previous_page is None:
+                        result.new_pages.append(canonical_page_url)
+                    elif previous_hash and previous_hash != snapshot.content_hash:
+                        result.changed_pages.append(canonical_page_url)
+
+                    if from_page_id is not None:
+                        self.storage.add_page_edge(
+                            PageEdge(
+                                scope_id=stored_scope.id,
+                                run_id=run.id,
+                                from_page_id=from_page_id,
+                                to_page_id=tracked_page.id,
+                            )
+                        )
 
                 document_links = set(find_document_links(page_links))
                 for link in page_links:
@@ -503,6 +515,8 @@ class TreeCrawler:
                     if not canonical_link:
                         continue
                     if link in document_links:
+                        if not page_in_scope:
+                            continue
                         if not is_file_url_in_scope(stored_scope, canonical_link):
                             result.skipped_external_files += 1
                             continue
@@ -550,7 +564,7 @@ class TreeCrawler:
                     if canonical_link in queued_page_urls or canonical_link in processed_page_urls:
                         result.skipped_duplicate_pages += 1
                         continue
-                    queued_pages.append((sanitize_request_url(link) or link, depth + 1, tracked_page.id))
+                    queued_pages.append((sanitize_request_url(link) or link, depth + 1, tracked_page.id if tracked_page else None))
                     queued_page_urls.add(canonical_link)
 
             result.missing_pages = sorted(

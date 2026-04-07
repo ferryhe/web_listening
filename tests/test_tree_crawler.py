@@ -73,6 +73,62 @@ def make_tree_transport():
     return httpx.MockTransport(handler)
 
 
+def make_root_entry_transport():
+    html_root = """
+    <html>
+      <body>
+        <main>
+          <h1>Home</h1>
+          <a href="https://example.com/research/page-a">Research A</a>
+          <a href="https://example.com/education/page-b">Education B</a>
+        </main>
+      </body>
+    </html>
+    """
+    html_research = """
+    <html>
+      <body>
+        <main>
+          <h1>Research A</h1>
+          <a href="https://example.com/research/page-c">Research C</a>
+        </main>
+      </body>
+    </html>
+    """
+    html_research_c = """
+    <html>
+      <body>
+        <main>
+          <h1>Research C</h1>
+        </main>
+      </body>
+    </html>
+    """
+    html_education = """
+    <html>
+      <body>
+        <main>
+          <h1>Education B</h1>
+        </main>
+      </body>
+    </html>
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "https://example.com/":
+            return httpx.Response(200, text=html_root, headers={"content-type": "text/html"}, request=request)
+        if url == "https://example.com/research/page-a":
+            return httpx.Response(200, text=html_research, headers={"content-type": "text/html"}, request=request)
+        if url == "https://example.com/research/page-c":
+            return httpx.Response(200, text=html_research_c, headers={"content-type": "text/html"}, request=request)
+        if url == "https://example.com/education/page-b":
+            return httpx.Response(200, text=html_education, headers={"content-type": "text/html"}, request=request)
+        return httpx.Response(404, text="not found", request=request)
+
+    return httpx.MockTransport(handler)
+
+
 def make_incremental_tree_transport():
     state = {"phase": "bootstrap"}
     html_root_bootstrap = """
@@ -258,6 +314,38 @@ def test_tree_crawler_bootstrap_tracks_pages_files_and_edges(tmp_path):
 
     observations = storage.list_file_observations(result.scope.id, run_id=result.run.id)
     assert len(observations) == 2
+
+
+def test_tree_crawler_uses_out_of_scope_seed_as_entrypoint_only(tmp_path):
+    storage = Storage(tmp_path / "tree.db")
+    client = httpx.Client(transport=make_root_entry_transport(), follow_redirects=True)
+    crawler = Crawler(client=client)
+    site = storage.add_site(Site(url="https://example.com/", name="Example"))
+    scope = CrawlScope(
+        site_id=site.id,
+        seed_url="https://example.com/",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/research"],
+        allowed_file_prefixes=["/"],
+        max_depth=3,
+        max_pages=10,
+        max_files=5,
+        fetch_mode="http",
+    )
+
+    with TreeCrawler(storage=storage, crawler=crawler) as tree:
+        result = tree.bootstrap_scope(scope, institution="Example", download_files=False)
+
+    tracked_pages = storage.list_tracked_pages(result.scope.id)
+    tracked_urls = {item.canonical_url for item in tracked_pages}
+
+    assert result.run.status == "completed"
+    assert len(result.pages) == 2
+    assert tracked_urls == {
+        "https://example.com/research/page-a",
+        "https://example.com/research/page-c",
+    }
+    assert "https://example.com/" not in tracked_urls
 
     storage.close()
 

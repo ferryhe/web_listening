@@ -24,6 +24,7 @@ Use this skill when the task is to create or operate recursive site-tree monitor
 7. Bootstrap after scope planning:
    - `.venv\Scripts\python tools\bootstrap_site_tree.py --catalog dev --download-files`
    - `.venv\Scripts\python tools\bootstrap_site_tree.py --catalog smoke --download-files`
+   - `.venv\Scripts\python tools\bootstrap_site_tree.py --scope-path data/plans/monitor_scope_soa_2026-04-07.yaml --download-files`
 8. Run later incremental checks:
    - `.venv\Scripts\python tools\run_site_tree.py --catalog dev --download-files`
    - `.venv\Scripts\python tools\run_site_tree.py --catalog smoke --download-files`

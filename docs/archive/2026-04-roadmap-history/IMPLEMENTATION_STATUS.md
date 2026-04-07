@@ -73,7 +73,7 @@ Reference commit:
 - Added `config/smoke_site_catalog.json` as the tracked curated smoke target list for the current supranational organization spreadsheet.
 - Added `web_listening/smoke_sites.py` and `tools/run_smoke_site_catalog.py` so larger site lists can be validated without hardcoding spreadsheet logic into the runner.
 - Added `docs/operations/SMOKE_SITE_MANAGEMENT.md` to document how raw ignored inputs should flow into tracked monitor targets.
-- Recorded the first smoke validation baseline in `docs/validation/SMOKE_SITE_VALIDATION.md`.
+- Recorded the first smoke validation baseline at that time.
 
 ### 8. Recursive tree monitoring design
 
@@ -133,14 +133,12 @@ Reference commit:
   - `docs/operations/DEV_TEST_TARGETS.md`
 - List-driven smoke policy doc:
   - `docs/operations/SMOKE_SITE_MANAGEMENT.md`
-- List-driven smoke baseline report:
-  - `docs/validation/SMOKE_SITE_VALIDATION.md`
+- Current validation guide:
+  - `docs/validation/README.md`
 - Recursive tree design doc:
   - `docs/design/TREE_MONITORING_DESIGN.md`
-- Recursive tree live baseline report:
-  - `docs/validation/TREE_CATALOG_VALIDATION.md`
-- Agent rescue live baseline report:
-  - `docs/validation/AGENT_RESCUE_VALIDATION.md`
+- Tree and rescue validation are now described through:
+  - `docs/validation/README.md`
 - PR recommendation:
   - `docs/roadmap/PR_RECOMMENDATION.md`
 

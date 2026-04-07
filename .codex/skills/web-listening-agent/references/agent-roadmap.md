@@ -1,34 +1,40 @@
 # Agent Roadmap
 
-## Target architecture
+## Active Target Architecture
 
-Build the project in this order:
+The current target architecture is:
 
-1. Acquisition: HTTP plus optional browser capture
-2. Normalization: raw HTML, cleaned HTML, markdown, fit-markdown
-3. Change intelligence: text diff, selector diff, schema diff, semantic summary
-4. Orchestration: persistent jobs, retries, schedules, webhooks
-5. Agent interface: REST, MCP tools, MCP resources, repo skill
+```text
+discover -> classify -> select -> bootstrap -> run -> explain -> convert
+```
 
-## Preferred implementation order
+With the artifact split:
 
-1. Extend snapshots with markdown-oriented artifacts.
-2. Split crawling into HTTP and browser drivers.
-3. Add `watch_rules` and structured extraction results.
-4. Replace ad-hoc background responses with persistent jobs.
-5. Expose stable MCP tools on top of the existing blocks.
+```text
+YAML control plane -> SQLite/download evidence plane -> Markdown explanation plane
+```
 
-## Agent-facing contract rules
+## What Is Already Real
 
-- Every write action should return `job_id`, `status`, and `accepted_at`.
-- Every change should expose machine-friendly payload fields, not only human summaries.
-- Every result should keep evidence pointers such as `snapshot_id`, `document_id`, `url`, and timestamps.
-- Agent-default content should be markdown or fit-markdown once available.
-- MCP should wrap stable backend contracts rather than inventing parallel behavior.
+- staged section discovery
+- staged section classification
+- reviewed section selection
+- scope compilation into `monitor_scope.yaml`
+- scope-driven tree bootstrap
+- scope-driven reruns
+- bootstrap summary and document manifest export
 
-## Non-goals for the next iteration
+## What Comes Next
 
-- Building a Web UI first
-- Distributed crawling first
-- Replacing SQLite before the job model is proven
-- Deep multi-tenant access control
+1. add a first-class `monitor_intent.yaml`
+2. improve rerun change bundles so they group changes by selected business branches
+3. add conversion-routing outputs for downstream `doc_to_md`
+4. expose the staged tree workflow through stable interfaces beyond `tools/*.py`
+5. roll the section-aware process out to the 30+ smoke catalog
+
+## Contract Rules
+
+- every agent-facing output should preserve evidence pointers
+- `sha256` remains the final file dedupe authority
+- `_tracked` should be preferred for browsing, `_blobs` for canonical storage
+- planning state should live in files, not only in chat context

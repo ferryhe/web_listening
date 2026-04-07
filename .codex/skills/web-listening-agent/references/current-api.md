@@ -1,23 +1,35 @@
-# Current API
+# Current API And Workflow Status
 
-## Implemented blocks
+## Core Blocks
 
-- `web_listening/blocks/crawler.py`: HTTP fetch via `httpx`, HTML cleanup via BeautifulSoup, snapshot text plus link extraction.
-- `web_listening/blocks/crawler.py`: HTTP and optional browser dispatch via `fetch_mode`, returning normalized snapshot artifacts.
-- `web_listening/blocks/normalizer.py`: HTML normalization into cleaned HTML, Markdown, fit-Markdown, and metadata, plus XML feed and sitemap normalization for agent fallback inputs.
-- `web_listening/blocks/rescue.py`: shared rescue ladder across the catalog target, browser retry, and official sitemap or RSS fallback.
-- `web_listening/blocks/diff.py`: SHA-256 hash comparison, unified diff, new-link detection, document-link filtering.
-- `web_listening/blocks/document.py`: document download, blob dedupe by SHA-256, metadata persistence, no content conversion.
-- `web_listening/blocks/storage.py`: SQLite storage for sites, snapshots, changes, documents, blobs, and analyses.
-- `web_listening/blocks/tree_crawler.py`: bounded recursive bootstrap for page inventories, page snapshots, page edges, tracked files, and file observations.
-- `web_listening/blocks/analyzer.py`: weekly Markdown summary via OpenAI or local fallback.
-- `web_listening/blocks/scheduler.py`: APScheduler-based periodic execution.
-- `web_listening/dev_targets.py`: required live development target validation for `SOA`, `CAS`, and `IAA`.
-- `web_listening/smoke_sites.py`: curated smoke site catalog validation for larger list-driven monitoring.
-- `tools/run_dev_daily_monitor.py`: persistent daily monitoring flow for `SOA`, `CAS`, and `IAA`, with optional sample downloads into the main database and blob store.
-- `tools/run_agent_rescue_validation.py`: agent-style fallback validation across catalog target, browser retry, and official sitemap or RSS fallback.
+- `web_listening/blocks/crawler.py`
+  site-level fetch and normalization entry
+- `web_listening/blocks/normalizer.py`
+  cleaned HTML, Markdown, fit-Markdown, metadata
+- `web_listening/blocks/diff.py`
+  page hash comparison, new links, document links
+- `web_listening/blocks/document.py`
+  file download, SHA-256 blob storage, tracked-view materialization
+- `web_listening/blocks/storage.py`
+  SQLite persistence for sites, tree scopes, runs, documents, blobs, and observations
+- `web_listening/blocks/tree_crawler.py`
+  bounded tree bootstrap and reruns
+- `web_listening/blocks/section_discovery.py`
+  structure-first section discovery
+- `web_listening/blocks/section_classifier.py`
+  section classification
+- `web_listening/blocks/monitor_scope_planner.py`
+  selection-to-scope compilation
+- `web_listening/blocks/bootstrap_summary.py`
+  bootstrap scope summary
+- `web_listening/blocks/document_manifest.py`
+  agent-readable document manifest export
+- `web_listening/blocks/analyzer.py`
+  optional OpenAI-backed summary layer
 
-## Implemented REST endpoints
+## REST Endpoints
+
+Implemented REST endpoints still focus on the site-level monitoring layer:
 
 - `GET /api/v1/sites`
 - `POST /api/v1/sites`
@@ -33,7 +45,9 @@
 - `POST /api/v1/analyze`
 - `GET /api/v1/analyses`
 
-## Implemented CLI flows
+## Packaged CLI
+
+The packaged `web-listening` CLI still focuses on the older site-level flow:
 
 - `add-site`
 - `list-sites`
@@ -44,49 +58,55 @@
 - `analyze`
 - `serve`
 
-## Current limitations
+## Tool-Driven Tree Workflow
 
-- Browser mode now participates in the shared rescue ladder and has live validation on selected public sites, but still needs broader operational hardening.
-- Recursive tree bootstrap exists as an internal block, but is not yet exposed via REST or CLI.
-- No selector-based or schema-based watch rules.
-- No persistent job table, webhook delivery, or idempotency keys.
-- No MCP server yet.
-- Large external site lists still need a dedicated importer; the current tracked smoke catalog is curated manually from local raw inputs.
+The staged tree workflow is implemented through dedicated tools:
 
-## Working assumptions
+- `tools/discover_site_sections.py`
+- `tools/classify_site_sections.py`
+- `tools/plan_monitor_scope.py`
+- `tools/bootstrap_site_tree.py`
+- `tools/summarize_scope_bootstrap.py`
+- `tools/export_scope_document_manifest.py`
+- `tools/explain_tree_bootstrap.py`
+- `tools/run_site_tree.py`
 
-- Keep SQLite as the default store until agent-facing contracts stabilize.
-- Keep document conversion outside this repo; use `content_md` and its status fields as handoff fields.
-- Treat browser support as optional capability rather than a required install.
-- Reuse existing blocks when adding new interfaces; do not duplicate core crawling or storage logic.
-- Site-level HTTP requests can now override the user agent through `fetch_config_json.user_agent` or `fetch_config_json.user_agent_profile`.
+This means:
 
-## Required live dev targets
+- tree monitoring is implemented and usable
+- but it is not yet exposed as first-class REST or packaged CLI commands
 
-Every live development validation should include the required default target set:
+## Current Agent-Readable Outputs
 
-- `SOA`
-- `CAS`
-- `IAA`
+- planning YAML:
+  - `section_inventory.yaml`
+  - `section_classification.yaml`
+  - `section_selection.yaml`
+  - `monitor_scope.yaml`
+- explanation outputs:
+  - bootstrap summary Markdown
+  - document manifest YAML and Markdown
+- evidence outputs:
+  - `data/web_listening.db`
+  - `data/downloads/_blobs`
+  - `data/downloads/_tracked`
 
-The canonical definition lives in `config/dev_test_sites.json`.
-Use `tools/validate_real_sites.py` and `tools/run_dev_regression.py` to exercise them.
-Use `tools/run_dev_daily_monitor.py --download-samples` when you want to persist today's baseline into the main database and reuse it on the next run.
-`tools/run_dev_regression.py` fails on regression issues by default; use `--report-only` only when you need a non-failing report.
-Use `docs/operations/DEV_TEST_TARGETS.md` for the current baseline expectations and SHA-256 rules.
+## Current Limitations
 
-## Curated smoke catalog
+- no first-class `monitor_intent.yaml`
+- no REST or packaged CLI entry point for staged scope planning
+- no stable rerun change-bundle export yet
+- no persistent job model for long tree runs
+- no MCP server yet
 
-For bigger monitored lists, keep raw spreadsheets in local ignored folders and promote the actual runnable targets into:
+## Validation
 
-- `config/smoke_site_catalog.json`
+Use live validation commands rather than committed snapshot docs:
 
-Use:
+- `tools/validate_real_sites.py`
+- `tools/run_dev_regression.py`
+- `tools/run_smoke_site_catalog.py --report-only`
+- `tools/run_tree_catalog_validation.py`
+- `tools/run_agent_rescue_validation.py`
 
-- `tools/run_smoke_site_catalog.py`
-
-Read `docs/operations/SMOKE_SITE_MANAGEMENT.md` for the catalog lifecycle, expectation types, and JS-heavy handling.
-Read `docs/validation/SMOKE_SITE_VALIDATION.md` for the current live baseline.
-`tools/run_smoke_site_catalog.py` now runs the shared rescue ladder by default; use `--primary-only` when you want the catalog target without browser or feed fallback.
-Use `tools/run_tree_catalog_validation.py` and `docs/validation/TREE_CATALOG_VALIDATION.md` when evaluating whether a list target can support bounded recursive tree monitoring instead of only root-page smoke checks.
-Use `tools/run_agent_rescue_validation.py` and `docs/validation/AGENT_RESCUE_VALIDATION.md` when you want a dedicated rescue-only baseline across the full catalog.
+See `docs/validation/README.md`.

@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 
 class Site(BaseModel):
@@ -121,6 +121,12 @@ class Document(BaseModel):
     content_md: str = ""
     content_md_status: str = "pending"
     content_md_updated_at: Optional[datetime] = None
+    tracked_local_path: str = ""
+
+    @computed_field(return_type=str)
+    @property
+    def preferred_display_path(self) -> str:
+        return self.tracked_local_path or self.local_path
 
 
 class AnalysisReport(BaseModel):
@@ -298,6 +304,7 @@ class FileObservation(BaseModel):
     run_id: int
     page_id: int
     file_id: int
+    document_id: Optional[int] = None
     discovered_url: str
     download_url: str
     tracked_local_path: str = ""

@@ -2,30 +2,34 @@
 
 ## Decision
 
-Keep the generic REST API and treat it as the canonical backend contract.
+Keep two layers clear:
 
-Build the agent-facing surface on top of it:
+- packaged REST and CLI for the older site-level monitoring contract
+- tool-driven YAML workflows for the newer staged tree-monitoring contract
 
-```text
-blocks -> REST -> MCP/CLI/webhooks
-```
+## Current Reality
 
-## Why keep the REST API
+Today the staged tree workflow is real, but it is implemented through `tools/*.py`.
 
-- Traditional programs still need a standard interface.
-- REST is easier to test and debug than agent-only protocols.
-- MCP should adapt stable backend semantics instead of inventing new ones.
-- Webhooks and background jobs fit naturally with a REST backend.
+That is acceptable for now because:
 
-## What should change
+- the artifact contracts are stabilizing
+- the planning layer is file-based
+- the crawler and storage layers are already reusable
 
-- Long-running writes should return job envelopes.
-- Responses should include durable IDs and evidence pointers.
-- Machine-readable payloads should be first-class.
-- CLI and MCP should reuse the same backend behavior.
+## Near-Term Rule
 
-## Guardrails
+When extending the staged tree workflow:
 
-- Do not create agent-only business logic paths.
-- Do not deprecate the REST API when MCP arrives.
-- Do not let CLI, REST, and MCP drift into different orchestration models.
+- prefer stable local artifact contracts first
+- do not rush REST or MCP wrappers before the YAML and storage outputs settle
+
+## Long-Term Direction
+
+Later, the staged workflow can be exposed through REST, packaged CLI, or MCP.
+
+When that happens:
+
+- keep evidence pointers intact
+- do not invent separate business logic paths for each interface
+- wrap the same underlying planning and crawl blocks

@@ -1,225 +1,154 @@
 # Agent Scope Planning Design
 
-> Last updated: 2026-04-06
-> Status: Active design
+> Last updated: 2026-04-07
+> Status: Active design and partially implemented workflow
 
 ## Goal
 
-Add a planning layer before deep site monitoring so agents do not bootstrap an entire website blindly.
+Add a planning layer before deep tree monitoring so the crawler does not decide business scope by accident.
 
-The new workflow should let a human or AI agent:
+The intended workflow is:
 
-1. discover section structure
-2. classify second- and third-level sections
-3. select the business-relevant sections
-4. materialize a bounded monitoring scope
-5. only then bootstrap and monitor that selected tree
-
-## Why This Layer Is Needed
-
-The current tree crawler is already good at:
-
-- bounded recursion
-- page and file inventory
-- SHA-256 file dedupe
-- later incremental comparison
-
-What it does not yet do is decide what part of the site deserves monitoring for a given business goal.
-
-That decision should not be buried inside the crawler.
-It should be a separate, agent-readable planning step.
+```text
+discover -> classify -> select -> monitor_scope -> bootstrap -> run
+```
 
 ## Core Principle
 
-Monitoring scope should be driven by intent, not only by crawl reachability.
+Monitoring scope should be driven by intent, not just by crawl reachability.
 
 Examples:
 
-- if the goal is exam or credential monitoring, keep `education`, `exam`, and related sections
-- if the goal is research tracking, keep `research`, `publications`, `reports`
-- if the goal is business-core monitoring, skip low-value `membership`, `directory`, `contact`, and event pages unless explicitly requested
+- if the task is research tracking, keep `research`, `publications`, and `reports`
+- if the task is business-core monitoring, drop `membership`, `directory`, and `contact`
+- if the task does not care about exams or governance, still classify those sections, but do not prioritize them
 
-## Staged Workflow
+## What Is Implemented
 
-### Stage 1: Discover
+The repo now has these planning stages:
 
-Run a structure-first crawl to depth `3` so second- and third-level pages are mapped before deeper monitoring begins.
-This stage should be depth-bounded rather than page-budget-bounded.
-The preferred strategy is:
+1. `tools/discover_site_sections.py`
+2. `tools/classify_site_sections.py`
+3. manual or agent-reviewed `section_selection.yaml`
+4. `tools/plan_monitor_scope.py`
+5. `tools/bootstrap_site_tree.py --scope-path ...`
 
-- cover all reachable level-2 HTML pages first
-- sample deeper candidate pages under each level-2 branch
-- emit explicit expansion candidates for branches that deserve a later deeper pass
+The resulting outputs are durable local artifacts, not chat-only decisions.
 
-By default it should not detect or download PDFs; it should focus on the HTML tree shape only.
+## Current Discovery Strategy
 
-Output should include:
+Discovery is structure-first.
 
-- section paths
-- sample URLs
-- child section counts
-- representative titles
-- candidate category hints
-- expansion candidate branches
+The current defaults aim to build a useful picture before deep crawling:
 
-### Stage 2: Classify
+- cover reachable level-2 HTML pages
+- sample deeper branches at level 3
+- do not detect or download PDFs by default
+- emit section and branch candidates for later selection
 
-Classify each section or source page into a stable business category.
+This stage is for site structure, not file inventory.
 
-Suggested categories:
+## Current Classification Model
 
-- `exam_education`
-- `research_publications`
-- `governance_management`
-- `finance_reports`
-- `membership_operations`
-- `news_announcements`
-- `general_reference`
-
-This classification should be done from:
+The classifier uses:
 
 - URL path
-- page title
-- shallow content evidence
+- sampled titles
+- source page evidence
 - section structure evidence
 
-Current project default:
+Current categories include:
 
-- still recognize `exam_education`
-- still recognize `governance_management`
-- but treat both as out of scope for default monitoring selection unless the user explicitly asks for those areas
+- `research_publications`
+- `news_announcements`
+- `finance_reports`
+- `membership_operations`
+- `exam_education`
+- `governance_management`
+- `general_reference`
 
-### Stage 3: Select
+Current default project posture:
 
-Human or AI chooses what matters for the current monitoring goal.
+- recognize `exam_education`
+- recognize `governance_management`
+- but do not treat them as default priority areas unless the monitoring goal says otherwise
 
-This step should support:
+## Selection Model
 
-- include rules
-- exclude rules
-- explicit must-keep paths
-- explicit must-drop paths
+Selection should be explicit.
 
-### Stage 4: Materialize Scope
-
-Turn the selection into a real crawl scope:
-
-- `allowed_page_prefixes`
-- `allowed_file_prefixes`
-- `max_depth`
-- `max_pages`
-- `max_files`
-- `fetch_config_json`
-
-### Stage 5: Bootstrap and Monitor
-
-Only after scope planning should the repo run:
-
-- `bootstrap_site_tree.py`
-- `run_site_tree.py`
-- explanation and conversion routing
-
-## Agent-Readable Artifacts
-
-Each stage should write a machine-readable file that becomes the next stage's input.
-
-### 1. `monitor_intent.yaml`
-
-Defines what the user wants to monitor.
-
-Suggested fields:
-
-- `business_goal`
-- `include_categories`
-- `exclude_categories`
-- `must_include_paths`
-- `must_exclude_paths`
-- `conversion_policy`
-
-### 2. `section_inventory.yaml`
-
-Captures the shallow site structure.
-
-Suggested fields:
-
-- `seed_url`
-- `discovery_depth`
-- `sections`
-- `sample_pages`
-- `child_section_count`
-- `candidate_category`
-- `page_limit_mode`
-- `discovery_mode`
-
-### 3. `section_selection.yaml`
-
-Records the chosen and rejected sections.
-
-Suggested fields:
+The current workflow expects a reviewed `section_selection.yaml` with:
 
 - `selected_sections`
 - `rejected_sections`
-- `selection_reason`
-- `review_status`
+- `deferred_sections`
+- `excluded_categories`
+- `selection_notes`
 
-### 4. `monitor_scope.yaml`
+This makes the final monitoring scope explainable and reproducible.
 
-Becomes the direct input for tree bootstrap.
+## Scope Materialization
 
-Suggested fields:
+`tools/plan_monitor_scope.py` compiles selection output into a real monitoring scope:
 
-- `seed_url`
 - `allowed_page_prefixes`
 - `allowed_file_prefixes`
+- `selected_focus_prefixes`
+- `excluded_page_prefixes`
 - `max_depth`
 - `max_pages`
 - `max_files`
 - `fetch_config_json`
 
-### 5. `bootstrap_manifest.yaml`
+That `monitor_scope.yaml` becomes the direct input for bootstrap.
 
-Summarizes the resulting baseline.
+## Agent-Readable Artifacts
 
-Suggested fields:
+The active control-plane artifacts are:
 
-- `scope_id`
-- `run_id`
-- `pages_seen`
-- `files_seen`
-- `top_source_pages`
-- `next_step`
+- `section_inventory_<site>_<date>.yaml`
+- `section_classification_<site>_<date>.yaml`
+- `section_selection_<site>_<date>.yaml`
+- `monitor_scope_<site>_<date>.yaml`
 
-## OpenClaw And Similar Agents
+The current explanation-plane artifacts are:
 
-This staged file-based design fits OpenClaw-style agent workflows well.
+- bootstrap summary Markdown
+- scope document manifest YAML and Markdown
 
-Why:
+The evidence plane stays in:
 
-- each step leaves a durable local artifact
-- the next agent step can read that artifact without depending on chat memory
-- YAML is short, explicit, and easy for agents to edit or validate
-- Markdown reports can still sit beside YAML for human review
+- `data/web_listening.db`
+- `data/downloads/_blobs`
+- `data/downloads/_tracked`
 
-In short:
+## Why This Fits OpenClaw-Style Agents
 
-- YAML should be the control plane
-- SQLite should remain the evidence plane
-- Markdown should remain the explanation plane
+This design works well for OpenClaw and similar agent loops because each stage leaves a durable local artifact.
 
-## Relationship To Existing Tree Design
+In practice:
 
-This document does not replace `TREE_MONITORING_DESIGN.md`.
+- YAML is the control plane
+- SQLite and downloads are the evidence plane
+- Markdown is the explanation plane
 
-Instead:
+That keeps the next step grounded in files, not only in conversation memory.
 
-- `AGENT_SCOPE_PLANNING_DESIGN.md` defines how to decide what to monitor
-- `TREE_MONITORING_DESIGN.md` defines how to crawl and persist a chosen scope safely
+## What Is Still Missing
 
-## Near-Term Implementation Order
+The planning stack is usable, but not complete.
 
-1. add section discovery output
-2. add section classification output
-3. add scope-selection output
-4. compile selected sections into `monitor_scope.yaml`
-5. point bootstrap tooling at those generated scopes
-6. keep later change explanation and conversion routing downstream from the selected scope
+Still missing or intentionally deferred:
+
+- a first-class `monitor_intent.yaml`
+- fully automatic selection from intent without human review
+- direct REST exposure for the planning stages
+- stronger branch-expansion heuristics for large sites
+
+## Relationship To Tree Monitoring
+
+This document defines how to decide what to monitor.
+
+The crawler-side rules for actually bootstrapping and rerunning a selected scope live in:
+
+- [TREE_MONITORING_DESIGN.md](C:/Project/web_listening/docs/design/TREE_MONITORING_DESIGN.md)

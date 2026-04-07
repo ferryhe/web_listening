@@ -1,67 +1,72 @@
 ---
 name: web-listening-agent
-description: Operate and extend the `web_listening` project for website monitoring, document discovery, AI summaries, and agent-facing integrations. Use when Codex needs to add or inspect monitored sites, trigger checks or document downloads, review changes or analyses, or implement the next stage of this repo such as browser crawling, markdown normalization, structured extraction, async jobs, webhooks, or an MCP server.
+description: Operate and extend the `web_listening` project as a staged website monitoring platform for humans and AI agents.
 ---
 
 # Web Listening Agent
 
 ## Overview
 
-Use this skill to treat `web_listening` as an agent-consumable web monitoring platform rather than a one-off crawler. Prefer machine-readable artifacts, evidence pointers, and reusable workflows over ad-hoc summaries.
+Use this skill when the task is to inspect, operate, or extend the `web_listening` repository.
 
-## Operating Workflow
+Treat the repo as a monitoring platform with three layers:
 
-1. Read `README.md` for the current CLI and REST entry points.
-2. Read `references/current-api.md` to understand the implemented blocks, endpoints, and current limits.
-3. Read `references/agent-roadmap.md` before planning or implementing larger feature work.
-4. Read `references/interface-strategy.md` before changing how agents or traditional programs call the system.
-5. Prefer the REST API for agent-facing usage; fall back to the CLI when the API server is not running.
-6. Keep the building-block split intact: crawling, diffing, storage, document download, analysis, and scheduling should remain composable.
-7. Before closing crawler or download changes, run the required live dev targets through `tools/validate_real_sites.py` and `tools/run_dev_regression.py`.
-8. When a task starts from a spreadsheet or site list, treat the raw input as local-only and convert it into a curated tracked catalog before wiring it into smoke or regression scripts.
+- control plane:
+  YAML planning artifacts
+- evidence plane:
+  SQLite plus downloaded files
+- explanation plane:
+  Markdown reports
 
-## Current Usage Pattern
+## Read First
 
-- Register or inspect sites with `POST /api/v1/sites`, `GET /api/v1/sites`, or the matching CLI commands.
-- Set `fetch_mode` per site when a target may need browser rendering later.
-- Trigger monitoring with `POST /api/v1/sites/{id}/check`.
-- Read normalized page artifacts with `GET /api/v1/sites/{id}/snapshots/latest`.
-- Trigger document downloads with `POST /api/v1/sites/{id}/download-docs`.
-- Let downstream agents write converted Markdown back with `PATCH /api/v1/documents/{id}/content`.
-- Generate analysis with `POST /api/v1/analyze`, then consume stored reports from `GET /api/v1/analyses`.
-- Pull machine-consumable outputs from `GET /api/v1/changes`, `GET /api/v1/documents`, and `GET /api/v1/analyses`.
+1. `README.md`
+2. `references/current-api.md`
+3. `references/agent-roadmap.md`
+4. `references/interface-strategy.md`
 
-## Tree Workflow
+## Current Recommended Workflow
 
-- Use `tools/bootstrap_site_tree.py --catalog dev --download-files` to establish the first recursive baseline for the 3 development sites.
-- Use `tools/bootstrap_site_tree.py --catalog smoke --download-files` to establish the first recursive baseline for the broader 30+ smoke catalog.
-- Use `tools/run_site_tree.py --catalog dev --download-files` or `--catalog smoke --download-files` for later incremental runs against the stored tree baseline.
-- Keep tree monitoring bounded: prefer explicit `max_depth`, `max_pages`, and `max_files` instead of open-ended recursion.
-- The current production-oriented defaults are `max_depth=4`, `max_pages=120`, and `max_files=40`.
+For new site-tree monitoring work, prefer the staged tool flow:
 
-## Extension Priorities
+1. `tools/discover_site_sections.py`
+2. `tools/classify_site_sections.py`
+3. reviewed `section_selection.yaml`
+4. `tools/plan_monitor_scope.py`
+5. `tools/bootstrap_site_tree.py --scope-path ...`
+6. `tools/summarize_scope_bootstrap.py`
+7. `tools/export_scope_document_manifest.py`
+8. `tools/run_site_tree.py`
 
-- Add LLM-ready markdown normalization before expanding AI summarization.
-- Add browser or Playwright capture before trying to support more JS-heavy sites.
-- Add structured extraction and field-level diff before adding more delivery channels.
-- Add persistent jobs and webhooks before scaling out scheduling.
-- Add an MCP server only after the REST and storage contracts are stable.
-- Keep the required live dev targets (`SOA`, `CAS`, `IAA`) in the regression loop while evolving the crawler and download logic.
+Use the packaged CLI and REST API mainly for the older site-level monitoring layer.
 
 ## Guardrails
 
-- Preserve evidence: keep original URL, snapshot IDs, document hashes, and timestamps visible in any new workflow.
-- Make long-running actions job-based and idempotent.
-- Prefer markdown or fit-markdown as the default agent input once available.
-- Keep provider-specific services optional; local HTTP or browser execution should still work.
-- Do not start with UI work unless the user explicitly asks for it; prioritize the content, job, and protocol layers first.
+- keep crawling, storage, document handling, and analysis composable
+- preserve evidence pointers such as `scope_id`, `run_id`, `page_url`, `download_url`, `sha256`, and timestamps
+- keep `_blobs` as canonical storage and `_tracked` as a source-oriented view
+- do not replace SHA-256 dedupe with URL-based identity
+- prefer generated YAML over hidden prompt-only state when planning scopes
+
+## Validation
+
+Before closing crawling or download changes, use the live validation commands rather than relying on committed snapshot docs:
+
+- `tools/validate_real_sites.py`
+- `tools/run_dev_regression.py`
+- `tools/run_smoke_site_catalog.py --report-only`
+- `tools/run_tree_catalog_validation.py`
+- `tools/run_agent_rescue_validation.py`
+
+See `docs/validation/README.md` for the validation map.
 
 ## References
 
-- Read `references/current-api.md` for current capabilities and gaps.
-- Read `references/agent-roadmap.md` for the target architecture and implementation order.
-- Read `references/interface-strategy.md` for the protocol and compatibility decisions.
-- Read `docs/operations/DEV_TEST_TARGETS.md` for the required live targets, regression matrix, and SHA-256 policy.
-- Read `docs/operations/SMOKE_SITE_MANAGEMENT.md` for list-driven smoke monitoring and catalog management.
-- Read `docs/validation/SMOKE_SITE_VALIDATION.md` for the current supranational smoke baseline before changing the catalog.
-- Read `docs/design/TREE_MONITORING_DESIGN.md` before implementing recursive tree or section monitoring.
+- `references/current-api.md`
+- `references/agent-roadmap.md`
+- `references/interface-strategy.md`
+- `docs/operations/DEV_TEST_TARGETS.md`
+- `docs/operations/SMOKE_SITE_MANAGEMENT.md`
+- `docs/operations/TREE_BUDGET_RULES.md`
+- `docs/design/AGENT_SCOPE_PLANNING_DESIGN.md`
+- `docs/design/TREE_MONITORING_DESIGN.md`

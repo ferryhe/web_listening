@@ -228,13 +228,15 @@ class Storage:
                 run_id INTEGER NOT NULL,
                 page_id INTEGER NOT NULL,
                 file_id INTEGER NOT NULL,
+                document_id INTEGER,
                 discovered_url TEXT NOT NULL,
                 download_url TEXT NOT NULL,
                 tracked_local_path TEXT DEFAULT '',
                 FOREIGN KEY (scope_id) REFERENCES crawl_scopes(id),
                 FOREIGN KEY (run_id) REFERENCES crawl_runs(id),
                 FOREIGN KEY (page_id) REFERENCES tracked_pages(id),
-                FOREIGN KEY (file_id) REFERENCES tracked_files(id)
+                FOREIGN KEY (file_id) REFERENCES tracked_files(id),
+                FOREIGN KEY (document_id) REFERENCES documents(id)
             );
         """)
         self._ensure_column("sites", "fetch_mode", "TEXT DEFAULT 'http'")
@@ -254,6 +256,7 @@ class Storage:
         self._ensure_column("documents", "last_modified", "TEXT DEFAULT ''")
         self._ensure_column("documents", "content_md_status", "TEXT DEFAULT 'pending'")
         self._ensure_column("documents", "content_md_updated_at", "TEXT")
+        self._ensure_column("file_observations", "document_id", "INTEGER")
         self._ensure_column("file_observations", "tracked_local_path", "TEXT DEFAULT ''")
         self.conn.commit()
 
@@ -529,6 +532,7 @@ class Storage:
         return self._row_to_document(row)
 
     def _row_to_document(self, row) -> Document:
+        row_keys = set(row.keys())
         return Document(
             id=row["id"],
             site_id=row["site_id"],
@@ -549,6 +553,7 @@ class Storage:
             content_md=row["content_md"] or "",
             content_md_status=row["content_md_status"] or "pending",
             content_md_updated_at=_parse_dt(row["content_md_updated_at"]),
+            tracked_local_path=row["tracked_local_path"] if "tracked_local_path" in row_keys else "",
         )
 
     def get_document_by_download_url(self, download_url: str) -> Optional[Document]:
@@ -631,6 +636,41 @@ class Storage:
         query += " ORDER BY downloaded_at DESC"
         rows = self.conn.execute(query, params).fetchall()
         return [self._row_to_document(r) for r in rows]
+
+    def list_scope_documents(self, scope_id: int, run_id: Optional[int] = None) -> List[Document]:
+        if run_id is None:
+            rows = self.conn.execute(
+                """
+                SELECT
+                    d.*,
+                    COALESCE(tp.canonical_url, d.page_url, '') AS page_url,
+                    fo.tracked_local_path AS tracked_local_path
+                FROM file_observations fo
+                LEFT JOIN tracked_files tf ON tf.id = fo.file_id
+                JOIN documents d ON d.id = COALESCE(fo.document_id, tf.latest_document_id)
+                LEFT JOIN tracked_pages tp ON tp.id = fo.page_id
+                WHERE fo.scope_id = ? AND COALESCE(fo.document_id, tf.latest_document_id) IS NOT NULL
+                ORDER BY tp.canonical_url ASC, d.download_url ASC, fo.id ASC
+                """,
+                (scope_id,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT
+                    d.*,
+                    COALESCE(tp.canonical_url, d.page_url, '') AS page_url,
+                    fo.tracked_local_path AS tracked_local_path
+                FROM file_observations fo
+                LEFT JOIN tracked_files tf ON tf.id = fo.file_id
+                JOIN documents d ON d.id = COALESCE(fo.document_id, tf.latest_document_id)
+                LEFT JOIN tracked_pages tp ON tp.id = fo.page_id
+                WHERE fo.scope_id = ? AND fo.run_id = ? AND COALESCE(fo.document_id, tf.latest_document_id) IS NOT NULL
+                ORDER BY tp.canonical_url ASC, d.download_url ASC, fo.id ASC
+                """,
+                (scope_id, run_id),
+            ).fetchall()
+        return [self._row_to_document(row) for row in rows]
 
     def update_document_content_md(
         self,
@@ -1176,14 +1216,15 @@ class Storage:
         cur = self.conn.execute(
             """
             INSERT INTO file_observations (
-                scope_id, run_id, page_id, file_id, discovered_url, download_url, tracked_local_path
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                scope_id, run_id, page_id, file_id, document_id, discovered_url, download_url, tracked_local_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 observation.scope_id,
                 observation.run_id,
                 observation.page_id,
                 observation.file_id,
+                observation.document_id,
                 observation.discovered_url,
                 observation.download_url,
                 observation.tracked_local_path,
@@ -1216,6 +1257,7 @@ class Storage:
             run_id=row["run_id"],
             page_id=row["page_id"],
             file_id=row["file_id"],
+            document_id=row["document_id"],
             discovered_url=row["discovered_url"],
             download_url=row["download_url"],
             tracked_local_path=row["tracked_local_path"] or "",

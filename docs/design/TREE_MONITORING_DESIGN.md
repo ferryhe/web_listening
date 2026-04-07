@@ -1,383 +1,208 @@
 # Tree Monitoring Design
 
-> Last updated: 2026-04-06
-> Status: Active design for crawling after scope selection
+> Last updated: 2026-04-07
+> Status: Active design with implemented bootstrap and rerun tooling
 
 ## Goal
 
-Extend `web_listening` from single-page checks into bounded recursive site monitoring.
+Run bounded recursive monitoring after scope selection.
 
-This design assumes the monitoring scope has already been chosen.
-For the newer pre-bootstrap planning layer, read:
+This layer is responsible for:
 
-- `docs/design/AGENT_SCOPE_PLANNING_DESIGN.md`
+- crawling the selected HTML tree
+- discovering and optionally downloading same-origin files
+- persisting page and file evidence
+- comparing later runs against the stored baseline
 
-The system should support:
+For the planning layer that chooses what should be monitored, read:
 
-- recursive HTML discovery within a controlled scope
-- same-site file discovery and deduplicated download
-- stable SQLite-backed inventory for large monitored trees
-- first-run bootstrap without noisy change alerts
+- [AGENT_SCOPE_PLANNING_DESIGN.md](C:/Project/web_listening/docs/design/AGENT_SCOPE_PLANNING_DESIGN.md)
 
-## Core decision
+## Core Boundary Rule
 
 Do not treat page recursion and file acceptance as the same boundary.
 
-Use two related but different rules:
+Use two related but different scopes:
 
-- `page scope`: which HTML pages may continue the recursive crawl
-- `file scope`: which file links may be accepted and downloaded
+- page scope:
+  which HTML pages are allowed to continue recursion
+- file scope:
+  which file URLs are allowed to be accepted and downloaded
 
-This matters because many organizations keep documents in centralized paths such as `/files/`, `/media/`, or `/uploads/`, even when the linking page lives much deeper in the tree.
+This matters because the linking page often lives under `/research/...` while the file itself is hosted under `/files/...` or `/globalassets/...`.
 
-## Default boundary model
+## Current Scope Model
 
-### 1. Page scope
-
-HTML pages should only be followed when all of these are true:
-
-- same origin as the scope seed URL
-- normalized URL stays under the scope page prefix
-- current depth is less than `max_depth`
-
-Default:
-
-- `max_depth = 3`
-- `allowed_page_prefixes = [seed_path_prefix]`
-
-Example:
-
-- seed: `https://example.org/news/`
-- page recursion allowed:
-  - `https://example.org/news/article-a`
-  - `https://example.org/news/2026/update`
-- page recursion denied:
-  - `https://example.org/reports/annual-2026`
-  - `https://other.example.org/news/`
-
-### 2. File scope
-
-Files should be accepted under a slightly wider rule:
-
-- same origin as the scope seed URL by default
-- file URL may leave the direct parent page path
-- file URL may leave the page scope prefix
-- file URL must still stay inside the root web boundary for the scope
-
-Default:
-
-- `allowed_file_prefixes = ["/"]`
-
-That means a page under `/news/` may still accept:
-
-- `https://example.org/files/report.pdf`
-- `https://example.org/uploads/2026/slides.pptx`
-
-but should reject:
-
-- `https://cdn.example.net/report.pdf`
-- `https://other.org/report.pdf`
-
-## Terminology
-
-### Root web
-
-For the first implementation, treat the root web as:
-
-- the same URL origin as the seed URL
-
-This is the safest default.
-If later we need to support document hosts like `downloads.example.org`, add:
-
-- `allowed_file_hosts`
-
-but do not start there by default.
-
-### Scope seed
-
-The scope should be defined by:
+A crawl scope is defined by:
 
 - `seed_url`
 - `allowed_origin`
 - `allowed_page_prefixes`
 - `allowed_file_prefixes`
 - `max_depth`
+- `max_pages`
+- `max_files`
+- `fetch_mode`
+- `fetch_config_json`
 
-When a curated site catalog provides both `homepage_url` and `monitor_url`, use:
+Current production-oriented defaults:
 
-- `monitor_url` as the recursive `seed_url`
-- `homepage_url` only as descriptive metadata
+- `max_depth = 4`
+- `max_pages = 120`
+- `max_files = 40`
 
-## URL handling rules
+## URL Identity Rules
 
-Every discovered URL should be canonicalized before matching or persistence:
+Tracked URLs are canonicalized before persistence:
 
 - drop `#fragment`
 - lowercase scheme and host
-- normalize trailing slash rules
-- sort query parameters
-- drop tracking parameters such as `utm_*`, `fbclid`, `gclid`
-- keep only query parameters that are explicitly allowed when needed
+- drop tracking query parameters such as `utm_*`, `fbclid`, and `gclid`
+- normalize trailing slash behavior for identity
 
-This canonical form should drive:
+The system keeps a distinction between:
 
-- queue dedupe
-- tracked page identity
-- tracked file identity
-- subtree hashing
+- sanitized request URL for fetching
+- canonical tracked URL for identity and dedupe
 
-Do not blindly use the canonical identity URL as the network request URL.
+## Crawl Algorithm
 
-Recommended split:
-
-- request URL sanitation:
-  - drop `#fragment`
-  - drop tracking parameters
-  - preserve path shape such as trailing `/` when requesting
-- canonical identity:
-  - use the final URL after fetch when possible
-  - then normalize trailing slash rules for dedupe and hashing
-
-## Recommended SQLite model
-
-Keep one SQLite database per deployment by default.
-Do not create one SQLite file per page.
-
-The logical split should be by `scope_id`, not by file.
-
-### New tables
-
-- `crawl_scopes`
-  - `id`
-  - `site_id`
-  - `seed_url`
-  - `allowed_origin`
-  - `allowed_page_prefixes_json`
-  - `allowed_file_prefixes_json`
-  - `max_depth`
-  - `follow_files`
-  - `is_initialized`
-  - `baseline_run_id`
-  - `created_at`
-  - `updated_at`
-- `crawl_runs`
-  - `id`
-  - `scope_id`
-  - `run_type=bootstrap|incremental`
-  - `status=queued|running|completed|failed`
-  - `started_at`
-  - `finished_at`
-  - `pages_seen`
-  - `files_seen`
-  - `pages_changed`
-  - `files_changed`
-- `tracked_pages`
-  - `id`
-  - `scope_id`
-  - `canonical_url`
-  - `depth`
-  - `first_seen_run_id`
-  - `last_seen_run_id`
-  - `miss_count`
-  - `is_active`
-  - `latest_snapshot_id`
-  - `latest_hash`
-- `page_snapshots`
-  - `id`
-  - `scope_id`
-  - `page_id`
-  - `run_id`
-  - `captured_at`
-  - `content_hash`
-  - `raw_html`
-  - `cleaned_html`
-  - `content_text`
-  - `markdown`
-  - `fit_markdown`
-  - `metadata_json`
-  - `fetch_mode`
-  - `final_url`
-  - `status_code`
-  - `links`
-- `page_edges`
-  - `id`
-  - `scope_id`
-  - `from_page_id`
-  - `to_page_id`
-  - `run_id`
-- `tracked_files`
-  - `id`
-  - `scope_id`
-  - `canonical_url`
-  - `first_seen_run_id`
-  - `last_seen_run_id`
-  - `miss_count`
-  - `is_active`
-  - `latest_document_id`
-  - `latest_sha256`
-- `file_observations`
-  - `id`
-  - `scope_id`
-  - `run_id`
-  - `page_id`
-  - `file_id`
-  - `discovered_url`
-  - `download_url`
-
-### Existing tables to reuse
-
-- `site_snapshots` remains useful for the current site-level summary layer
-- `documents` remains the logical downloaded-file record
-- `document_blobs` remains the physical deduplicated blob store keyed by SHA-256
-
-## First-run bootstrap
-
-The first recursive run should initialize inventory, not emit normal change alerts.
-
-### Bootstrap flow
-
-1. create or update `crawl_scope`
-2. enqueue a `crawl_run` with `run_type=bootstrap`
-3. BFS crawl all allowed HTML pages up to `max_depth`
-4. register all accepted file links
-5. download files if file tracking is enabled
-6. compute page hashes and file SHA-256 values
-7. populate `tracked_pages`, `tracked_files`, and edges
-8. set `is_initialized = 1`
-9. record `baseline_run_id`
-
-### Bootstrap behavior
-
-- no normal `content_changed` alerts
-- no normal `file_changed` alerts
-- optional summary only:
-  - pages discovered
-  - files discovered
-  - blocked pages
-  - skipped out-of-scope links
-
-## Incremental runs
-
-After bootstrap, each run should:
-
-1. start from the scope seed queue
-2. crawl allowed HTML pages
-3. compare page hash with the latest tracked page hash
-4. discover allowed file links
-5. compare downloaded file SHA-256 with the latest tracked file SHA-256
-6. update subtree hashes
-7. emit structured changes
-
-### Missing pages or files
-
-Do not mark a page or file as removed after one miss.
-
-Recommended default:
-
-- `remove_after_missed_runs = 2`
-
-This reduces noise from temporary failures or navigation changes.
-
-## Recursion algorithm
-
-Use BFS, not DFS.
+Use bounded BFS.
 
 Why:
 
+- level coverage is predictable
 - depth limits are easier to enforce
-- queue behavior is more predictable
-- broad section coverage happens earlier in the run
+- wide section coverage happens earlier than with DFS
 
-Each queue item should include:
+Queue items are effectively:
 
 - `url`
-- `canonical_url`
 - `depth`
-- `discovered_from_page_id`
+- `from_page_id`
 
-## File dedupe and download policy
+## Implemented Persistence Model
 
-The final dedupe authority should be file SHA-256.
+SQLite remains the default store.
 
-### Rules
+The main tree tables are:
 
-- never trust URL equality alone as file identity
-- two different URLs may point to the same file
-- the same URL may later serve a different file
-- always compute SHA-256 from raw bytes after download
+- `crawl_scopes`
+- `crawl_runs`
+- `tracked_pages`
+- `page_snapshots`
+- `page_edges`
+- `tracked_files`
+- `file_observations`
 
-### Storage behavior
+Important file-related records:
 
-- `document_blobs.sha256` stays the physical dedupe key
-- `tracked_files.latest_sha256` stores the current logical file state for a scope
-- multiple pages may reference the same file blob
-- multiple scopes may reference the same file blob
+- `documents`
+  logical downloaded document record
+- `document_blobs`
+  canonical physical blob store keyed by `sha256`
+- `file_observations`
+  per-run evidence linking source page, tracked file, optional document, and tracked local path
 
-### Practical result
+## File Storage Model
 
-This guarantees:
+The project now uses two file-path layers:
 
-- no duplicate physical downloads after dedupe
-- stable evidence when the same file appears in several parts of the tree
-- correct detection when a file URL stays the same but bytes change
+### Canonical store
 
-## Tree hashing
+- location: `data/downloads/_blobs`
+- dedupe key: `SHA-256`
+- stored in:
+  - `document_blobs.canonical_path`
+  - `documents.local_path`
 
-To help agents work at section level, add hashes at three layers:
+### Source-oriented view
 
-- `page_hash`
-- `subtree_hash`
-- `scope_hash`
+- location: `data/downloads/_tracked`
+- organized by:
+  - source host
+  - source page path
+  - file name plus `sha256[:8]`
+- stored in:
+  - `file_observations.tracked_local_path`
+- exposed to agents through:
+  - `preferred_display_path`
+  - document manifest export
 
-Suggested aggregation:
+Rule:
 
-- sort `canonical_url + ":" + page_hash`
-- hash the joined lines with SHA-256
+- `_blobs` is the canonical dedupe layer
+- `_tracked` is the browsing and explanation layer
 
-Do the same for files when computing subtree or scope summaries.
+## Bootstrap Behavior
 
-## Suggested API direction
+Bootstrap creates a baseline.
 
-Recursive monitoring should not replace the current site endpoints.
-It should extend them.
+It should:
 
-Suggested additions:
+1. create or update the scope
+2. crawl bounded pages
+3. discover accepted file links
+4. optionally download those files
+5. persist page snapshots and file observations
+6. mark the scope initialized
+7. record the baseline run id
 
-- `POST /api/v1/sites/{id}/scopes`
-- `GET /api/v1/sites/{id}/scopes`
-- `POST /api/v1/scopes/{id}/crawl`
-- `GET /api/v1/scopes/{id}/pages`
-- `GET /api/v1/scopes/{id}/files`
-- `GET /api/v1/scopes/{id}/tree`
-- `GET /api/v1/crawl-runs/{id}`
+Bootstrap should not be treated as a normal alerting event.
 
-## Recommended implementation order
+## Incremental Reruns
 
-### Iteration 1
+Later runs should:
 
-- add `crawl_scopes`
-- add `crawl_runs`
-- add `tracked_pages`
-- add `tracked_files`
-- add bootstrap mode
+1. crawl the same selected scope
+2. compare page hashes with the latest tracked page state
+3. compare downloaded file SHA-256 values with the latest tracked file state
+4. detect:
+   - new pages
+   - changed pages
+   - missing pages
+   - new files
+   - changed files
+   - missing files
 
-### Iteration 2
+Current user-facing run tooling:
 
-- add recursive BFS crawl
-- enforce page scope and file scope separately
-- persist page edges
-- add subtree hashing
+- `tools/bootstrap_site_tree.py`
+- `tools/run_site_tree.py`
+- `tools/summarize_scope_bootstrap.py`
+- `tools/export_scope_document_manifest.py`
+- `tools/explain_tree_bootstrap.py`
 
-### Iteration 3
+## Dedupe Rule
 
-- add structured page and file change payloads
-- add job envelopes
-- expose recursive scope APIs
+The final file dedupe authority is `SHA-256`.
 
-## Non-goals for the first recursive version
+Never treat URL equality as final file identity because:
 
-- unlimited whole-domain crawling
-- cross-domain file following by default
-- browser mode for every page by default
-- distributed crawling
-- per-page SQLite databases
+- different URLs can serve the same file
+- the same URL can later serve different bytes
+
+The current model intentionally keeps:
+
+- logical file identity by tracked URL
+- physical blob identity by `SHA-256`
+
+## Polite Crawling
+
+Tree monitoring uses pacing controls from `fetch_config_json`:
+
+- `request_delay_ms`
+- `file_request_delay_ms`
+- `request_jitter_ms`
+
+These settings are especially important when increasing first-run coverage.
+
+## Current Limits
+
+Tree monitoring is implemented through dedicated tools, not the packaged CLI subcommands or REST API.
+
+In other words:
+
+- the crawler and persistence model are real
+- the staged tree workflow is operational
+- but its interface is still tool-driven rather than fully API-driven

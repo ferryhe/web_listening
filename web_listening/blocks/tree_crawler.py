@@ -666,6 +666,7 @@ class TreeCrawler:
                 run_id=run.id,
                 page_id=page_id,
                 file_id=tracked_file.id,
+                document_id=latest_document_id,
                 discovered_url=file_url,
                 download_url=file_url,
                 tracked_local_path=tracked_local_path,

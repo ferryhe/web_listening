@@ -19,16 +19,18 @@ Use this skill when the task is to create or operate recursive site-tree monitor
 5. Classify discovered sections before selecting monitoring scope:
    - `.venv\Scripts\python tools\classify_site_sections.py --catalog dev`
    - `.venv\Scripts\python tools\classify_site_sections.py --catalog smoke`
-6. Bootstrap after scope planning:
+6. Compile the reviewed section selection into a runnable scope:
+   - `.venv\Scripts\python tools\plan_monitor_scope.py --selection-path data/plans/section_selection_soa_2026-04-07.yaml`
+7. Bootstrap after scope planning:
    - `.venv\Scripts\python tools\bootstrap_site_tree.py --catalog dev --download-files`
    - `.venv\Scripts\python tools\bootstrap_site_tree.py --catalog smoke --download-files`
-7. Run later incremental checks:
+8. Run later incremental checks:
    - `.venv\Scripts\python tools\run_site_tree.py --catalog dev --download-files`
    - `.venv\Scripts\python tools\run_site_tree.py --catalog smoke --download-files`
-8. Explain the first baseline when you need a human/agent interpretation:
+9. Explain the first baseline when you need a human/agent interpretation:
    - `.venv\Scripts\python tools\explain_tree_bootstrap.py --catalog dev`
    - `.venv\Scripts\python tools\explain_tree_bootstrap.py --catalog smoke`
-9. Read the dated reports in `data/reports/` and the planning YAML in `data/plans/`.
+10. Read the dated reports in `data/reports/` and the planning YAML in `data/plans/`.
 
 The current script defaults are production-oriented for whole-site monitoring:
 

@@ -44,6 +44,7 @@
 
 - `tools/discover_site_sections.py`
 - `tools/classify_site_sections.py`
+- `tools/plan_monitor_scope.py`
 - `tools/bootstrap_site_tree.py`
 - `tools/explain_tree_bootstrap.py`
 - `tools/run_site_tree.py`

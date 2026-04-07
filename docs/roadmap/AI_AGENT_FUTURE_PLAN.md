@@ -1,7 +1,7 @@
 # AI Agent Future Plan
 
 > Last updated: 2026-04-03  
-> Context: This plan is derived from [RESEARCH_REPORT.md](./RESEARCH_REPORT.md) and the repo skill at `.codex/skills/web-listening-agent`.
+> Context: This plan is derived from [RESEARCH_REPORT.md](../research/RESEARCH_REPORT.md) and the repo skill at `.codex/skills/web-listening-agent`.
 
 ## Goal
 
@@ -243,7 +243,7 @@ Acceptance criteria:
 ## Phase 3: Structured Watch Rules
 
 Before moving fully into selector or schema watch rules, the project should add bounded recursive scope monitoring.
-See `TREE_MONITORING_DESIGN.md` for the recommended model.
+See `../design/TREE_MONITORING_DESIGN.md` for the recommended model.
 
 Key rules from that design:
 

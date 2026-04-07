@@ -2,6 +2,8 @@
 
 Monitor websites for changes, download documents, expose normalized snapshots, and generate AI summaries.
 
+Documentation index: `docs/README.md`
+
 ## Features
 
 - **Website monitoring** – crawl sites, compute content diffs, detect new links and documents
@@ -332,8 +334,8 @@ pytest tests/ -v
 
 Required live development targets are `SOA`, `CAS`, and `IAA` (`actuaries.org`).
 The canonical target list and thresholds live in `config/dev_test_sites.json`.
-See `DEV_TEST_TARGETS.md` for the current live regression matrix and SHA-256 policy.
-For larger list-driven monitoring, see `SMOKE_SITE_MANAGEMENT.md` and `config/smoke_site_catalog.json`.
+See `docs/operations/DEV_TEST_TARGETS.md` for the current live regression matrix and SHA-256 policy.
+For larger list-driven monitoring, see `docs/operations/SMOKE_SITE_MANAGEMENT.md` and `config/smoke_site_catalog.json`.
 
 Recommended live validation commands:
 
@@ -341,13 +343,17 @@ Recommended live validation commands:
 .venv\Scripts\python tools\validate_real_sites.py
 .venv\Scripts\python tools\run_dev_regression.py
 .venv\Scripts\python tools\run_dev_daily_monitor.py --download-samples
+.venv\Scripts\python tools\bootstrap_site_tree.py --catalog dev
+.venv\Scripts\python tools\bootstrap_site_tree.py --catalog smoke
+.venv\Scripts\python tools\run_site_tree.py --catalog dev
 .venv\Scripts\python tools\run_smoke_site_catalog.py --report-only
 .venv\Scripts\python tools\run_smoke_site_catalog.py --primary-only --report-only
 .venv\Scripts\python tools\run_agent_rescue_validation.py
 ```
 
-`tools/run_dev_daily_monitor.py` writes the persistent dev-target baseline into `WL_DB_PATH` and stores a fresh Markdown run report in `data/reports/dev_daily_latest.md` by default.
+`tools/run_dev_daily_monitor.py` writes the persistent dev-target baseline into `WL_DB_PATH` and stores a fresh Markdown run report in `data/reports/dev_daily_YYYY-MM-DD.md` by default.
 Run the same command again tomorrow to get real diff results against today's stored snapshots.
+`tools/bootstrap_site_tree.py` writes a dated bootstrap report and persists tree scopes in the main database so a later `tools/run_site_tree.py` execution can compare against the stored baseline.
 `tools/run_smoke_site_catalog.py` now uses the rescue ladder by default.
 Use `--primary-only` when you want the strict catalog target without browser or feed fallback.
 `tools/run_dev_regression.py` still fails on live regressions by default; use `--report-only` if you only want the Markdown report without a failing exit code.

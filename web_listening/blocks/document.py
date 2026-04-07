@@ -57,9 +57,10 @@ class DocumentProcessor:
         institution: str,
         page_url: str = "",
         request_headers: dict | None = None,
+        force_download: bool = False,
     ) -> DownloadResult:
         """Download a document into the shared blob store and return its metadata."""
-        if self.storage is not None:
+        if self.storage is not None and not force_download:
             existing = self.storage.get_document_by_download_url(url)
             if existing and existing.sha256 and existing.local_path and Path(existing.local_path).exists():
                 return DownloadResult(
@@ -149,6 +150,7 @@ class DocumentProcessor:
         page_url: str = "",
         title: str = "",
         request_headers: dict | None = None,
+        force_download: bool = False,
     ) -> Document:
         """Download *url* and return a :class:`Document` record.
 
@@ -160,6 +162,7 @@ class DocumentProcessor:
             institution,
             page_url,
             request_headers=request_headers,
+            force_download=force_download,
         )
 
         return Document(

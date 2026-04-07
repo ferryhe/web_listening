@@ -73,7 +73,7 @@ The canonical definition lives in `config/dev_test_sites.json`.
 Use `tools/validate_real_sites.py` and `tools/run_dev_regression.py` to exercise them.
 Use `tools/run_dev_daily_monitor.py --download-samples` when you want to persist today's baseline into the main database and reuse it on the next run.
 `tools/run_dev_regression.py` fails on regression issues by default; use `--report-only` only when you need a non-failing report.
-Use `DEV_TEST_TARGETS.md` for the current baseline expectations and SHA-256 rules.
+Use `docs/operations/DEV_TEST_TARGETS.md` for the current baseline expectations and SHA-256 rules.
 
 ## Curated smoke catalog
 
@@ -85,8 +85,8 @@ Use:
 
 - `tools/run_smoke_site_catalog.py`
 
-Read `SMOKE_SITE_MANAGEMENT.md` for the catalog lifecycle, expectation types, and JS-heavy handling.
-Read `SMOKE_SITE_VALIDATION.md` for the current live baseline.
+Read `docs/operations/SMOKE_SITE_MANAGEMENT.md` for the catalog lifecycle, expectation types, and JS-heavy handling.
+Read `docs/validation/SMOKE_SITE_VALIDATION.md` for the current live baseline.
 `tools/run_smoke_site_catalog.py` now runs the shared rescue ladder by default; use `--primary-only` when you want the catalog target without browser or feed fallback.
-Use `tools/run_tree_catalog_validation.py` and `TREE_CATALOG_VALIDATION.md` when evaluating whether a list target can support bounded recursive tree monitoring instead of only root-page smoke checks.
-Use `tools/run_agent_rescue_validation.py` and `AGENT_RESCUE_VALIDATION.md` when you want a dedicated rescue-only baseline across the full catalog.
+Use `tools/run_tree_catalog_validation.py` and `docs/validation/TREE_CATALOG_VALIDATION.md` when evaluating whether a list target can support bounded recursive tree monitoring instead of only root-page smoke checks.
+Use `tools/run_agent_rescue_validation.py` and `docs/validation/AGENT_RESCUE_VALIDATION.md` when you want a dedicated rescue-only baseline across the full catalog.

@@ -24,6 +24,7 @@ class FakeCrawler:
 
     def snapshot(self, site):
         is_docs = site.url.endswith("/docs")
+        links = ["https://example.com/file.pdf", "https://example.com/guide"] if is_docs else ["https://example.com/next"]
         return SiteSnapshot(
             site_id=site.id,
             captured_at=datetime.now(timezone.utc),
@@ -33,11 +34,15 @@ class FakeCrawler:
             content_text="Example content",
             markdown="# Example",
             fit_markdown="# Example",
-            metadata_json={"word_count": 123 if not is_docs else 45, "hash_basis": "fit_markdown"},
+            metadata_json={
+                "word_count": 123 if not is_docs else 45,
+                "link_count": len(links),
+                "hash_basis": "fit_markdown",
+            },
             fetch_mode="http",
             final_url=site.url,
             status_code=200,
-            links=["https://example.com/file.pdf"] if is_docs else ["https://example.com/next"],
+            links=links,
         )
 
 
@@ -118,6 +123,13 @@ def test_run_dev_daily_monitor_persists_baseline_and_samples(tmp_path, monkeypat
 
     assert "Initialized today: `yes`" in first_markdown
     assert "Initialized today: `no`" in second_markdown
+    assert "## Final Conclusion" in second_markdown
+    assert "Conclusion time:" in second_markdown
+    assert "Monitoring depth:" in second_markdown
+    assert "Inventory totals:" in second_markdown
+    assert "Change totals:" in second_markdown
+    assert "Final result:" in second_markdown
+    assert "| Site | Kind | Status | Content changed | New links | New files | Page links | Content links | Doc links | Words | Downloads |" in second_markdown
     assert report_path.exists()
 
     storage = Storage(db_path)
@@ -129,3 +141,9 @@ def test_run_dev_daily_monitor_persists_baseline_and_samples(tmp_path, monkeypat
         assert storage.list_changes() == []
     finally:
         storage.close()
+
+
+def test_build_default_report_path_uses_date(monkeypatch):
+    monkeypatch.setattr(daily_module.settings, "data_dir", Path("data"))
+    report_path = daily_module.build_default_report_path(datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc))
+    assert report_path == Path("data") / "reports" / "dev_daily_2026-04-06.md"

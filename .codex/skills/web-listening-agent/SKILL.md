@@ -31,6 +31,13 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 - Generate analysis with `POST /api/v1/analyze`, then consume stored reports from `GET /api/v1/analyses`.
 - Pull machine-consumable outputs from `GET /api/v1/changes`, `GET /api/v1/documents`, and `GET /api/v1/analyses`.
 
+## Tree Workflow
+
+- Use `tools/bootstrap_site_tree.py --catalog dev` to establish the first recursive baseline for the 3 development sites.
+- Use `tools/bootstrap_site_tree.py --catalog smoke` to establish the first recursive baseline for the broader 30+ smoke catalog.
+- Use `tools/run_site_tree.py --catalog dev` or `--catalog smoke` for later incremental runs against the stored tree baseline.
+- Keep tree monitoring bounded: prefer explicit `max_depth`, `max_pages`, and `max_files` instead of open-ended recursion.
+
 ## Extension Priorities
 
 - Add LLM-ready markdown normalization before expanding AI summarization.
@@ -53,7 +60,7 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 - Read `references/current-api.md` for current capabilities and gaps.
 - Read `references/agent-roadmap.md` for the target architecture and implementation order.
 - Read `references/interface-strategy.md` for the protocol and compatibility decisions.
-- Read `DEV_TEST_TARGETS.md` for the required live targets, regression matrix, and SHA-256 policy.
-- Read `SMOKE_SITE_MANAGEMENT.md` for list-driven smoke monitoring and catalog management.
-- Read `SMOKE_SITE_VALIDATION.md` for the current supranational smoke baseline before changing the catalog.
-- Read `TREE_MONITORING_DESIGN.md` before implementing recursive tree or section monitoring.
+- Read `docs/operations/DEV_TEST_TARGETS.md` for the required live targets, regression matrix, and SHA-256 policy.
+- Read `docs/operations/SMOKE_SITE_MANAGEMENT.md` for list-driven smoke monitoring and catalog management.
+- Read `docs/validation/SMOKE_SITE_VALIDATION.md` for the current supranational smoke baseline before changing the catalog.
+- Read `docs/design/TREE_MONITORING_DESIGN.md` before implementing recursive tree or section monitoring.

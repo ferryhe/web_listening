@@ -69,6 +69,106 @@ def make_tree_transport():
     return httpx.MockTransport(handler)
 
 
+def make_incremental_tree_transport():
+    state = {"phase": "bootstrap"}
+    html_root_bootstrap = """
+    <html>
+      <body>
+        <main>
+          <h1>Section Home</h1>
+          <a href="https://example.com/section/page-a">Page A</a>
+          <a href="https://example.com/files/report.pdf">Report</a>
+        </main>
+      </body>
+    </html>
+    """
+    html_page_a_bootstrap = """
+    <html>
+      <body>
+        <main>
+          <h1>Page A</h1>
+          <p>Original page A content.</p>
+          <a href="/section/page-b">Page B</a>
+          <a href="https://example.com/files/report.pdf">Report</a>
+        </main>
+      </body>
+    </html>
+    """
+    html_page_b_bootstrap = """
+    <html>
+      <body>
+        <main>
+          <h1>Page B</h1>
+          <p>Original page B content.</p>
+        </main>
+      </body>
+    </html>
+    """
+    html_root_incremental = """
+    <html>
+      <body>
+        <main>
+          <h1>Section Home</h1>
+          <a href="https://example.com/section/page-a">Page A</a>
+          <a href="https://example.com/section/page-c">Page C</a>
+          <a href="https://example.com/files/report.pdf">Report</a>
+          <a href="https://example.com/files/new-report.pdf">New Report</a>
+        </main>
+      </body>
+    </html>
+    """
+    html_page_a_incremental = """
+    <html>
+      <body>
+        <main>
+          <h1>Page A</h1>
+          <p>Updated page A content with a meaningful change.</p>
+          <a href="https://example.com/files/report.pdf">Report</a>
+        </main>
+      </body>
+    </html>
+    """
+    html_page_c_incremental = """
+    <html>
+      <body>
+        <main>
+          <h1>Page C</h1>
+          <p>Brand new child page.</p>
+        </main>
+      </body>
+    </html>
+    """
+    pdf_bootstrap = b"%PDF report v1"
+    pdf_incremental = b"%PDF report v2"
+    pdf_new = b"%PDF new report"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if state["phase"] == "bootstrap":
+            if url == "https://example.com/section":
+                return httpx.Response(200, text=html_root_bootstrap, headers={"content-type": "text/html"}, request=request)
+            if url == "https://example.com/section/page-a":
+                return httpx.Response(200, text=html_page_a_bootstrap, headers={"content-type": "text/html"}, request=request)
+            if url == "https://example.com/section/page-b":
+                return httpx.Response(200, text=html_page_b_bootstrap, headers={"content-type": "text/html"}, request=request)
+            if url == "https://example.com/files/report.pdf":
+                return httpx.Response(200, content=pdf_bootstrap, headers={"content-type": "application/pdf"}, request=request)
+        else:
+            if url == "https://example.com/section":
+                return httpx.Response(200, text=html_root_incremental, headers={"content-type": "text/html"}, request=request)
+            if url == "https://example.com/section/page-a":
+                return httpx.Response(200, text=html_page_a_incremental, headers={"content-type": "text/html"}, request=request)
+            if url == "https://example.com/section/page-c":
+                return httpx.Response(200, text=html_page_c_incremental, headers={"content-type": "text/html"}, request=request)
+            if url == "https://example.com/files/report.pdf":
+                return httpx.Response(200, content=pdf_incremental, headers={"content-type": "application/pdf"}, request=request)
+            if url == "https://example.com/files/new-report.pdf":
+                return httpx.Response(200, content=pdf_new, headers={"content-type": "application/pdf"}, request=request)
+        return httpx.Response(404, text="not found", request=request)
+
+    return state, httpx.MockTransport(handler)
+
+
 def test_canonicalize_tracked_url_drops_fragment_and_tracking_query():
     url = "https://Example.com/section/page-a/?utm_source=test&b=2#a"
     assert canonicalize_tracked_url(url) == "https://example.com/section/page-a?b=2"
@@ -229,5 +329,97 @@ def test_tree_crawler_preserves_seed_trailing_slash(tmp_path):
     assert result.run.status == "completed"
     assert len(result.pages) == 2
     assert not result.page_failures
+
+    storage.close()
+
+
+def test_tree_crawler_incremental_reports_new_changed_and_missing_items(tmp_path):
+    storage = Storage(tmp_path / "incremental.db")
+    state, transport = make_incremental_tree_transport()
+    client = httpx.Client(transport=transport, follow_redirects=True)
+    crawler = Crawler(client=client)
+    processor = DocumentProcessor(client=client, storage=storage)
+    site = storage.add_site(Site(url="https://example.com/section", name="Example Incremental"))
+    scope = CrawlScope(
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"],
+        max_depth=2,
+        max_pages=10,
+        max_files=10,
+        fetch_mode="http",
+    )
+
+    with patch("web_listening.blocks.document.settings") as mock_doc_settings:
+        mock_doc_settings.user_agent = "test-agent"
+        mock_doc_settings.downloads_dir = tmp_path / "downloads"
+        with TreeCrawler(storage=storage, crawler=crawler, document_processor=processor) as tree:
+            bootstrap = tree.bootstrap_scope(scope, institution="Example Incremental", download_files=True)
+            state["phase"] = "incremental"
+            incremental = tree.run_scope(bootstrap.scope, institution="Example Incremental", download_files=True)
+
+    assert bootstrap.run.status == "completed"
+    assert incremental.run.status == "completed"
+    assert "https://example.com/section/page-c" in incremental.new_pages
+    assert "https://example.com/section/page-a" in incremental.changed_pages
+    assert "https://example.com/section/page-b" in incremental.missing_pages
+    assert "https://example.com/files/new-report.pdf" in incremental.new_files
+    assert "https://example.com/files/report.pdf" in incremental.changed_files
+    assert incremental.missing_files == []
+    assert incremental.run.pages_changed >= 3
+    assert incremental.run.files_changed >= 2
+
+    storage.close()
+
+
+def test_tree_crawler_bootstrap_tolerates_file_download_failures(tmp_path):
+    html_root = """
+    <html>
+      <body>
+        <main>
+          <h1>File Failure Root</h1>
+          <a href="https://example.com/files/missing.pdf">Broken file</a>
+        </main>
+      </body>
+    </html>
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "https://example.com/root":
+            return httpx.Response(200, text=html_root, headers={"content-type": "text/html"}, request=request)
+        if url == "https://example.com/files/missing.pdf":
+            return httpx.Response(404, text="missing", request=request)
+        return httpx.Response(404, text="not found", request=request)
+
+    storage = Storage(tmp_path / "file-failure.db")
+    client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    crawler = Crawler(client=client)
+    processor = DocumentProcessor(client=client, storage=storage)
+    site = storage.add_site(Site(url="https://example.com/root", name="File Failure"))
+    scope = CrawlScope(
+        site_id=site.id,
+        seed_url="https://example.com/root",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/"],
+        allowed_file_prefixes=["/"],
+        max_depth=1,
+        max_pages=5,
+        max_files=5,
+        fetch_mode="http",
+    )
+
+    with patch("web_listening.blocks.document.settings") as mock_doc_settings:
+        mock_doc_settings.user_agent = "test-agent"
+        mock_doc_settings.downloads_dir = tmp_path / "downloads"
+        with TreeCrawler(storage=storage, crawler=crawler, document_processor=processor) as tree:
+            result = tree.bootstrap_scope(scope, institution="File Failure", download_files=True)
+
+    assert result.run.status == "completed"
+    assert result.pages
+    assert result.files == []
+    assert len(result.file_failures) == 1
 
     storage.close()

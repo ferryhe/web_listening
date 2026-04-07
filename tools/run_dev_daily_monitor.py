@@ -15,7 +15,12 @@ from web_listening.models import Change, Site
 
 
 TARGETS_PATH = Path(__file__).resolve().parents[1] / "config" / "dev_test_sites.json"
-DEFAULT_REPORT_PATH = settings.data_dir / "reports" / "dev_daily_latest.md"
+
+
+def build_default_report_path(now: datetime | None = None) -> Path:
+    moment = now or datetime.now().astimezone()
+    report_date = moment.date().isoformat()
+    return settings.data_dir / "reports" / f"dev_daily_{report_date}.md"
 
 
 @dataclass(slots=True)
@@ -50,6 +55,8 @@ class DailyResult:
     new_link_count: int
     new_doc_count: int
     word_count: int
+    page_link_count: int
+    content_link_count: int
     doc_link_count: int
     hash_basis: str
     content_hash: str
@@ -211,6 +218,8 @@ def run_daily_monitor(
                         new_link_count=len(new_links),
                         new_doc_count=len(new_docs),
                         word_count=int(snapshot.metadata_json.get("word_count", 0)),
+                        page_link_count=len(snapshot.links),
+                        content_link_count=int(snapshot.metadata_json.get("link_count", 0)),
                         doc_link_count=len(doc_links),
                         hash_basis=str(snapshot.metadata_json.get("hash_basis", "")),
                         content_hash=snapshot.content_hash,
@@ -228,25 +237,112 @@ def run_daily_monitor(
     return markdown
 
 
+def build_final_conclusion(results: list[DailyResult], generated_at: str) -> list[str]:
+    monitored_sites = len({result.site_key for result in results})
+    monitor_pages = [result for result in results if result.kind == "monitor"]
+    document_pages = [result for result in results if result.kind == "documents"]
+    reachable_count = sum(1 for result in results if (result.status_code or 0) < 400)
+    changed_results = [result for result in results if result.changed]
+    new_link_results = [result for result in results if result.new_link_count > 0]
+    new_doc_results = [result for result in results if result.new_doc_count > 0]
+    stable_results = [
+        result
+        for result in results
+        if not result.changed and result.new_link_count == 0 and result.new_doc_count == 0
+    ]
+
+    changed_labels = ", ".join(
+        f"{result.site_name} {result.kind}" for result in changed_results
+    ) or "none"
+    new_link_labels = ", ".join(
+        f"{result.site_name} {result.kind}" for result in new_link_results
+    ) or "none"
+    new_doc_labels = ", ".join(
+        f"{result.site_name} {result.kind}" for result in new_doc_results
+    ) or "none"
+    stable_labels = ", ".join(
+        f"{result.site_name} {result.kind}" for result in stable_results
+    ) or "none"
+
+    total_page_links = sum(result.page_link_count for result in results)
+    total_content_links = sum(result.content_link_count for result in results)
+    total_visible_doc_links = sum(result.doc_link_count for result in results)
+    total_new_links = sum(result.new_link_count for result in results)
+    total_new_docs = sum(result.new_doc_count for result in results)
+    total_downloads = sum(len(result.sample_downloads) for result in results)
+    if new_link_results:
+        agent_takeaway = (
+            f"Prioritize the pages with new links: `{new_link_labels}`. "
+            f"New document links in this run: `{total_new_docs}` on `{new_doc_labels}`. "
+            f"`{total_downloads}` sample downloads still resolved cleanly."
+        )
+    else:
+        agent_takeaway = (
+            f"No new content, links, or document links were discovered in this run, "
+            f"and `{total_downloads}` sample downloads still resolved cleanly. "
+            f"The current agent-readable evidence surface is stable, with CAS and IAA "
+            f"document pages still the richest sources."
+        )
+
+    return [
+        "## Final Conclusion",
+        "",
+        f"- Conclusion time: `{generated_at}`",
+        (
+            f"- Monitoring depth: `{monitored_sites}` institutions, `{len(results)}` entry pages "
+            f"(`{len(monitor_pages)}` monitor + `{len(document_pages)}` document pages), "
+            f"mode=`single-page snapshot, non-recursive`."
+        ),
+        (
+            f"- Inventory totals: `{total_page_links}` extracted page links, "
+            f"`{total_content_links}` content-area links, "
+            f"`{total_visible_doc_links}` visible document links, "
+            f"`{total_downloads}` sample documents verified."
+        ),
+        (
+            f"- Change totals: `{len(changed_results)}` pages with new content, "
+            f"`{total_new_links}` new links, `{total_new_docs}` new document links/files."
+        ),
+        (
+            f"- Final result: `{reachable_count}/{len(results)}` target pages were reachable. "
+            f"Content changed on `{len(changed_results)}` pages: `{changed_labels}`. "
+            f"Pages with newly discovered links: `{new_link_labels}`. "
+            f"Pages with newly discovered files: `{new_doc_labels}`. "
+            f"Stable pages with no detected changes: `{stable_labels}`."
+        ),
+        (
+            f"- Agent takeaway: `{agent_takeaway}`"
+        ),
+        "",
+    ]
+
+
 def render_markdown(results: list[DailyResult]) -> str:
     generated_at = datetime.now(timezone.utc).isoformat()
     lines = [
         "# Dev Daily Monitor",
         "",
+    ]
+    lines.extend(build_final_conclusion(results, generated_at))
+    lines.extend(
+        [
         f"- Generated at: `{generated_at}`",
         f"- Target config: `{TARGETS_PATH}`",
         f"- Database path: `{settings.db_path}`",
         f"- Downloads path: `{settings.downloads_dir}`",
+        f"- Default report file: `{build_default_report_path()}`",
         "- Target set: `SOA`, `CAS`, `IAA`",
         "",
-        "| Site | Kind | Initialized today | Changed | New links | New docs | Words | Doc links | Downloads |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
-    ]
+        "| Site | Kind | Status | Content changed | New links | New files | Page links | Content links | Doc links | Words | Downloads |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
     for result in results:
         lines.append(
-            f"| {result.site_name} | {result.kind} | {'yes' if result.initialized_today else 'no'} | "
+            f"| {result.site_name} | {result.kind} | {result.status_code} | "
             f"{'yes' if result.changed else 'no'} | {result.new_link_count} | {result.new_doc_count} | "
-            f"{result.word_count} | {result.doc_link_count} | {len(result.sample_downloads)} |"
+            f"{result.page_link_count} | {result.content_link_count} | {result.doc_link_count} | "
+            f"{result.word_count} | {len(result.sample_downloads)} |"
         )
 
     lines.extend(["", "## Details", ""])
@@ -257,9 +353,12 @@ def render_markdown(results: list[DailyResult]) -> str:
         lines.append(f"- Final URL: `{result.final_url}`")
         lines.append(f"- Status code: `{result.status_code}`")
         lines.append(f"- Initialized today: `{'yes' if result.initialized_today else 'no'}`")
+        lines.append("- Monitoring depth: `entry page only; no recursive crawl in this report`")
         lines.append(f"- Changed against previous stored snapshot: `{'yes' if result.changed else 'no'}`")
         lines.append(f"- New links: `{result.new_link_count}`")
         lines.append(f"- New document links: `{result.new_doc_count}`")
+        lines.append(f"- Extracted page links: `{result.page_link_count}`")
+        lines.append(f"- Content-area links: `{result.content_link_count}`")
         lines.append(f"- Word count: `{result.word_count}`")
         lines.append(f"- Document links currently visible: `{result.doc_link_count}`")
         lines.append(f"- Hash basis: `{result.hash_basis}`")
@@ -294,7 +393,7 @@ def main() -> None:
     parser.add_argument(
         "--report-path",
         type=Path,
-        default=DEFAULT_REPORT_PATH,
+        default=build_default_report_path(),
         help="Path to write the Markdown report.",
     )
     args = parser.parse_args()

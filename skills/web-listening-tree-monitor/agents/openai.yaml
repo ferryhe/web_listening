@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web Listening Tree Monitor"
+  short_description: "Bootstrap and run bounded recursive site-tree monitoring"
+  default_prompt: "Use $web-listening-tree-monitor to bootstrap or run bounded recursive site-tree monitoring in this repository."

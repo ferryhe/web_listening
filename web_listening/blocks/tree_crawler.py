@@ -123,11 +123,18 @@ class TreeCrawlResult:
     pages: list[TrackedPage]
     files: list[TrackedFile]
     page_failures: list[str] = field(default_factory=list)
+    file_failures: list[str] = field(default_factory=list)
     skipped_external_pages: int = 0
     skipped_external_files: int = 0
     skipped_duplicate_pages: int = 0
     skipped_duplicate_files: int = 0
     off_prefix_same_origin_files: int = 0
+    new_pages: list[str] = field(default_factory=list)
+    changed_pages: list[str] = field(default_factory=list)
+    missing_pages: list[str] = field(default_factory=list)
+    new_files: list[str] = field(default_factory=list)
+    changed_files: list[str] = field(default_factory=list)
+    missing_files: list[str] = field(default_factory=list)
 
 
 class TreeCrawler:
@@ -286,15 +293,20 @@ class TreeCrawler:
                             continue
                         if not path_matches_prefixes(urlsplit(canonical_link).path or "/", stored_scope.allowed_page_prefixes):
                             result.off_prefix_same_origin_files += 1
-                        tracked_file = self._track_file(
-                            scope=stored_scope,
-                            run=run,
-                            page_id=tracked_page.id,
-                            file_url=canonical_link,
-                            page_url=canonical_page_url,
-                            institution=institution or canonical_page_url,
-                            download_files=download_files,
-                        )
+                        try:
+                            tracked_file = self._track_file(
+                                scope=stored_scope,
+                                run=run,
+                                page_id=tracked_page.id,
+                                file_url=canonical_link,
+                                page_url=canonical_page_url,
+                                institution=institution or canonical_page_url,
+                                download_files=download_files,
+                                force_download=False,
+                            )
+                        except Exception as exc:  # pragma: no cover - live failure path
+                            result.file_failures.append(f"{canonical_link}: {type(exc).__name__}: {exc}")
+                            continue
                         result.files.append(tracked_file)
                         processed_file_urls.add(canonical_link)
                         continue
@@ -330,6 +342,7 @@ class TreeCrawler:
                 pages=result.pages,
                 files=result.files,
                 page_failures=result.page_failures,
+                file_failures=result.file_failures,
                 skipped_external_pages=result.skipped_external_pages,
                 skipped_external_files=result.skipped_external_files,
                 skipped_duplicate_pages=result.skipped_duplicate_pages,
@@ -347,6 +360,236 @@ class TreeCrawler:
             )
             raise RuntimeError(f"Tree crawl failed for scope {stored_scope.id}: {exc}") from exc
 
+    def run_scope(
+        self,
+        scope: CrawlScope,
+        *,
+        institution: str = "",
+        download_files: bool = True,
+    ) -> TreeCrawlResult:
+        if scope.id is None:
+            raise ValueError("scope.id must not be None for incremental tree runs")
+
+        stored_scope = self.storage.update_crawl_scope(scope)
+        if not stored_scope.is_initialized:
+            raise ValueError(
+                f"Scope {stored_scope.id} is not initialized. Run bootstrap_scope() first."
+            )
+
+        run = self.storage.add_crawl_run(
+            CrawlRun(
+                scope_id=stored_scope.id,
+                run_type="incremental",
+                status="running",
+                started_at=datetime.now(timezone.utc),
+            )
+        )
+        result = TreeCrawlResult(scope=stored_scope, run=run, pages=[], files=[])
+        queued_pages: deque[tuple[str, int, Optional[int]]] = deque([(stored_scope.seed_url, 0, None)])
+        queued_page_urls = {canonicalize_tracked_url(stored_scope.seed_url)}
+        processed_page_urls: set[str] = set()
+        processed_file_urls: set[str] = set()
+        page_id_by_url: dict[str, int] = {}
+        existing_pages = {page.canonical_url: page for page in self.storage.list_tracked_pages(stored_scope.id)}
+        existing_files = {tracked_file.canonical_url: tracked_file for tracked_file in self.storage.list_tracked_files(stored_scope.id)}
+
+        try:
+            while queued_pages and len(processed_page_urls) < stored_scope.max_pages:
+                queued_url, depth, from_page_id = queued_pages.popleft()
+                request_url = sanitize_request_url(queued_url) or queued_url
+                try:
+                    page = self.crawler.fetch_page(
+                        request_url,
+                        fetch_mode=stored_scope.fetch_mode,
+                        fetch_config_json=stored_scope.fetch_config_json,
+                    )
+                except Exception as exc:  # pragma: no cover - live failure path
+                    result.page_failures.append(f"{request_url}: {type(exc).__name__}: {exc}")
+                    continue
+
+                canonical_page_url = canonicalize_tracked_url(page.final_url or request_url)
+                if not canonical_page_url:
+                    continue
+                if canonical_page_url in processed_page_urls:
+                    result.skipped_duplicate_pages += 1
+                    if from_page_id is not None and canonical_page_url in page_id_by_url:
+                        self.storage.add_page_edge(
+                            PageEdge(
+                                scope_id=stored_scope.id,
+                                run_id=run.id,
+                                from_page_id=from_page_id,
+                                to_page_id=page_id_by_url[canonical_page_url],
+                            )
+                        )
+                    continue
+
+                previous_page = existing_pages.get(canonical_page_url)
+                previous_hash = previous_page.latest_hash if previous_page is not None else ""
+                hash_basis, compare_text = select_compare_artifact(
+                    fit_markdown=page.fit_markdown,
+                    markdown=page.markdown,
+                    content_text=page.content_text,
+                )
+                page_links = extract_links(page.raw_html, page.final_url or request_url)
+                tracked_page = self.storage.upsert_tracked_page(
+                    scope_id=stored_scope.id,
+                    canonical_url=canonical_page_url,
+                    depth=depth,
+                    run_id=run.id,
+                )
+                snapshot = self.storage.add_page_snapshot(
+                    PageSnapshot(
+                        scope_id=stored_scope.id,
+                        page_id=tracked_page.id,
+                        run_id=run.id,
+                        captured_at=datetime.now(timezone.utc),
+                        content_hash=compute_hash(compare_text),
+                        raw_html=page.raw_html,
+                        cleaned_html=page.cleaned_html,
+                        content_text=page.content_text,
+                        markdown=page.markdown,
+                        fit_markdown=page.fit_markdown,
+                        metadata_json={
+                            **page.metadata_json,
+                            "hash_basis": hash_basis,
+                            "hash_normalization": "whitespace-normalized-v1",
+                            "tree_depth": depth,
+                        },
+                        fetch_mode=stored_scope.fetch_mode,
+                        final_url=page.final_url,
+                        status_code=page.status_code,
+                        links=page_links,
+                    )
+                )
+                tracked_page = self.storage.upsert_tracked_page(
+                    scope_id=stored_scope.id,
+                    canonical_url=canonical_page_url,
+                    depth=depth,
+                    run_id=run.id,
+                    latest_hash=snapshot.content_hash,
+                    latest_snapshot_id=snapshot.id,
+                )
+                result.pages.append(tracked_page)
+                processed_page_urls.add(canonical_page_url)
+                page_id_by_url[canonical_page_url] = tracked_page.id
+                if previous_page is None:
+                    result.new_pages.append(canonical_page_url)
+                elif previous_hash and previous_hash != snapshot.content_hash:
+                    result.changed_pages.append(canonical_page_url)
+
+                if from_page_id is not None:
+                    self.storage.add_page_edge(
+                        PageEdge(
+                            scope_id=stored_scope.id,
+                            run_id=run.id,
+                            from_page_id=from_page_id,
+                            to_page_id=tracked_page.id,
+                        )
+                    )
+
+                if depth >= stored_scope.max_depth:
+                    continue
+
+                document_links = set(find_document_links(page_links))
+                for link in page_links:
+                    canonical_link = canonicalize_tracked_url(link)
+                    if not canonical_link:
+                        continue
+                    if link in document_links:
+                        if not is_file_url_in_scope(stored_scope, canonical_link):
+                            result.skipped_external_files += 1
+                            continue
+                        if canonical_link in processed_file_urls:
+                            result.skipped_duplicate_files += 1
+                            continue
+                        if not stored_scope.follow_files or len(processed_file_urls) >= stored_scope.max_files:
+                            continue
+                        previous_file = existing_files.get(canonical_link)
+                        previous_sha256 = previous_file.latest_sha256 if previous_file is not None else ""
+                        if not path_matches_prefixes(urlsplit(canonical_link).path or "/", stored_scope.allowed_page_prefixes):
+                            result.off_prefix_same_origin_files += 1
+                        try:
+                            tracked_file = self._track_file(
+                                scope=stored_scope,
+                                run=run,
+                                page_id=tracked_page.id,
+                                file_url=canonical_link,
+                                page_url=canonical_page_url,
+                                institution=institution or canonical_page_url,
+                                download_files=download_files,
+                                force_download=True,
+                            )
+                        except Exception as exc:  # pragma: no cover - live failure path
+                            result.file_failures.append(f"{canonical_link}: {type(exc).__name__}: {exc}")
+                            continue
+                        result.files.append(tracked_file)
+                        processed_file_urls.add(canonical_link)
+                        if previous_file is None:
+                            result.new_files.append(canonical_link)
+                        elif (
+                            previous_sha256
+                            and tracked_file.latest_sha256
+                            and previous_sha256 != tracked_file.latest_sha256
+                        ):
+                            result.changed_files.append(canonical_link)
+                        continue
+
+                    if not is_page_url_in_scope(stored_scope, canonical_link):
+                        result.skipped_external_pages += 1
+                        continue
+                    if canonical_link in queued_page_urls or canonical_link in processed_page_urls:
+                        result.skipped_duplicate_pages += 1
+                        continue
+                    queued_pages.append((sanitize_request_url(link) or link, depth + 1, tracked_page.id))
+                    queued_page_urls.add(canonical_link)
+
+            result.missing_pages = sorted(
+                url for url, page in existing_pages.items() if page.is_active and url not in processed_page_urls
+            )
+            result.missing_files = sorted(
+                url for url, tracked_file in existing_files.items() if tracked_file.is_active and url not in processed_file_urls
+            )
+            updated_run = self.storage.update_crawl_run(
+                run.id,
+                status="completed",
+                finished_at=datetime.now(timezone.utc),
+                pages_seen=len(result.pages),
+                files_seen=len(result.files),
+                pages_changed=len(result.new_pages) + len(result.changed_pages) + len(result.missing_pages),
+                files_changed=len(result.new_files) + len(result.changed_files) + len(result.missing_files),
+            )
+            return TreeCrawlResult(
+                scope=stored_scope,
+                run=updated_run,
+                pages=result.pages,
+                files=result.files,
+                page_failures=result.page_failures,
+                file_failures=result.file_failures,
+                skipped_external_pages=result.skipped_external_pages,
+                skipped_external_files=result.skipped_external_files,
+                skipped_duplicate_pages=result.skipped_duplicate_pages,
+                skipped_duplicate_files=result.skipped_duplicate_files,
+                off_prefix_same_origin_files=result.off_prefix_same_origin_files,
+                new_pages=result.new_pages,
+                changed_pages=result.changed_pages,
+                missing_pages=result.missing_pages,
+                new_files=result.new_files,
+                changed_files=result.changed_files,
+                missing_files=result.missing_files,
+            )
+        except Exception as exc:
+            self.storage.update_crawl_run(
+                run.id,
+                status="failed",
+                finished_at=datetime.now(timezone.utc),
+                pages_seen=len(result.pages),
+                files_seen=len(result.files),
+                pages_changed=len(result.new_pages) + len(result.changed_pages) + len(result.missing_pages),
+                files_changed=len(result.new_files) + len(result.changed_files) + len(result.missing_files),
+                error_message=str(exc),
+            )
+            raise RuntimeError(f"Incremental tree crawl failed for scope {stored_scope.id}: {exc}") from exc
+
     def _track_file(
         self,
         *,
@@ -357,6 +600,7 @@ class TreeCrawler:
         page_url: str,
         institution: str,
         download_files: bool,
+        force_download: bool = False,
     ) -> TrackedFile:
         request_headers = resolve_request_headers(scope.fetch_config_json)
         latest_document_id = None
@@ -369,6 +613,7 @@ class TreeCrawler:
                 institution=institution,
                 page_url=page_url,
                 request_headers=request_headers,
+                force_download=force_download,
             )
             persisted = self.storage.add_document(document)
             latest_document_id = persisted.id

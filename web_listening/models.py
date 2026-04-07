@@ -300,3 +300,4 @@ class FileObservation(BaseModel):
     file_id: int
     discovered_url: str
     download_url: str
+    tracked_local_path: str = ""

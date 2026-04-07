@@ -230,6 +230,7 @@ class Storage:
                 file_id INTEGER NOT NULL,
                 discovered_url TEXT NOT NULL,
                 download_url TEXT NOT NULL,
+                tracked_local_path TEXT DEFAULT '',
                 FOREIGN KEY (scope_id) REFERENCES crawl_scopes(id),
                 FOREIGN KEY (run_id) REFERENCES crawl_runs(id),
                 FOREIGN KEY (page_id) REFERENCES tracked_pages(id),
@@ -253,6 +254,7 @@ class Storage:
         self._ensure_column("documents", "last_modified", "TEXT DEFAULT ''")
         self._ensure_column("documents", "content_md_status", "TEXT DEFAULT 'pending'")
         self._ensure_column("documents", "content_md_updated_at", "TEXT")
+        self._ensure_column("file_observations", "tracked_local_path", "TEXT DEFAULT ''")
         self.conn.commit()
 
     def _ensure_column(self, table_name: str, column_name: str, column_sql: str):
@@ -1174,8 +1176,8 @@ class Storage:
         cur = self.conn.execute(
             """
             INSERT INTO file_observations (
-                scope_id, run_id, page_id, file_id, discovered_url, download_url
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                scope_id, run_id, page_id, file_id, discovered_url, download_url, tracked_local_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 observation.scope_id,
@@ -1184,6 +1186,7 @@ class Storage:
                 observation.file_id,
                 observation.discovered_url,
                 observation.download_url,
+                observation.tracked_local_path,
             ),
         )
         self.conn.commit()
@@ -1215,4 +1218,5 @@ class Storage:
             file_id=row["file_id"],
             discovered_url=row["discovered_url"],
             download_url=row["download_url"],
+            tracked_local_path=row["tracked_local_path"] or "",
         )

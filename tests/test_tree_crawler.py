@@ -314,6 +314,9 @@ def test_tree_crawler_bootstrap_tracks_pages_files_and_edges(tmp_path):
 
     observations = storage.list_file_observations(result.scope.id, run_id=result.run.id)
     assert len(observations) == 2
+    assert all(item.tracked_local_path for item in observations)
+    assert all(Path(item.tracked_local_path).exists() for item in observations)
+    assert all("_tracked" in item.tracked_local_path for item in observations)
 
 
 def test_tree_crawler_uses_out_of_scope_seed_as_entrypoint_only(tmp_path):

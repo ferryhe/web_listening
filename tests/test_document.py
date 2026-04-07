@@ -98,3 +98,29 @@ def test_download_reuses_same_sha256_and_blob_path(tmp_path):
     assert saved.local_path == str(repeated.local_path)
     assert repeated.local_path.exists()
     storage.close()
+
+
+def test_materialize_tracked_view_creates_source_organized_path(tmp_path):
+    pdf_bytes = b"source-view-pdf"
+    client = make_client(pdf_bytes)
+    proc = DocumentProcessor(client=client)
+
+    with patch("web_listening.blocks.document.settings") as mock_settings:
+        mock_settings.user_agent = "test-agent"
+        mock_settings.downloads_dir = tmp_path
+
+        result = proc.download("https://example.com/report.pdf", institution="TestOrg")
+        tracked = proc.materialize_tracked_view(
+            canonical_local_path=result.local_path,
+            page_url="https://example.com/research/topics/page-a",
+            file_url="https://example.com/report.pdf",
+            sha256=result.sha256,
+            content_type=result.content_type,
+        )
+
+    assert tracked.exists()
+    assert tracked.read_bytes() == pdf_bytes
+    assert "_tracked" in str(tracked)
+    assert "example.com" in str(tracked)
+    assert "research" in str(tracked)
+    assert "topics" in str(tracked)

@@ -1,6 +1,8 @@
 import hashlib
 import mimetypes
 import os
+import re
+import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -50,6 +52,69 @@ class DocumentProcessor:
         blob_dir = settings.downloads_dir / "_blobs" / sha256[:2]
         blob_dir.mkdir(parents=True, exist_ok=True)
         return blob_dir / f"{sha256}{suffix}"
+
+    def _sanitize_component(self, value: str, *, fallback: str) -> str:
+        normalized = str(value or "").strip()
+        normalized = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", normalized).strip(" .")
+        if not normalized:
+            normalized = fallback
+        return normalized[:80]
+
+    def _build_tracked_view_path(
+        self,
+        *,
+        canonical_local_path: Path,
+        page_url: str,
+        file_url: str,
+        sha256: str,
+        content_type: str = "",
+    ) -> Path:
+        page_parts = urlparse(page_url or "")
+        file_parts = urlparse(file_url or "")
+        host = page_parts.netloc or file_parts.netloc or "unknown-host"
+        host = self._sanitize_component(host.lower(), fallback="unknown-host")
+
+        page_segments = [self._sanitize_component(part, fallback="segment") for part in (page_parts.path or "/").split("/") if part]
+        if not page_segments:
+            page_segments = ["_root"]
+
+        file_name = os.path.basename(file_parts.path or "") or canonical_local_path.name
+        parsed_name = Path(file_name)
+        suffix = parsed_name.suffix or canonical_local_path.suffix
+        if not suffix and content_type:
+            guessed = mimetypes.guess_extension(content_type.split(";")[0].strip())
+            suffix = guessed or ""
+        stem = parsed_name.stem if parsed_name.suffix else parsed_name.name
+        stem = self._sanitize_component(stem, fallback="document")
+        final_name = f"{stem}--{sha256[:8]}{suffix}"
+
+        return settings.downloads_dir / "_tracked" / host / Path(*page_segments) / final_name
+
+    def materialize_tracked_view(
+        self,
+        *,
+        canonical_local_path: str | Path,
+        page_url: str,
+        file_url: str,
+        sha256: str,
+        content_type: str = "",
+    ) -> Path:
+        canonical_path = Path(canonical_local_path)
+        tracked_path = self._build_tracked_view_path(
+            canonical_local_path=canonical_path,
+            page_url=page_url,
+            file_url=file_url,
+            sha256=sha256,
+            content_type=content_type,
+        )
+        tracked_path.parent.mkdir(parents=True, exist_ok=True)
+        if tracked_path.exists():
+            return tracked_path
+        try:
+            os.link(str(canonical_path), str(tracked_path))
+        except OSError:
+            shutil.copy2(canonical_path, tracked_path)
+        return tracked_path
 
     def download(
         self,

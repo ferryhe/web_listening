@@ -629,6 +629,7 @@ class TreeCrawler:
         request_headers = resolve_request_headers(scope.fetch_config_json)
         latest_document_id = None
         latest_sha256 = ""
+        tracked_local_path = ""
 
         if download_files and self.document_processor is not None:
             document = self.document_processor.process(
@@ -642,6 +643,15 @@ class TreeCrawler:
             persisted = self.storage.add_document(document)
             latest_document_id = persisted.id
             latest_sha256 = persisted.sha256
+            tracked_local_path = str(
+                self.document_processor.materialize_tracked_view(
+                    canonical_local_path=persisted.local_path,
+                    page_url=page_url,
+                    file_url=file_url,
+                    sha256=persisted.sha256,
+                    content_type=persisted.content_type,
+                )
+            )
 
         tracked_file = self.storage.upsert_tracked_file(
             scope_id=scope.id,
@@ -658,6 +668,7 @@ class TreeCrawler:
                 file_id=tracked_file.id,
                 discovered_url=file_url,
                 download_url=file_url,
+                tracked_local_path=tracked_local_path,
             )
         )
         return tracked_file

@@ -48,11 +48,13 @@ def make_tree_transport():
         <main>
           <h1>Page B</h1>
           <p>Stable content.</p>
+          <a href="https://example.com/files/deep-report.pdf">Deep Report</a>
         </main>
       </body>
     </html>
     """
     pdf_bytes = b"%PDF tree test"
+    pdf_deep_bytes = b"%PDF deep tree test"
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -64,6 +66,8 @@ def make_tree_transport():
             return httpx.Response(200, text=html_page_b, headers={"content-type": "text/html"}, request=request)
         if url == "https://example.com/files/report.pdf":
             return httpx.Response(200, content=pdf_bytes, headers={"content-type": "application/pdf"}, request=request)
+        if url == "https://example.com/files/deep-report.pdf":
+            return httpx.Response(200, content=pdf_deep_bytes, headers={"content-type": "application/pdf"}, request=request)
         return httpx.Response(404, text="not found", request=request)
 
     return httpx.MockTransport(handler)
@@ -233,8 +237,8 @@ def test_tree_crawler_bootstrap_tracks_pages_files_and_edges(tmp_path):
     assert result.scope.is_initialized is True
     assert result.run.status == "completed"
     assert len(result.pages) == 3
-    assert len(result.files) == 1
-    assert result.off_prefix_same_origin_files == 1
+    assert len(result.files) == 2
+    assert result.off_prefix_same_origin_files == 2
     assert result.skipped_external_pages >= 1
     assert result.skipped_duplicate_files >= 1
 
@@ -243,17 +247,17 @@ def test_tree_crawler_bootstrap_tracks_pages_files_and_edges(tmp_path):
     edges = storage.list_page_edges(result.scope.id, run_id=result.run.id)
 
     assert len(tracked_pages) == 3
-    assert len(tracked_files) == 1
+    assert len(tracked_files) == 2
     assert len(edges) == 2
-    assert tracked_files[0].latest_sha256 != ""
+    assert all(item.latest_sha256 != "" for item in tracked_files)
 
     docs = storage.list_documents(site_id=site.id)
-    assert len(docs) == 1
-    assert docs[0].sha256 == tracked_files[0].latest_sha256
-    assert Path(docs[0].local_path).exists()
+    assert len(docs) == 2
+    assert {doc.sha256 for doc in docs} == {item.latest_sha256 for item in tracked_files}
+    assert all(Path(doc.local_path).exists() for doc in docs)
 
     observations = storage.list_file_observations(result.scope.id, run_id=result.run.id)
-    assert len(observations) == 1
+    assert len(observations) == 2
 
     storage.close()
 
@@ -421,5 +425,65 @@ def test_tree_crawler_bootstrap_tolerates_file_download_failures(tmp_path):
     assert result.pages
     assert result.files == []
     assert len(result.file_failures) == 1
+
+    storage.close()
+
+
+def test_tree_crawler_skips_pages_that_redirect_outside_scope(tmp_path):
+    html_root = """
+    <html>
+      <body>
+        <main>
+          <h1>Root</h1>
+          <a href="https://example.com/go">Go</a>
+        </main>
+      </body>
+    </html>
+    """
+    html_login = """
+    <html>
+      <body>
+        <main>
+          <h1>Login</h1>
+        </main>
+      </body>
+    </html>
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "https://example.com/root":
+            return httpx.Response(200, text=html_root, headers={"content-type": "text/html"}, request=request)
+        if url == "https://example.com/go":
+            return httpx.Response(302, headers={"location": "https://secure.example.com/login"}, request=request)
+        if url == "https://secure.example.com/login":
+            return httpx.Response(200, text=html_login, headers={"content-type": "text/html"}, request=request)
+        return httpx.Response(404, text="not found", request=request)
+
+    storage = Storage(tmp_path / "redirect.db")
+    client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    crawler = Crawler(client=client)
+    site = storage.add_site(Site(url="https://example.com/root", name="Redirect Example"))
+    scope = CrawlScope(
+        site_id=site.id,
+        seed_url="https://example.com/root",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/"],
+        allowed_file_prefixes=["/"],
+        max_depth=2,
+        max_pages=10,
+        max_files=5,
+        fetch_mode="http",
+    )
+
+    with TreeCrawler(storage=storage, crawler=crawler) as tree:
+        result = tree.bootstrap_scope(scope, institution="Redirect Example", download_files=False)
+
+    tracked_pages = storage.list_tracked_pages(result.scope.id)
+
+    assert result.run.status == "completed"
+    assert len(tracked_pages) == 1
+    assert tracked_pages[0].canonical_url == "https://example.com/root"
+    assert result.skipped_external_pages >= 1
 
     storage.close()

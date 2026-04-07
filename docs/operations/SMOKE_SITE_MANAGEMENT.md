@@ -1,7 +1,7 @@
 # Smoke Site Management
 
-> Branch: `docs/ai-agent-roadmap`  
-> Last updated: 2026-04-03
+> Last updated: 2026-04-06
+> Status: Active operations guide
 
 ## Goal
 
@@ -30,6 +30,11 @@ That split keeps the repository reproducible while still letting us ingest sprea
 - record the current access expectation in `smoke_expectation`
 - mark `js_heavy_candidate=true` when raw HTTP only exposes thin shell HTML
 - add `tree_seed_url` and `tree_page_prefixes` when recursive monitoring should start from a different section than the smoke monitor target
+- add `tree_strategy`, `tree_budget_profile`, and optional `tree_max_*` overrides when the site should use a non-default recursive crawl budget
+- put polite crawl pacing in `fetch_config_json` when a site needs slower request spacing:
+  - `request_delay_ms`
+  - `file_request_delay_ms`
+  - `request_jitter_ms`
 
 This is the file that scripts should load:
 
@@ -52,6 +57,10 @@ This matters when:
 - the best smoke target is a feed or sitemap
 - the homepage is a poor recursive seed
 - a section page such as `/news` is much better for bounded tree crawling
+
+For budget selection rules and the current proposed grouping of the 30+ catalog, read:
+
+- `docs/operations/TREE_BUDGET_RULES.md`
 
 ## Current expectation values
 

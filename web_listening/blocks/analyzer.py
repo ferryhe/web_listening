@@ -60,7 +60,7 @@ class Analyzer:
             resp = self.client.chat.completions.create(
                 model=settings.openai_model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=2000,
+                max_completion_tokens=2000,
             )
             return resp.choices[0].message.content
         except Exception as e:

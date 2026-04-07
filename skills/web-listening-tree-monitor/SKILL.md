@@ -11,14 +11,30 @@ Use this skill when the task is to create or operate recursive site-tree monitor
 
 1. Read `README.md` for the main repo entry points.
 2. Read `docs/design/TREE_MONITORING_DESIGN.md` before changing tree scope behavior.
-3. Read `docs/roadmap/TREE_MONITORING_DELIVERY_PLAN.md` for the current rollout sequence.
-4. Bootstrap first:
-   - `.venv\Scripts\python tools\bootstrap_site_tree.py --catalog dev`
-   - `.venv\Scripts\python tools\bootstrap_site_tree.py --catalog smoke`
-5. Run later incremental checks:
-   - `.venv\Scripts\python tools\run_site_tree.py --catalog dev`
-   - `.venv\Scripts\python tools\run_site_tree.py --catalog smoke`
-6. Read the dated reports in `data/reports/`.
+3. Read `docs/design/AGENT_SCOPE_PLANNING_DESIGN.md` and `docs/roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md` for the current staged rollout direction.
+4. Discover sections first when planning a new monitoring scope:
+   - `.venv\Scripts\python tools\discover_site_sections.py --catalog dev`
+   - `.venv\Scripts\python tools\discover_site_sections.py --catalog smoke`
+   - Discovery now defaults to depth `3`, no document detection, full level-2 coverage, and adaptive level-3 sampling so the first artifact is a smarter section tree picture.
+5. Classify discovered sections before selecting monitoring scope:
+   - `.venv\Scripts\python tools\classify_site_sections.py --catalog dev`
+   - `.venv\Scripts\python tools\classify_site_sections.py --catalog smoke`
+6. Bootstrap after scope planning:
+   - `.venv\Scripts\python tools\bootstrap_site_tree.py --catalog dev --download-files`
+   - `.venv\Scripts\python tools\bootstrap_site_tree.py --catalog smoke --download-files`
+7. Run later incremental checks:
+   - `.venv\Scripts\python tools\run_site_tree.py --catalog dev --download-files`
+   - `.venv\Scripts\python tools\run_site_tree.py --catalog smoke --download-files`
+8. Explain the first baseline when you need a human/agent interpretation:
+   - `.venv\Scripts\python tools\explain_tree_bootstrap.py --catalog dev`
+   - `.venv\Scripts\python tools\explain_tree_bootstrap.py --catalog smoke`
+9. Read the dated reports in `data/reports/` and the planning YAML in `data/plans/`.
+
+The current script defaults are production-oriented for whole-site monitoring:
+
+- `max_depth=4`
+- `max_pages=120`
+- `max_files=40`
 
 ## Guardrails
 

@@ -1009,6 +1009,13 @@ class Storage:
         ).fetchall()
         return [self._row_to_page_snapshot(row) for row in rows]
 
+    def list_page_snapshots_for_run(self, scope_id: int, run_id: int) -> List[PageSnapshot]:
+        rows = self.conn.execute(
+            "SELECT * FROM page_snapshots WHERE scope_id = ? AND run_id = ? ORDER BY id ASC",
+            (scope_id, run_id),
+        ).fetchall()
+        return [self._row_to_page_snapshot(row) for row in rows]
+
     def _row_to_page_snapshot(self, row) -> PageSnapshot:
         return PageSnapshot(
             id=row["id"],

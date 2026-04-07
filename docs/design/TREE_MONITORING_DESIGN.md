@@ -1,11 +1,16 @@
 # Tree Monitoring Design
 
-> Branch: `docs/ai-agent-roadmap`  
-> Last updated: 2026-04-03
+> Last updated: 2026-04-06
+> Status: Active design for crawling after scope selection
 
 ## Goal
 
 Extend `web_listening` from single-page checks into bounded recursive site monitoring.
+
+This design assumes the monitoring scope has already been chosen.
+For the newer pre-bootstrap planning layer, read:
+
+- `docs/design/AGENT_SCOPE_PLANNING_DESIGN.md`
 
 The system should support:
 

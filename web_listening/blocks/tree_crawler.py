@@ -9,6 +9,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from web_listening.blocks.crawler import Crawler, resolve_request_headers
 from web_listening.blocks.diff import compute_hash, extract_links, find_document_links, select_compare_artifact
 from web_listening.blocks.document import DocumentProcessor
+from web_listening.blocks.polite import PolitePacer
 from web_listening.blocks.storage import Storage
 from web_listening.models import CrawlRun, CrawlScope, FileObservation, PageEdge, PageSnapshot, Site, TrackedFile, TrackedPage
 
@@ -179,6 +180,7 @@ class TreeCrawler:
             )
         )
         result = TreeCrawlResult(scope=stored_scope, run=run, pages=[], files=[])
+        pacer = PolitePacer.from_config(stored_scope.fetch_config_json)
         queued_pages: deque[tuple[str, int, Optional[int]]] = deque([(stored_scope.seed_url, 0, None)])
         queued_page_urls = {canonicalize_tracked_url(stored_scope.seed_url)}
         processed_page_urls: set[str] = set()
@@ -190,6 +192,7 @@ class TreeCrawler:
                 queued_url, depth, from_page_id = queued_pages.popleft()
                 request_url = sanitize_request_url(queued_url) or queued_url
                 try:
+                    pacer.wait_for_request("page")
                     page = self.crawler.fetch_page(
                         request_url,
                         fetch_mode=stored_scope.fetch_mode,
@@ -201,6 +204,9 @@ class TreeCrawler:
 
                 canonical_page_url = canonicalize_tracked_url(page.final_url or request_url)
                 if not canonical_page_url:
+                    continue
+                if not is_page_url_in_scope(stored_scope, canonical_page_url):
+                    result.skipped_external_pages += 1
                     continue
                 if canonical_page_url in processed_page_urls:
                     result.skipped_duplicate_pages += 1
@@ -273,10 +279,6 @@ class TreeCrawler:
                         )
                     )
 
-                if depth >= stored_scope.max_depth:
-                    continue
-
-                current_page_path = urlsplit(canonical_page_url).path or "/"
                 document_links = set(find_document_links(page_links))
                 for link in page_links:
                     canonical_link = canonicalize_tracked_url(link)
@@ -294,6 +296,7 @@ class TreeCrawler:
                         if not path_matches_prefixes(urlsplit(canonical_link).path or "/", stored_scope.allowed_page_prefixes):
                             result.off_prefix_same_origin_files += 1
                         try:
+                            pacer.wait_for_request("file")
                             tracked_file = self._track_file(
                                 scope=stored_scope,
                                 run=run,
@@ -313,6 +316,8 @@ class TreeCrawler:
 
                     if not is_page_url_in_scope(stored_scope, canonical_link):
                         result.skipped_external_pages += 1
+                        continue
+                    if depth >= stored_scope.max_depth:
                         continue
                     if canonical_link in queued_page_urls or canonical_link in processed_page_urls:
                         result.skipped_duplicate_pages += 1
@@ -385,6 +390,7 @@ class TreeCrawler:
             )
         )
         result = TreeCrawlResult(scope=stored_scope, run=run, pages=[], files=[])
+        pacer = PolitePacer.from_config(stored_scope.fetch_config_json)
         queued_pages: deque[tuple[str, int, Optional[int]]] = deque([(stored_scope.seed_url, 0, None)])
         queued_page_urls = {canonicalize_tracked_url(stored_scope.seed_url)}
         processed_page_urls: set[str] = set()
@@ -398,6 +404,7 @@ class TreeCrawler:
                 queued_url, depth, from_page_id = queued_pages.popleft()
                 request_url = sanitize_request_url(queued_url) or queued_url
                 try:
+                    pacer.wait_for_request("page")
                     page = self.crawler.fetch_page(
                         request_url,
                         fetch_mode=stored_scope.fetch_mode,
@@ -409,6 +416,9 @@ class TreeCrawler:
 
                 canonical_page_url = canonicalize_tracked_url(page.final_url or request_url)
                 if not canonical_page_url:
+                    continue
+                if not is_page_url_in_scope(stored_scope, canonical_page_url):
+                    result.skipped_external_pages += 1
                     continue
                 if canonical_page_url in processed_page_urls:
                     result.skipped_duplicate_pages += 1
@@ -487,9 +497,6 @@ class TreeCrawler:
                         )
                     )
 
-                if depth >= stored_scope.max_depth:
-                    continue
-
                 document_links = set(find_document_links(page_links))
                 for link in page_links:
                     canonical_link = canonicalize_tracked_url(link)
@@ -509,6 +516,7 @@ class TreeCrawler:
                         if not path_matches_prefixes(urlsplit(canonical_link).path or "/", stored_scope.allowed_page_prefixes):
                             result.off_prefix_same_origin_files += 1
                         try:
+                            pacer.wait_for_request("file")
                             tracked_file = self._track_file(
                                 scope=stored_scope,
                                 run=run,
@@ -536,6 +544,8 @@ class TreeCrawler:
 
                     if not is_page_url_in_scope(stored_scope, canonical_link):
                         result.skipped_external_pages += 1
+                        continue
+                    if depth >= stored_scope.max_depth:
                         continue
                     if canonical_link in queued_page_urls or canonical_link in processed_page_urls:
                         result.skipped_duplicate_pages += 1

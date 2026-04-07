@@ -35,6 +35,11 @@ OPTIONAL_SMOKE_SITE_FIELDS = {
     "tree_seed_url",
     "tree_page_prefixes",
     "tree_file_prefixes",
+    "tree_strategy",
+    "tree_budget_profile",
+    "tree_max_depth",
+    "tree_max_pages",
+    "tree_max_files",
 }
 
 
@@ -103,6 +108,17 @@ def validate_smoke_sites(payload: list[dict]) -> list[dict]:
         tree_file_prefixes = item.get("tree_file_prefixes", [])
         if tree_file_prefixes and not isinstance(tree_file_prefixes, list):
             raise ValueError(f"{site_key}.tree_file_prefixes must be a list when provided")
+        tree_strategy = str(item.get("tree_strategy", "")).strip()
+        tree_budget_profile = str(item.get("tree_budget_profile", "")).strip()
+        tree_max_depth = item.get("tree_max_depth")
+        tree_max_pages = item.get("tree_max_pages")
+        tree_max_files = item.get("tree_max_files")
+        if tree_max_depth is not None:
+            tree_max_depth = int(tree_max_depth)
+        if tree_max_pages is not None:
+            tree_max_pages = int(tree_max_pages)
+        if tree_max_files is not None:
+            tree_max_files = int(tree_max_files)
 
         validated.append(
             {
@@ -129,6 +145,11 @@ def validate_smoke_sites(payload: list[dict]) -> list[dict]:
                 "tree_seed_url": tree_seed_url,
                 "tree_page_prefixes": [str(value).strip() for value in tree_page_prefixes if str(value).strip()],
                 "tree_file_prefixes": [str(value).strip() for value in tree_file_prefixes if str(value).strip()],
+                "tree_strategy": tree_strategy,
+                "tree_budget_profile": tree_budget_profile,
+                "tree_max_depth": tree_max_depth,
+                "tree_max_pages": tree_max_pages,
+                "tree_max_files": tree_max_files,
             }
         )
 

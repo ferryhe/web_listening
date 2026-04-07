@@ -10,6 +10,7 @@ from web_listening.blocks.storage import Storage
 from web_listening.blocks.tree_crawler import TreeCrawler, build_scope_from_site
 from web_listening.config import settings
 from web_listening.models import CrawlScope, Site
+from web_listening.tree_defaults import PRODUCTION_TREE_LIMITS
 from web_listening.tree_targets import TreeTarget, filter_tree_targets, load_tree_targets
 
 
@@ -279,9 +280,9 @@ def main() -> None:
         description="Bootstrap bounded recursive tree monitoring into the main database."
     )
     parser.add_argument("--catalog", choices=("dev", "smoke", "all"), default="dev")
-    parser.add_argument("--max-depth", type=int, default=3)
-    parser.add_argument("--max-pages", type=int, default=12)
-    parser.add_argument("--max-files", type=int, default=5)
+    parser.add_argument("--max-depth", type=int, default=PRODUCTION_TREE_LIMITS.max_depth)
+    parser.add_argument("--max-pages", type=int, default=PRODUCTION_TREE_LIMITS.max_pages)
+    parser.add_argument("--max-files", type=int, default=PRODUCTION_TREE_LIMITS.max_files)
     parser.add_argument("--download-files", action="store_true")
     parser.add_argument("--refresh-existing", action="store_true")
     parser.add_argument("--site-key", action="append", help="Limit the run to one or more site keys.")

@@ -1,12 +1,20 @@
 # Docs Index
 
+## Start Here
+
+- `docs/roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md`
+- `docs/design/AGENT_SCOPE_PLANNING_DESIGN.md`
+- `docs/design/TREE_MONITORING_DESIGN.md`
+
 ## Operations
 
 - `docs/operations/DEV_TEST_TARGETS.md`
 - `docs/operations/SMOKE_SITE_MANAGEMENT.md`
+- `docs/operations/TREE_BUDGET_RULES.md`
 
 ## Design
 
+- `docs/design/AGENT_SCOPE_PLANNING_DESIGN.md`
 - `docs/design/TREE_MONITORING_DESIGN.md`
 
 ## Validation
@@ -18,10 +26,7 @@
 
 ## Roadmap
 
-- `docs/roadmap/AI_AGENT_FUTURE_PLAN.md`
-- `docs/roadmap/IMPLEMENTATION_STATUS.md`
-- `docs/roadmap/PR_RECOMMENDATION.md`
-- `docs/roadmap/TREE_MONITORING_DELIVERY_PLAN.md`
+- `docs/roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md`
 
 ## Research
 
@@ -31,9 +36,16 @@
 
 - `docs/skills/OPENCLAW_SKILL_USAGE.md`
 
+## Archive
+
+- `docs/archive/2026-04-roadmap-history/README.md`
+
 ## Current Tree Monitoring Entry Points
 
+- `tools/discover_site_sections.py`
+- `tools/classify_site_sections.py`
 - `tools/bootstrap_site_tree.py`
+- `tools/explain_tree_bootstrap.py`
 - `tools/run_site_tree.py`
 - `tools/run_tree_catalog_validation.py`
 - `tools/run_dev_daily_monitor.py`

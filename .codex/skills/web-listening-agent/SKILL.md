@@ -33,10 +33,11 @@ Use this skill to treat `web_listening` as an agent-consumable web monitoring pl
 
 ## Tree Workflow
 
-- Use `tools/bootstrap_site_tree.py --catalog dev` to establish the first recursive baseline for the 3 development sites.
-- Use `tools/bootstrap_site_tree.py --catalog smoke` to establish the first recursive baseline for the broader 30+ smoke catalog.
-- Use `tools/run_site_tree.py --catalog dev` or `--catalog smoke` for later incremental runs against the stored tree baseline.
+- Use `tools/bootstrap_site_tree.py --catalog dev --download-files` to establish the first recursive baseline for the 3 development sites.
+- Use `tools/bootstrap_site_tree.py --catalog smoke --download-files` to establish the first recursive baseline for the broader 30+ smoke catalog.
+- Use `tools/run_site_tree.py --catalog dev --download-files` or `--catalog smoke --download-files` for later incremental runs against the stored tree baseline.
 - Keep tree monitoring bounded: prefer explicit `max_depth`, `max_pages`, and `max_files` instead of open-ended recursion.
+- The current production-oriented defaults are `max_depth=4`, `max_pages=120`, and `max_files=40`.
 
 ## Extension Priorities
 

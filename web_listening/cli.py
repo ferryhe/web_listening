@@ -655,6 +655,7 @@ def list_jobs(
     table.add_column("Job ID", style="cyan")
     table.add_column("Type")
     table.add_column("Status")
+    table.add_column("Stage")
     table.add_column("Scope ID")
     table.add_column("Run ID")
     table.add_column("Progress")
@@ -665,6 +666,7 @@ def list_jobs(
             str(job.job_id),
             job.job_type,
             job.status,
+            job.stage,
             str(job.scope_id) if job.scope_id is not None else "-",
             str(job.run_id) if job.run_id is not None else "-",
             f"{job.progress}%",
@@ -688,6 +690,7 @@ def get_job(
         raise typer.BadParameter(f"Job {job_id} not found")
 
     artifact_lines = [f"- {key}: {value}" for key, value in sorted(job.produced_artifacts.items())] or ["- <none>"]
+    summary_lines = [f"- {key}: {value}" for key, value in sorted(job.artifact_summary.items())] or ["- <none>"]
     console.print(
         Panel(
             "\n".join(
@@ -695,10 +698,17 @@ def get_job(
                     f"job_id={job.job_id}",
                     f"job_type={job.job_type}",
                     f"status={job.status}",
+                    f"stage={job.stage}",
+                    f"stage_message={job.stage_message or '-'}",
                     f"scope_id={job.scope_id if job.scope_id is not None else '-'}",
                     f"run_id={job.run_id if job.run_id is not None else '-'}",
                     f"progress={job.progress}",
                     f"error={job.error or '-'}",
+                    f"error_code={job.error_code or '-'}",
+                    f"retryable={job.is_retryable}",
+                    f"next_action={job.next_recommended_action()}",
+                    "artifact_summary:",
+                    *summary_lines,
                     "artifacts:",
                     *artifact_lines,
                 ]

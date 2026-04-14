@@ -209,6 +209,29 @@ class ArtifactEnvelope(BaseModel):
     content: str
 
 
+class JobDeliveryPayload(BaseModel):
+    job: dict[str, object]
+    error: dict[str, object]
+    artifacts: dict[str, object]
+    next_action: str
+
+
+class JobWebhookRegistrationRequest(BaseModel):
+    target_url: str
+    event_types: List[str] = Field(default_factory=lambda: ["job.completed"])
+    secret_hint: str = ""
+    active: bool = True
+
+
+class JobWebhookRegistrationResponse(BaseModel):
+    registration_id: str
+    target_url: str
+    event_types: List[str]
+    active: bool
+    delivery_mode: str
+    sample_payload: JobDeliveryPayload
+
+
 # ── Sites ───────────────────────────────────────────────────────────────────
 
 @router.get("/sites", response_model=List[Site])
@@ -385,13 +408,58 @@ def get_job(job_id: int):
     return job
 
 
+@router.get("/jobs/{job_id}/payload", response_model=JobDeliveryPayload)
+def get_job_payload(job_id: int):
+    storage = get_storage()
+    try:
+        job = storage.get_job(job_id)
+    finally:
+        storage.close()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return JobDeliveryPayload(**job.to_delivery_payload())
+
+
+@router.post("/webhooks/job-deliveries", response_model=JobWebhookRegistrationResponse, status_code=201)
+def register_job_webhook(body: JobWebhookRegistrationRequest):
+    _validate_url(body.target_url)
+    sample_job = Job(
+        job_id=0,
+        job_type="scope.run",
+        status="completed",
+        stage="completed",
+        stage_message="Sample completion payload.",
+        progress=100,
+        produced_artifacts={"report_path": "data/reports/sample.md"},
+        artifact_summary={"artifact_count": 1, "artifact_keys": ["report_path"], "path_keys": ["report_path"], "has_artifacts": True},
+    )
+    return JobWebhookRegistrationResponse(
+        registration_id="job-webhook-stub",
+        target_url=body.target_url,
+        event_types=body.event_types or ["job.completed"],
+        active=body.active,
+        delivery_mode="stub",
+        sample_payload=JobDeliveryPayload(**sample_job.to_delivery_payload()),
+    )
+
+
 @router.post("/monitor-scopes/{scope_id}/bootstrap", response_model=Job, status_code=201)
 def bootstrap_monitor_scope(scope_id: int, body: BootstrapScopeRequest):
     from web_listening.blocks.staged_workflow import bootstrap_scope as staged_bootstrap_scope
 
-    scope_path = _resolve_scope_path(scope_id)
-
-    def _runner():
+    def _runner(progress):
+        progress.update(
+            stage="loading_scope",
+            stage_message="Resolving scope plan for bootstrap.",
+            progress=10,
+        )
+        scope_path = _resolve_scope_path(scope_id)
+        progress.update(
+            status="running",
+            stage="executing_workflow",
+            stage_message="Running bootstrap workflow.",
+            progress=45,
+        )
         artifacts = staged_bootstrap_scope(
             scope_path=scope_path,
             download_files=body.download_files,
@@ -403,19 +471,27 @@ def bootstrap_monitor_scope(scope_id: int, body: BootstrapScopeRequest):
             summary_path=body.summary_path,
             include_summary=body.include_summary,
         )
+        progress.update(
+            stage="writing_artifacts",
+            stage_message="Persisting bootstrap artifacts.",
+            progress=90,
+        )
         first = artifacts.results[0] if artifacts.results else None
+        produced_artifacts = {
+            "scope_path": str(scope_path),
+            "report_path": str(artifacts.report_path),
+            **({"summary_path": str(artifacts.summary_path)} if artifacts.summary_path else {}),
+        }
         return {
             "scope_id": first.scope_id if first else scope_id,
             "run_id": first.run_id if first else None,
-            "produced_artifacts": {
-                "scope_path": str(scope_path),
-                "report_path": str(artifacts.report_path),
-                **({"summary_path": str(artifacts.summary_path)} if artifacts.summary_path else {}),
-            },
+            "produced_artifacts": produced_artifacts,
         }
 
     try:
         return execute_job(job_type="scope.bootstrap", scope_id=scope_id, runner=_runner)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -424,9 +500,19 @@ def bootstrap_monitor_scope(scope_id: int, body: BootstrapScopeRequest):
 def run_monitor_scope(scope_id: int, body: RunScopeRequest):
     from web_listening.blocks.staged_workflow import run_scope as staged_run_scope
 
-    scope_path = _resolve_scope_path(scope_id)
-
-    def _runner():
+    def _runner(progress):
+        progress.update(
+            stage="loading_scope",
+            stage_message="Resolving scope plan for incremental run.",
+            progress=10,
+        )
+        scope_path = _resolve_scope_path(scope_id)
+        progress.update(
+            status="running",
+            stage="executing_workflow",
+            stage_message="Running incremental workflow.",
+            progress=50,
+        )
         artifacts = staged_run_scope(
             scope_path=scope_path,
             download_files=body.download_files,
@@ -434,6 +520,11 @@ def run_monitor_scope(scope_id: int, body: RunScopeRequest):
             max_pages=body.max_pages,
             max_files=body.max_files,
             report_path=body.report_path,
+        )
+        progress.update(
+            stage="writing_artifacts",
+            stage_message="Persisting run artifacts.",
+            progress=90,
         )
         return {
             "scope_id": artifacts.result.scope_id or scope_id,
@@ -446,6 +537,8 @@ def run_monitor_scope(scope_id: int, body: RunScopeRequest):
 
     try:
         return execute_job(job_type="scope.run", scope_id=scope_id, runner=_runner)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -458,21 +551,36 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
     if normalized_format not in {"md", "yaml"}:
         raise HTTPException(status_code=422, detail="output_format must be one of: md, yaml")
 
-    scope_path = _resolve_scope_path(scope_id)
-    resolved_task_path = str(_safe_input_path(body.task_path)) if body.task_path else None
-    resolved_output_path = (
-        str(_safe_output_path(body.output_path, default_path=settings.data_dir / "reports" / f"tracking_report_scope_{scope_id}.{normalized_format}"))
-        if body.output_path
-        else None
-    )
-
-    def _runner():
+    def _runner(progress):
+        progress.update(
+            stage="loading_scope",
+            stage_message="Resolving scope plan and report inputs.",
+            progress=10,
+        )
+        scope_path = _resolve_scope_path(scope_id)
+        resolved_task_path = str(_safe_input_path(body.task_path)) if body.task_path else None
+        resolved_output_path = (
+            str(_safe_output_path(body.output_path, default_path=settings.data_dir / "reports" / f"tracking_report_scope_{scope_id}.{normalized_format}"))
+            if body.output_path
+            else None
+        )
+        progress.update(
+            status="running",
+            stage="executing_workflow",
+            stage_message="Building tracking report.",
+            progress=55,
+        )
         artifacts = staged_report_scope(
             scope_path=scope_path,
             task_path=resolved_task_path,
             run_id=body.run_id,
             output_path=resolved_output_path,
             output_format=normalized_format,
+        )
+        progress.update(
+            stage="writing_artifacts",
+            stage_message="Persisting tracking report artifacts.",
+            progress=90,
         )
         return {
             "scope_id": scope_id,
@@ -487,6 +595,8 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
 
     try:
         return execute_job(job_type="scope.report", scope_id=scope_id, runner=_runner)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

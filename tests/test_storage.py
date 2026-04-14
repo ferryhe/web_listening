@@ -228,22 +228,42 @@ def test_add_update_and_list_jobs(storage):
         Job(
             job_type="scope.report",
             status="completed",
+            stage="completed",
+            stage_message="Report generated.",
             progress=100,
             scope_id=scope.id,
             run_id=run.id,
             produced_artifacts={"output_path": "data/reports/report.md"},
+            artifact_summary={"artifact_count": 1, "artifact_keys": ["output_path"]},
+            error_detail={"message": ""},
             started_at=datetime.now(timezone.utc),
             finished_at=datetime.now(timezone.utc),
         )
     )
 
     assert saved.job_id is not None
+    assert saved.stage == "completed"
+    assert saved.stage_message == "Report generated."
     assert saved.produced_artifacts["output_path"].endswith("report.md")
+    assert saved.artifact_summary["artifact_count"] == 1
 
-    updated = storage.update_job(saved.job_id, status="failed", error="boom")
+    updated = storage.update_job(
+        saved.job_id,
+        status="failed",
+        stage="failed",
+        stage_message="Execution failed.",
+        error="boom",
+        error_code="job_execution_error",
+        error_detail={"exception_type": "RuntimeError"},
+        is_retryable=True,
+    )
     assert updated is not None
     assert updated.status == "failed"
+    assert updated.stage == "failed"
     assert updated.error == "boom"
+    assert updated.error_code == "job_execution_error"
+    assert updated.error_detail["exception_type"] == "RuntimeError"
+    assert updated.is_retryable is True
 
     jobs = storage.list_jobs(scope_id=scope.id)
     assert len(jobs) == 1
@@ -255,16 +275,44 @@ def test_add_update_and_list_jobs(storage):
 
 def test_job_row_parsing_tolerates_invalid_artifact_json(storage):
     storage.conn.execute(
-        "INSERT INTO jobs (job_type, status, progress, produced_artifacts_json) VALUES (?, ?, ?, ?)",
-        ("scope.report", "completed", 100, "{not-json"),
+        "INSERT INTO jobs (job_type, status, stage, progress, produced_artifacts_json, artifact_summary_json, error_detail_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("scope.report", "completed", "completed", 100, "{not-json", "{not-json", "{not-json"),
     )
     storage.conn.execute(
-        "INSERT INTO jobs (job_type, status, progress, produced_artifacts_json) VALUES (?, ?, ?, ?)",
-        ("scope.run", "completed", 100, "[]"),
+        "INSERT INTO jobs (job_type, status, stage, progress, produced_artifacts_json, artifact_summary_json, error_detail_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("scope.run", "completed", "completed", 100, "[]", "[]", "[]"),
     )
     storage.conn.commit()
 
     jobs = storage.list_jobs(limit=10)
     assert len(jobs) == 2
     assert jobs[0].produced_artifacts == {}
+    assert jobs[0].artifact_summary == {}
+    assert jobs[0].error_detail == {}
     assert jobs[1].produced_artifacts == {}
+    assert jobs[1].artifact_summary == {}
+    assert jobs[1].error_detail == {}
+
+
+def test_job_delivery_payload_exposes_next_action_and_structured_error():
+    job = Job(
+        job_id=12,
+        job_type="scope.run",
+        status="failed",
+        stage="failed",
+        stage_message="Run failed during execution.",
+        progress=65,
+        produced_artifacts={"report_path": "data/reports/run.md"},
+        artifact_summary={"artifact_count": 1},
+        error="boom",
+        error_code="job_execution_error",
+        error_detail={"exception_type": "RuntimeError"},
+        is_retryable=True,
+    )
+
+    payload = job.to_delivery_payload()
+    assert payload["job"]["stage"] == "failed"
+    assert payload["error"]["code"] == "job_execution_error"
+    assert payload["error"]["is_retryable"] is True
+    assert payload["artifacts"]["produced"]["report_path"].endswith("run.md")
+    assert payload["next_action"] == "inspect_job_error"

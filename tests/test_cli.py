@@ -243,10 +243,13 @@ def test_list_jobs_and_get_job_commands_render_persisted_job(tmp_path: Path, mon
             Job(
                 job_type="scope.report",
                 status="completed",
+                stage="completed",
+                stage_message="Tracking report ready.",
                 progress=100,
                 scope_id=7,
                 run_id=11,
                 produced_artifacts={"output_path": str(tmp_path / "report.md")},
+                artifact_summary={"artifact_count": 1, "artifact_keys": ["output_path"]},
                 started_at=datetime.now(timezone.utc),
                 finished_at=datetime.now(timezone.utc),
             )
@@ -257,11 +260,14 @@ def test_list_jobs_and_get_job_commands_render_persisted_job(tmp_path: Path, mon
     list_result = runner.invoke(app, ["list-jobs", "--scope-id", "7"])
     assert list_result.exit_code == 0
     assert "scope.report" in list_result.output
+    assert "completed" in list_result.output
     assert str(job.job_id) in list_result.output
 
     get_result = runner.invoke(app, ["get-job", str(job.job_id)])
     assert get_result.exit_code == 0
     assert f"job_id={job.job_id}" in get_result.output
+    assert "stage=completed" in get_result.output
+    assert "next_action=read_job_artifacts" in get_result.output
     assert "output_path" in get_result.output
 
 

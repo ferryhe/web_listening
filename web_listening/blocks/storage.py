@@ -127,11 +127,17 @@ class Storage:
                 job_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_type TEXT NOT NULL,
                 status TEXT DEFAULT 'queued',
+                stage TEXT DEFAULT 'accepted',
+                stage_message TEXT DEFAULT '',
                 progress INTEGER DEFAULT 0,
                 scope_id INTEGER,
                 run_id INTEGER,
                 produced_artifacts_json TEXT DEFAULT '{}',
+                artifact_summary_json TEXT DEFAULT '{}',
                 error TEXT DEFAULT '',
+                error_code TEXT DEFAULT '',
+                error_detail_json TEXT DEFAULT '{}',
+                is_retryable INTEGER DEFAULT 0,
                 accepted_at TEXT,
                 started_at TEXT,
                 finished_at TEXT,
@@ -274,6 +280,12 @@ class Storage:
         self._ensure_column("documents", "content_md_status", "TEXT DEFAULT 'pending'")
         self._ensure_column("documents", "content_md_updated_at", "TEXT")
         self._ensure_column("jobs", "produced_artifacts_json", "TEXT DEFAULT '{}'")
+        self._ensure_column("jobs", "stage", "TEXT DEFAULT 'accepted'")
+        self._ensure_column("jobs", "stage_message", "TEXT DEFAULT ''")
+        self._ensure_column("jobs", "artifact_summary_json", "TEXT DEFAULT '{}'")
+        self._ensure_column("jobs", "error_code", "TEXT DEFAULT ''")
+        self._ensure_column("jobs", "error_detail_json", "TEXT DEFAULT '{}'")
+        self._ensure_column("jobs", "is_retryable", "INTEGER DEFAULT 0")
         self._ensure_column("jobs", "accepted_at", "TEXT")
         self._ensure_column("file_observations", "document_id", "INTEGER")
         self._ensure_column("file_observations", "tracked_local_path", "TEXT DEFAULT ''")
@@ -763,18 +775,25 @@ class Storage:
         cur = self.conn.execute(
             """
             INSERT INTO jobs (
-                job_type, status, progress, scope_id, run_id,
-                produced_artifacts_json, error, accepted_at, started_at, finished_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                job_type, status, stage, stage_message, progress, scope_id, run_id,
+                produced_artifacts_json, artifact_summary_json, error, error_code,
+                error_detail_json, is_retryable, accepted_at, started_at, finished_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_type,
                 job.status,
+                job.stage,
+                job.stage_message,
                 job.progress,
                 job.scope_id,
                 job.run_id,
                 json.dumps(job.produced_artifacts),
+                json.dumps(job.artifact_summary),
                 job.error,
+                job.error_code,
+                json.dumps(job.error_detail),
+                int(job.is_retryable),
                 job.accepted_at.isoformat() if job.accepted_at else now,
                 job.started_at.isoformat() if job.started_at else None,
                 job.finished_at.isoformat() if job.finished_at else None,
@@ -789,12 +808,18 @@ class Storage:
         assignments = []
         params = []
         for key, value in fields.items():
-            column_name = "produced_artifacts_json" if key == "produced_artifacts" else key
+            column_name = {
+                "produced_artifacts": "produced_artifacts_json",
+                "artifact_summary": "artifact_summary_json",
+                "error_detail": "error_detail_json",
+            }.get(key, key)
             assignments.append(f"{column_name} = ?")
             if isinstance(value, datetime):
                 params.append(value.isoformat())
-            elif key == "produced_artifacts":
+            elif key in {"produced_artifacts", "artifact_summary", "error_detail"}:
                 params.append(json.dumps(value or {}))
+            elif key == "is_retryable":
+                params.append(int(bool(value)))
             else:
                 params.append(value)
         params.append(job_id)
@@ -855,15 +880,33 @@ class Storage:
             produced_artifacts = {}
         if not isinstance(produced_artifacts, dict):
             produced_artifacts = {}
+        try:
+            artifact_summary = json.loads(row["artifact_summary_json"] or "{}")
+        except json.JSONDecodeError:
+            artifact_summary = {}
+        if not isinstance(artifact_summary, dict):
+            artifact_summary = {}
+        try:
+            error_detail = json.loads(row["error_detail_json"] or "{}")
+        except json.JSONDecodeError:
+            error_detail = {}
+        if not isinstance(error_detail, dict):
+            error_detail = {}
         return Job(
             job_id=row["job_id"],
             job_type=row["job_type"],
             status=row["status"] or "queued",
+            stage=row["stage"] or "accepted",
+            stage_message=row["stage_message"] or "",
             progress=row["progress"] or 0,
             scope_id=row["scope_id"],
             run_id=row["run_id"],
             produced_artifacts=produced_artifacts,
+            artifact_summary=artifact_summary,
             error=row["error"] or "",
+            error_code=row["error_code"] or "",
+            error_detail=error_detail,
+            is_retryable=bool(row["is_retryable"] or 0),
             accepted_at=_parse_dt(row["accepted_at"]),
             started_at=_parse_dt(row["started_at"]),
             finished_at=_parse_dt(row["finished_at"]),

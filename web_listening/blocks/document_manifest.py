@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, load_monitor_scope_plan
+from web_listening.blocks.scope_lookup import find_scope_for_plan
 from web_listening.blocks.section_discovery import render_yaml
 from web_listening.blocks.storage import Storage
 from web_listening.models import CrawlRun, CrawlScope, Document, Site
@@ -28,20 +29,6 @@ class ScopeDocumentManifest:
         return asdict(self)
 
 
-def _find_scope_for_plan(storage: Storage, plan: MonitorScopePlan) -> tuple[Site, CrawlScope]:
-    for site in storage.list_sites(active_only=False):
-        if site.url != plan.seed_url:
-            continue
-        for scope in storage.list_crawl_scopes(site_id=site.id):
-            if (
-                scope.seed_url == plan.seed_url
-                and scope.allowed_page_prefixes == plan.allowed_page_prefixes
-                and scope.allowed_file_prefixes == plan.allowed_file_prefixes
-            ):
-                return site, scope
-    raise ValueError(f"Could not find a stored crawl scope matching monitor scope for `{plan.site_key}`.")
-
-
 def build_scope_document_manifest(
     scope_path: str | Path,
     *,
@@ -49,7 +36,7 @@ def build_scope_document_manifest(
     run_id: int | None = None,
 ) -> ScopeDocumentManifest:
     plan = load_monitor_scope_plan(scope_path)
-    site, scope = _find_scope_for_plan(storage, plan)
+    site, scope = find_scope_for_plan(storage, plan)
     resolved_run_id = run_id or scope.baseline_run_id
     if resolved_run_id is None:
         raise ValueError(f"Scope `{scope.id}` does not have a baseline run yet.")

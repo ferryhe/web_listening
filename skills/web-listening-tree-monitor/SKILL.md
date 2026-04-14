@@ -7,6 +7,10 @@ description: Discover, classify, scope, bootstrap, and rerun bounded site-tree m
 
 Use this skill when the task is to operate the staged tree-monitoring workflow in this repo.
 
+The repo now has two stable artifact commands in the packaged CLI:
+- `web-listening create-monitor-task`
+- `web-listening export-tracking-report`
+
 ## Read First
 
 1. `README.md`

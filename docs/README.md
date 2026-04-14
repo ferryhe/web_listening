@@ -34,6 +34,16 @@ These are the long-lived docs that describe the current system:
 - `tools/export_scope_document_manifest.py`
 - `tools/explain_tree_bootstrap.py`
 - `tools/run_site_tree.py`
+- `web-listening create-monitor-task`
+- `web-listening export-tracking-report`
+
+## New Stable Artifacts
+
+- control plane:
+  - `monitor_task_<task>_<date>.yaml`
+- explanation plane:
+  - `tracking_report_<site>_<date>.md`
+  - `tracking_report_<site>_<date>.yaml`
 
 ## Legacy Entry Points
 

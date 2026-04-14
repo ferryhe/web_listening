@@ -5,7 +5,7 @@
 The current product direction is:
 
 ```text
-discover -> classify -> select -> bootstrap -> run -> explain -> convert
+discover -> classify -> select -> task -> bootstrap -> run -> explain -> convert
 ```
 
 Instead of monitoring a whole site blindly from the homepage, the repo now supports:
@@ -28,11 +28,12 @@ What is production-usable now:
   - `section_classification.yaml`
   - `section_selection.yaml`
   - `monitor_scope.yaml`
+  - `monitor_task.yaml`
 - scope-driven tree bootstrap and reruns
 - page snapshots, page edges, tracked files, and file observations in SQLite
 - canonical blob storage under `data/downloads/_blobs`
 - source-oriented tracked file views under `data/downloads/_tracked`
-- bootstrap summary and document manifest export for AI or operator review
+- bootstrap summary, tracking report, and document manifest export for AI or operator review
 
 What still remains future-facing:
 
@@ -130,6 +131,8 @@ This compiles the chosen sections into a runnable `monitor_scope.yaml`.
 ```powershell
 .venv\Scripts\python tools\summarize_scope_bootstrap.py --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
 .venv\Scripts\python tools\export_scope_document_manifest.py --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
+web-listening create-monitor-task --task-name soa-research-watch --site-url https://example.com --task-description "Track research updates" --goal "Find new pages and downloadable reports"
+web-listening export-tracking-report --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
 ```
 
 ### 6. Run later incremental checks
@@ -167,13 +170,22 @@ Typical artifacts from the staged workflow:
 - `section_classification_<site>_<date>.yaml`
 - `section_selection_<site>_<date>.yaml`
 - `monitor_scope_<site>_<date>.yaml`
+- `monitor_task_<task>_<date>.yaml`
 - `tree_bootstrap_scope_<site>_<date>.md`
 - `bootstrap_scope_summary_<site>_<date>.md`
+- `tracking_report_<site>_<date>.md`
+- `tracking_report_<site>_<date>.yaml`
 - `document_manifest_<site>_<date>.yaml`
 
 ## Legacy Interfaces
 
-The packaged CLI and REST API still exist and are useful for site-level monitoring:
+The packaged CLI and REST API still exist and are useful for site-level monitoring.
+The packaged CLI now also exposes stable local artifact commands for agent workflows:
+
+- `web-listening create-monitor-task`
+- `web-listening export-tracking-report`
+
+Legacy site-level commands remain:
 
 - `web-listening add-site`
 - `web-listening check`
@@ -183,7 +195,8 @@ The packaged CLI and REST API still exist and are useful for site-level monitori
 
 Current limitation:
 
-- the staged section-planning and scope-driven tree workflow is implemented through `tools/*.py`, not yet through REST or the packaged `web-listening` CLI
+- the staged discover/classify/plan/bootstrap/run orchestration still lives in `tools/*.py`
+- the new CLI commands stabilize task/report artifacts, but do not replace the tool-driven tree workflow yet
 
 ## Validation
 

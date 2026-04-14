@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -11,6 +12,10 @@ from rich.table import Table
 
 app = typer.Typer(help="Web Listening - monitor websites for changes")
 console = Console()
+
+
+def _csv_list(value: str) -> list[str]:
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
 def _get_storage():
@@ -324,6 +329,89 @@ def serve(
     import uvicorn
 
     uvicorn.run("web_listening.api.app:app", host=host, port=port, reload=False)
+
+
+@app.command("create-monitor-task")
+def create_monitor_task(
+    task_name: str = typer.Option(..., "--task-name", help="Stable task name"),
+    site_url: str = typer.Option(..., "--site-url", help="Target site URL"),
+    task_description: str = typer.Option(..., "--task-description", help="Human-readable task description"),
+    goal: str = typer.Option(..., "--goal", help="Primary monitoring goal"),
+    focus_topics: str = typer.Option("", "--focus-topics", help="Comma-separated focus topics"),
+    must_track_prefixes: str = typer.Option("", "--must-track-prefixes", help="Comma-separated path prefixes that should be tracked"),
+    exclude_prefixes: str = typer.Option("", "--exclude-prefixes", help="Comma-separated excluded prefixes"),
+    prefer_file_types: str = typer.Option("", "--prefer-file-types", help="Comma-separated preferred file types"),
+    must_download_patterns: str = typer.Option("", "--must-download-patterns", help="Comma-separated required download patterns"),
+    handoff_requirements: str = typer.Option("", "--handoff-requirements", help="Comma-separated downstream handoff requirements"),
+    notes: str = typer.Option("", "--notes", help="Comma-separated task notes"),
+    report_style: str = typer.Option("briefing", "--report-style", help="Report style name"),
+    output: str = typer.Option("", "--output", help="Optional explicit output YAML path"),
+):
+    """Create a first-class monitor task artifact for agent/human workflows."""
+    from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
+    from web_listening.config import settings
+
+    task = build_monitor_task(
+        task_name=task_name,
+        site_url=site_url,
+        task_description=task_description,
+        goal=goal,
+        focus_topics=_csv_list(focus_topics),
+        must_track_prefixes=_csv_list(must_track_prefixes),
+        exclude_prefixes=_csv_list(exclude_prefixes),
+        prefer_file_types=_csv_list(prefer_file_types),
+        must_download_patterns=_csv_list(must_download_patterns),
+        handoff_requirements=_csv_list(handoff_requirements),
+        notes=_csv_list(notes),
+        report_style=report_style,
+    )
+    output_path = Path(output) if output else build_default_task_path(task_name, data_dir=settings.data_dir)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(render_yaml_text(task), encoding="utf-8")
+    console.print(Panel(f"[green]Saved monitor task:[/green] {output_path}"))
+
+
+@app.command("export-tracking-report")
+def export_tracking_report(
+    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml"),
+    task_path: str = typer.Option("", "--task-path", help="Optional path to monitor_task.yaml"),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run"),
+    output: str = typer.Option("", "--output", help="Optional explicit output report path"),
+    output_format: str = typer.Option("md", "--format", help="Output format: md or yaml"),
+):
+    """Export a unified tracking report from a scope run and optional task artifact."""
+    from web_listening.blocks.tracking_report import (
+        build_default_report_path,
+        build_tracking_report,
+        render_markdown as render_tracking_markdown,
+        render_yaml_text as render_tracking_yaml,
+    )
+    from web_listening.config import settings
+
+    normalized_format = (output_format or "md").strip().lower()
+    if normalized_format not in {"md", "yaml"}:
+        raise typer.BadParameter("--format must be one of: md, yaml")
+
+    storage = _get_storage()
+    try:
+        report = build_tracking_report(
+            scope_path,
+            storage=storage,
+            run_id=run_id,
+            task_path=task_path or None,
+        )
+    finally:
+        storage.close()
+
+    output_path = (
+        Path(output)
+        if output
+        else build_default_report_path(report.site_key, format=normalized_format, data_dir=settings.data_dir)
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = render_tracking_yaml(report) if normalized_format == "yaml" else render_tracking_markdown(report)
+    output_path.write_text(payload, encoding="utf-8")
+    console.print(Panel(f"[green]Saved tracking report:[/green] {output_path}"))
 
 
 if __name__ == "__main__":

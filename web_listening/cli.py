@@ -377,7 +377,7 @@ def export_tracking_report(
     task_path: str = typer.Option("", "--task-path", help="Optional path to monitor_task.yaml"),
     run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run"),
     output: str = typer.Option("", "--output", help="Optional explicit output report path"),
-    format: str = typer.Option("md", "--format", help="Output format: md or yaml"),
+    output_format: str = typer.Option("md", "--format", help="Output format: md or yaml"),
 ):
     """Export a unified tracking report from a scope run and optional task artifact."""
     from web_listening.blocks.tracking_report import (
@@ -388,7 +388,7 @@ def export_tracking_report(
     )
     from web_listening.config import settings
 
-    normalized_format = (format or "md").strip().lower()
+    normalized_format = (output_format or "md").strip().lower()
     if normalized_format not in {"md", "yaml"}:
         raise typer.BadParameter("--format must be one of: md, yaml")
 

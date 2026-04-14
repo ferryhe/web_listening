@@ -182,7 +182,7 @@ class MonitorTask(BaseModel):
     prefer_file_types: List[str] = Field(default_factory=list)
     must_download_patterns: List[str] = Field(default_factory=list)
     report_style: str = "briefing"
-    change_severity_rules: dict = Field(
+    change_severity_rules: dict[str, str] = Field(
         default_factory=lambda: {
             "new_page": "medium",
             "changed_page": "medium",

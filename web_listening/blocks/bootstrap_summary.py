@@ -8,6 +8,7 @@ from typing import Iterable
 from urllib.parse import urlsplit
 
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, load_monitor_scope_plan
+from web_listening.blocks.scope_lookup import find_scope_for_plan
 from web_listening.blocks.storage import Storage
 from web_listening.models import CrawlRun, CrawlScope, Site
 
@@ -115,20 +116,6 @@ def _narrative_for_summary(
     return narrative
 
 
-def _find_scope_for_plan(storage: Storage, plan: MonitorScopePlan) -> tuple[Site, CrawlScope]:
-    for site in storage.list_sites(active_only=False):
-        if site.url != plan.seed_url:
-            continue
-        for scope in storage.list_crawl_scopes(site_id=site.id):
-            if (
-                scope.seed_url == plan.seed_url
-                and scope.allowed_page_prefixes == plan.allowed_page_prefixes
-                and scope.allowed_file_prefixes == plan.allowed_file_prefixes
-            ):
-                return site, scope
-    raise ValueError(f"Could not find a stored crawl scope matching monitor scope for `{plan.site_key}`.")
-
-
 def summarize_monitor_scope_bootstrap(
     scope_path: str | Path,
     *,
@@ -136,7 +123,7 @@ def summarize_monitor_scope_bootstrap(
     run_id: int | None = None,
 ) -> ScopeBootstrapSummary:
     plan = load_monitor_scope_plan(scope_path)
-    site, scope = _find_scope_for_plan(storage, plan)
+    site, scope = find_scope_for_plan(storage, plan)
     resolved_run_id = run_id or scope.baseline_run_id
     if resolved_run_id is None:
         raise ValueError(f"Scope `{scope.id}` does not have a baseline run yet.")

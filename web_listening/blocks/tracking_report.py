@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ import yaml
 
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, load_monitor_scope_plan
 from web_listening.blocks.monitor_task import load_monitor_task
+from web_listening.blocks.scope_lookup import find_scope_for_plan
 from web_listening.blocks.storage import Storage
 from web_listening.models import CrawlRun, CrawlScope, Site
 
@@ -45,18 +47,16 @@ class TrackingReport:
         return asdict(self)
 
 
+def _safe_key(value: str) -> str:
+    """Return a filesystem-safe key: lowercase, only [a-z0-9-], no path separators or dot-dot segments."""
+    key = str(value or "site").strip().lower()
+    key = re.sub(r"[^a-z0-9]+", "-", key)
+    key = key.strip("-") or "site"
+    return key
+
+
 def _find_scope_for_plan(storage: Storage, plan: MonitorScopePlan) -> tuple[Site, CrawlScope]:
-    for site in storage.list_sites(active_only=False):
-        if site.url != plan.seed_url:
-            continue
-        for scope in storage.list_crawl_scopes(site_id=site.id):
-            if (
-                scope.seed_url == plan.seed_url
-                and scope.allowed_page_prefixes == plan.allowed_page_prefixes
-                and scope.allowed_file_prefixes == plan.allowed_file_prefixes
-            ):
-                return site, scope
-    raise ValueError(f"Could not find a stored crawl scope matching monitor scope for `{plan.site_key}`.")
+    return find_scope_for_plan(storage, plan)
 
 
 def _build_recommended_next_actions(*, run: CrawlRun, document_count: int, has_task: bool) -> list[str]:
@@ -79,7 +79,7 @@ def _build_recommended_next_actions(*, run: CrawlRun, document_count: int, has_t
 def build_default_report_path(site_key: str, *, format: str = "md", now: datetime | None = None, data_dir: str | Path = "data") -> Path:
     moment = now or datetime.now(timezone.utc)
     report_date = moment.date().isoformat()
-    normalized_site_key = str(site_key or "site").strip().lower().replace(" ", "-")
+    normalized_site_key = _safe_key(site_key)
     suffix = ".yaml" if format == "yaml" else ".md"
     return Path(data_dir) / "reports" / f"tracking_report_{normalized_site_key}_{report_date}{suffix}"
 
@@ -174,16 +174,16 @@ def render_markdown(report: TrackingReport) -> str:
     lines = [
         "# Tracking Report",
         "",
-        "## 📋 概览",
+        "## Overview",
         "",
-        f"- 生成时间：`{report.generated_at}`",
-        f"- 站点：`{report.display_name}` (`{report.site_key}`)",
-        f"- 目录：`{report.catalog}`",
-        f"- 运行：scope_id=`{report.scope_id}`，run_id=`{report.run_id}`，type=`{report.run_type}`，status=`{report.run_status}`",
-        f"- 结果总览：pages_seen=`{report.pages_seen}`，files_seen=`{report.files_seen}`，pages_changed=`{report.pages_changed}`，files_changed=`{report.files_changed}`，documents=`{report.document_count}`",
+        f"- Generated at: `{report.generated_at}`",
+        f"- Site: `{report.display_name}` (`{report.site_key}`)",
+        f"- Catalog: `{report.catalog}`",
+        f"- Run: scope_id=`{report.scope_id}`, run_id=`{report.run_id}`, type=`{report.run_type}`, status=`{report.run_status}`",
+        f"- Summary: pages_seen=`{report.pages_seen}`, files_seen=`{report.files_seen}`, pages_changed=`{report.pages_changed}`, files_changed=`{report.files_changed}`, documents=`{report.document_count}`",
     ]
     if report.goal:
-        lines.append(f"- 目标：{report.goal}")
+        lines.append(f"- Goal: {report.goal}")
 
     if report.task_name:
         lines.extend([

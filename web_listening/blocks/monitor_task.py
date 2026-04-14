@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,10 +20,18 @@ DEFAULT_CHANGE_SEVERITY_RULES = {
 }
 
 
+def _safe_slug(value: str) -> str:
+    """Return a filesystem-safe slug: lowercase, only [a-z0-9-], no path separators or dot-dot segments."""
+    slug = str(value or "task").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = slug.strip("-") or "task"
+    return slug
+
+
 def build_default_task_path(task_slug: str, now: datetime | None = None, *, data_dir: str | Path = "data") -> Path:
     moment = now or datetime.now(timezone.utc)
     task_date = moment.date().isoformat()
-    normalized_task_slug = str(task_slug or "task").strip().lower().replace(" ", "-")
+    normalized_task_slug = _safe_slug(task_slug)
     return Path(data_dir) / "plans" / f"monitor_task_{normalized_task_slug}_{task_date}.yaml"
 
 

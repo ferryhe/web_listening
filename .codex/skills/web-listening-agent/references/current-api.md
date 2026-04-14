@@ -47,7 +47,7 @@ Implemented REST endpoints still focus on the site-level monitoring layer:
 
 ## Packaged CLI
 
-The packaged `web-listening` CLI still focuses on the older site-level flow:
+The packaged `web-listening` CLI still focuses mostly on the older site-level flow, but it now also exposes stable artifact commands for the staged workflow:
 
 - `add-site`
 - `list-sites`
@@ -57,6 +57,8 @@ The packaged `web-listening` CLI still focuses on the older site-level flow:
 - `list-docs`
 - `analyze`
 - `serve`
+- `create-monitor-task`
+- `export-tracking-report`
 
 ## Tool-Driven Tree Workflow
 
@@ -83,8 +85,10 @@ This means:
   - `section_classification.yaml`
   - `section_selection.yaml`
   - `monitor_scope.yaml`
+  - `monitor_task.yaml`
 - explanation outputs:
   - bootstrap summary Markdown
+  - tracking report Markdown and YAML
   - document manifest YAML and Markdown
 - evidence outputs:
   - `data/web_listening.db`
@@ -93,9 +97,8 @@ This means:
 
 ## Current Limitations
 
-- no first-class `monitor_intent.yaml`
-- no REST or packaged CLI entry point for staged scope planning
-- no stable rerun change-bundle export yet
+- no REST or packaged CLI entry point for the full staged planning/bootstrap orchestration
+- no stable rerun change-bundle export beyond the new tracking report artifact
 - no persistent job model for long tree runs
 - no MCP server yet
 

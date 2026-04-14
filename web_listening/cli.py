@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import typer
 from rich.console import Console
@@ -16,6 +17,13 @@ console = Console(width=200, soft_wrap=True)
 
 def _csv_list(value: str) -> list[str]:
     return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
+def _validate_http_url(value: str, *, field_name: str) -> str:
+    parsed = urlparse((value or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise typer.BadParameter(f"{field_name} must be a valid http or https URL")
+    return value
 
 
 def _get_storage():
@@ -720,9 +728,10 @@ def create_monitor_task(
     from web_listening.config import settings
 
     started = datetime.now(timezone.utc)
+    normalized_site_url = _validate_http_url(site_url, field_name="site_url")
     task = build_monitor_task(
         task_name=task_name,
-        site_url=site_url,
+        site_url=normalized_site_url,
         task_description=task_description,
         goal=goal,
         focus_topics=_csv_list(focus_topics),

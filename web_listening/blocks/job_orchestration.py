@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypeVar
 
-from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
+from web_listening.blocks.monitor_scope_planner import compute_scope_fingerprint, load_monitor_scope_plan
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
 from web_listening.models import CrawlScope, Job
@@ -104,6 +104,15 @@ def resolve_scope_plan_path(scope_id: int, *, scope: CrawlScope | None = None, d
     if not root.exists():
         raise FileNotFoundError(f"Could not find data directory `{root}` for scope plan lookup.")
 
+    expected_fingerprint = None
+    if scope is not None:
+        expected_fingerprint = compute_scope_fingerprint(
+            seed_url=scope.seed_url,
+            allowed_page_prefixes=scope.allowed_page_prefixes,
+            allowed_file_prefixes=scope.allowed_file_prefixes,
+            fetch_mode=scope.fetch_mode,
+        )
+
     for candidate in sorted(root.rglob("*.yaml")):
         try:
             plan = load_monitor_scope_plan(candidate)
@@ -111,6 +120,12 @@ def resolve_scope_plan_path(scope_id: int, *, scope: CrawlScope | None = None, d
             continue
         if plan.scope_id == scope_id:
             return candidate
-        if scope is not None and plan.scope_fingerprint and plan.seed_url.rstrip("/") == scope.seed_url.rstrip("/"):
+        if expected_fingerprint is not None and plan.scope_fingerprint == expected_fingerprint:
+            return candidate
+        if scope is not None and (
+            plan.seed_url.rstrip("/") == scope.seed_url.rstrip("/")
+            and plan.allowed_page_prefixes == scope.allowed_page_prefixes
+            and plan.allowed_file_prefixes == scope.allowed_file_prefixes
+        ):
             return candidate
     raise FileNotFoundError(f"Could not locate a monitor scope plan YAML for scope_id={scope_id} under `{root}`.")

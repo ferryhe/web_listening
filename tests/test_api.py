@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from web_listening.api import routes
 from web_listening.api.app import create_app
+from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text as render_scope_yaml_text
 from web_listening.blocks.rescue import RescueAttempt, RescueResult
 from web_listening.blocks.storage import Storage
 from web_listening.models import CrawlRun, CrawlScope, Document, Site, SiteSnapshot
@@ -297,6 +298,64 @@ def test_scope_bootstrap_job_endpoint_persists_completed_job(tmp_path, monkeypat
 
 
 
+def test_scope_bootstrap_endpoint_resolves_matching_scope_plan_by_fingerprint(tmp_path, monkeypatch):
+    db_path = tmp_path / "api-fingerprint.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+
+    storage = Storage(db_path)
+    site = storage.add_site(Site(url="https://example.com/", name="Example"))
+    scope_one = storage.add_crawl_scope(
+        CrawlScope(
+            site_id=site.id,
+            seed_url=site.url,
+            allowed_origin="https://example.com",
+            allowed_page_prefixes=["/one"],
+            allowed_file_prefixes=["/"],
+            fetch_mode="http",
+        )
+    )
+    scope_two = storage.add_crawl_scope(
+        CrawlScope(
+            site_id=site.id,
+            seed_url=site.url,
+            allowed_origin="https://example.com",
+            allowed_page_prefixes=["/two"],
+            allowed_file_prefixes=["/"],
+            fetch_mode="http",
+        )
+    )
+    storage.close()
+
+    plans_dir = tmp_path / "plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    (plans_dir / "monitor_scope_one.yaml").write_text(
+        f"scope_fingerprint: one\nsite_key: demo\ndisplay_name: Example\ncatalog: dev\ngenerated_at: 2026-04-14T00:00:00+00:00\nselection_review_status: approved\nselection_mode: manual\nbusiness_goal: Track one.\nseed_url: https://example.com/\nhomepage_url: https://example.com/\nfetch_mode: http\nfetch_config_json: {{}}\ntree_strategy: selected_scope\ntree_budget_profile: selected_scope_default\nfile_scope_mode: site_root\nallowed_page_prefixes:\n  - /one\nallowed_file_prefixes:\n  - /\nscope_id: \nselected_focus_prefixes:\nexcluded_page_prefixes: []\ndeferred_page_prefixes: []\nexcluded_categories: []\nmax_depth: 3\nmax_pages: 25\nmax_files: 10\nbased_on: {{}}\nselection_summary: {{}}\nnotes: []\n",
+        encoding="utf-8",
+    )
+    (plans_dir / "monitor_scope_two.yaml").write_text(
+        f"scope_fingerprint: two\nsite_key: demo\ndisplay_name: Example\ncatalog: dev\ngenerated_at: 2026-04-14T00:00:00+00:00\nselection_review_status: approved\nselection_mode: manual\nbusiness_goal: Track two.\nseed_url: https://example.com/\nhomepage_url: https://example.com/\nfetch_mode: http\nfetch_config_json: {{}}\ntree_strategy: selected_scope\ntree_budget_profile: selected_scope_default\nfile_scope_mode: site_root\nallowed_page_prefixes:\n  - /two\nallowed_file_prefixes:\n  - /\nscope_id: \nselected_focus_prefixes:\nexcluded_page_prefixes: []\ndeferred_page_prefixes: []\nexcluded_categories: []\nmax_depth: 3\nmax_pages: 25\nmax_files: 10\nbased_on: {{}}\nselection_summary: {{}}\nnotes: []\n",
+        encoding="utf-8",
+    )
+
+    seen = {}
+
+    def fake_bootstrap_scope(**kwargs):
+        seen["scope_path"] = str(kwargs["scope_path"])
+        report_path = tmp_path / "reports" / "bootstrap-fingerprint.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("# Bootstrap\n", encoding="utf-8")
+        return SimpleNamespace(results=[SimpleNamespace(scope_id=scope_two.id, run_id=123)], report_path=report_path, summary_path=None)
+
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.bootstrap_scope", fake_bootstrap_scope)
+
+    client = TestClient(create_app())
+    response = client.post(f"/api/v1/monitor-scopes/{scope_two.id}/bootstrap", json={})
+
+    assert response.status_code == 201
+    assert seen["scope_path"].endswith("monitor_scope_two.yaml")
+
+
 def test_scope_run_job_endpoint_persists_completed_job(tmp_path, monkeypatch):
     db_path = tmp_path / "api.db"
     monkeypatch.setattr(routes.settings, "db_path", db_path)
@@ -350,60 +409,55 @@ def test_scope_report_job_and_latest_report_endpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
 
     storage = Storage(db_path)
-    site = storage.add_site(Site(url="https://example.com/", name="Example"))
+    site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
     scope = storage.add_crawl_scope(
         CrawlScope(
             site_id=site.id,
-            seed_url=site.url,
+            seed_url="https://example.com/",
             allowed_origin="https://example.com",
             allowed_page_prefixes=["/research"],
             allowed_file_prefixes=["/"],
+            fetch_mode="http",
             is_initialized=True,
-            baseline_run_id=1,
         )
     )
-    run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="incremental", status="completed"))
+    run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="incremental", status="completed", pages_seen=2))
+    storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": run.id, "is_initialized": True}))
     storage.close()
 
-    scope_path = tmp_path / "plans" / "monitor_scope_demo.yaml"
-    scope_path.parent.mkdir(parents=True, exist_ok=True)
-    scope_path.write_text(
-        f"""
-scope_fingerprint: demo-fingerprint
-site_key: demo
-display_name: Example
-catalog: dev
-generated_at: 2026-04-14T00:00:00+00:00
-selection_review_status: approved
-selection_mode: manual
-business_goal: Track research.
-seed_url: https://example.com/
-homepage_url: https://example.com/
-fetch_mode: http
-fetch_config_json: {{}}
-tree_strategy: selected_scope
-tree_budget_profile: selected_scope_default
-file_scope_mode: site_root
-allowed_page_prefixes:
-  - /research
-allowed_file_prefixes:
-  - /
-scope_id: {scope.id}
-selected_focus_prefixes:
-  - /research
-excluded_page_prefixes: []
-deferred_page_prefixes: []
-excluded_categories: []
-max_depth: 3
-max_pages: 25
-max_files: 10
-based_on: {{}}
-selection_summary: {{}}
-notes: []
+    classification_path = tmp_path / "classification.yaml"
+    classification_path.write_text(
+        """
+catalog: "dev"
+sites:
+  - site_key: "demo"
+    display_name: "Demo"
+    seed_url: "https://example.com/"
+    homepage_url: "https://example.com/"
+    fetch_mode: "http"
 """.strip()
         + "\n",
         encoding="utf-8",
     )
+    selection_path = tmp_path / "selection.yaml"
+    selection_path.write_text(
+        """
+site_key: "demo"
+generated_at: "2026-04-07T01:20:54-04:00"
+selection_mode: "manual_with_agent_assist"
+review_status: "recommended_draft"
+business_goal: "Keep research."
+selected_sections:
+  - path: "/research"
+    selection_reason: "Keep research."
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_plan.scope_id = scope.id
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
 
     report_path = tmp_path / "reports" / "tracking_report_demo.md"
 
@@ -415,20 +469,79 @@ notes: []
     monkeypatch.setattr("web_listening.blocks.staged_workflow.report_scope", fake_report_scope)
 
     client = TestClient(create_app())
-    response = client.post(f"/api/v1/monitor-scopes/{scope.id}/report", json={"output_format": "md"})
+    response = client.post(f"/api/v1/monitor-scopes/{scope.id}/report", json={})
 
     assert response.status_code == 201
     payload = response.json()
     assert payload["job_type"] == "scope.report"
-    assert payload["run_id"] == run.id
     assert payload["produced_artifacts"]["output_path"] == str(report_path)
 
     latest = client.get(f"/api/v1/monitor-scopes/{scope.id}/reports/latest")
     assert latest.status_code == 200
     latest_payload = latest.json()
     assert latest_payload["artifact_path"] == str(report_path)
-    assert "Demo report" in latest_payload["content"]
-    assert latest_payload["job"]["job_id"] == payload["job_id"]
+    assert latest_payload["content"].startswith("# Demo report")
+
+
+def test_scope_report_endpoint_rejects_invalid_format(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+
+    storage = Storage(db_path)
+    site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+    scope = storage.add_crawl_scope(
+        CrawlScope(
+            site_id=site.id,
+            seed_url="https://example.com/",
+            allowed_origin="https://example.com",
+            allowed_page_prefixes=["/research"],
+            allowed_file_prefixes=["/"],
+            fetch_mode="http",
+            is_initialized=True,
+        )
+    )
+    storage.close()
+
+    classification_path = tmp_path / "classification.yaml"
+    classification_path.write_text(
+        """
+catalog: "dev"
+sites:
+  - site_key: "demo"
+    display_name: "Demo"
+    seed_url: "https://example.com/"
+    homepage_url: "https://example.com/"
+    fetch_mode: "http"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    selection_path = tmp_path / "selection.yaml"
+    selection_path.write_text(
+        """
+site_key: "demo"
+generated_at: "2026-04-07T01:20:54-04:00"
+selection_mode: "manual_with_agent_assist"
+review_status: "recommended_draft"
+business_goal: "Keep research."
+selected_sections:
+  - path: "/research"
+    selection_reason: "Keep research."
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_plan.scope_id = scope.id
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+    client = TestClient(create_app())
+    response = client.post(f"/api/v1/monitor-scopes/{scope.id}/report", json={"output_format": "json"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "output_format must be one of: md, yaml"
 
 
 

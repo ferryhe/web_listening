@@ -212,6 +212,28 @@ def test_create_monitor_task_honors_explicit_output_path(tmp_path: Path, monkeyp
     assert "task_name: demo-watch" in explicit_output.read_text(encoding="utf-8")
 
 
+def test_create_monitor_task_rejects_invalid_site_url(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "create-monitor-task",
+            "--task-name",
+            "demo-watch",
+            "--site-url",
+            "notaurl",
+            "--task-description",
+            "Track research updates.",
+            "--goal",
+            "Find new pages and files.",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "site_url must be a valid http or https URL" in result.output
+
+
 def test_list_jobs_and_get_job_commands_render_persisted_job(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(settings, "db_path", tmp_path / "cli-jobs.db")
 

@@ -410,6 +410,10 @@ def run_monitor_scope(scope_id: int, body: RunScopeRequest):
 def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
     from web_listening.blocks.staged_workflow import report_scope as staged_report_scope
 
+    normalized_format = (body.output_format or "md").strip().lower()
+    if normalized_format not in {"md", "yaml"}:
+        raise HTTPException(status_code=422, detail="output_format must be one of: md, yaml")
+
     scope_path = _resolve_scope_path(scope_id)
 
     def _runner():
@@ -418,7 +422,7 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
             task_path=body.task_path,
             run_id=body.run_id,
             output_path=body.output_path,
-            output_format=body.output_format,
+            output_format=normalized_format,
         )
         return {
             "scope_id": scope_id,

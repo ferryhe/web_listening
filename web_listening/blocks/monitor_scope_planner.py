@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,7 @@ class SectionSelection:
 
 @dataclass(slots=True)
 class MonitorScopePlan:
+    scope_fingerprint: str
     site_key: str
     display_name: str
     catalog: str
@@ -53,6 +56,7 @@ class MonitorScopePlan:
     file_scope_mode: str
     allowed_page_prefixes: list[str]
     allowed_file_prefixes: list[str]
+    scope_id: int | None = None
     selected_focus_prefixes: list[str] = field(default_factory=list)
     excluded_page_prefixes: list[str] = field(default_factory=list)
     deferred_page_prefixes: list[str] = field(default_factory=list)
@@ -66,6 +70,22 @@ class MonitorScopePlan:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def compute_scope_fingerprint(
+    *,
+    seed_url: str,
+    allowed_page_prefixes: list[str],
+    allowed_file_prefixes: list[str],
+    fetch_mode: str = "http",
+) -> str:
+    payload = {
+        "seed_url": str(seed_url or "").rstrip("/"),
+        "allowed_page_prefixes": sorted({_normalize_prefix(value) for value in allowed_page_prefixes if _normalize_prefix(value)}),
+        "allowed_file_prefixes": sorted({_normalize_prefix(value) for value in allowed_file_prefixes if _normalize_prefix(value)}),
+        "fetch_mode": str(fetch_mode or "http").strip().lower() or "http",
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def _normalize_prefix(value: str) -> str:
@@ -187,6 +207,13 @@ def load_monitor_scope_plan(path: str | Path) -> MonitorScopePlan:
     if not isinstance(selection_summary, dict):
         selection_summary = {}
     return MonitorScopePlan(
+        scope_fingerprint=str(payload.get("scope_fingerprint", "")).strip()
+        or compute_scope_fingerprint(
+            seed_url=str(payload.get("seed_url", "")).strip(),
+            allowed_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("allowed_page_prefixes"))],
+            allowed_file_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("allowed_file_prefixes"))],
+            fetch_mode=str(payload.get("fetch_mode", "http")).strip() or "http",
+        ),
         site_key=str(payload.get("site_key", "")).strip().lower(),
         display_name=str(payload.get("display_name", "")).strip(),
         catalog=str(payload.get("catalog", "")).strip().lower(),
@@ -203,6 +230,7 @@ def load_monitor_scope_plan(path: str | Path) -> MonitorScopePlan:
         file_scope_mode=str(payload.get("file_scope_mode", "site_root")).strip() or "site_root",
         allowed_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("allowed_page_prefixes"))],
         allowed_file_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("allowed_file_prefixes"))],
+        scope_id=int(payload["scope_id"]) if payload.get("scope_id") is not None and str(payload.get("scope_id")).strip() != "" else None,
         selected_focus_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("selected_focus_prefixes"))],
         excluded_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("excluded_page_prefixes"))],
         deferred_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("deferred_page_prefixes"))],
@@ -325,6 +353,12 @@ def compile_monitor_scope(
         notes.append("Excluded page prefixes are recorded for traceability, but current tree bootstrap enforcement is allow-list based.")
 
     return MonitorScopePlan(
+        scope_fingerprint=compute_scope_fingerprint(
+            seed_url=str(site_payload.get("seed_url", "")).strip() or (target.seed_url if target else ""),
+            allowed_page_prefixes=allowed_page_prefixes,
+            allowed_file_prefixes=allowed_file_prefixes,
+            fetch_mode=(target.fetch_mode if target else str(site_payload.get("fetch_mode", "http")).strip() or "http"),
+        ),
         site_key=selection.site_key,
         display_name=str(site_payload.get("display_name", "")).strip() or (target.display_name if target else selection.site_key.upper()),
         catalog=catalog,
@@ -341,6 +375,7 @@ def compile_monitor_scope(
         file_scope_mode=file_scope_mode,
         allowed_page_prefixes=allowed_page_prefixes,
         allowed_file_prefixes=allowed_file_prefixes,
+        scope_id=None,
         selected_focus_prefixes=selected_focus_prefixes,
         excluded_page_prefixes=excluded_page_prefixes,
         deferred_page_prefixes=deferred_page_prefixes,
@@ -392,6 +427,7 @@ def render_markdown(plan: MonitorScopePlan) -> str:
         f"- Conclusion time: `{plan.generated_at}`",
         f"- Site: `{plan.display_name}` (`{plan.site_key}`)",
         f"- Catalog: `{plan.catalog}`",
+        f"- Scope identity: scope_id=`{plan.scope_id or '-'}`, fingerprint=`{plan.scope_fingerprint}`",
         f"- Selection status: `{plan.selection_review_status}`",
         f"- Scope result: allowed_page_prefixes=`{len(plan.allowed_page_prefixes)}`, selected_focus_prefixes=`{len(plan.selected_focus_prefixes)}`, excluded_page_prefixes=`{len(plan.excluded_page_prefixes)}`, deferred_page_prefixes=`{len(plan.deferred_page_prefixes)}`",
         f"- Runtime defaults: max_depth=`{plan.max_depth}`, max_pages=`{plan.max_pages}`, max_files=`{plan.max_files}`, file_scope_mode=`{plan.file_scope_mode}`",

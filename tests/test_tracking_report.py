@@ -328,3 +328,75 @@ selected_sections:
         storage.close()
 
     assert raised is True
+
+
+def test_build_tracking_report_rejects_task_for_different_site(tmp_path: Path):
+    classification_path = tmp_path / "classification.yaml"
+    classification_path.write_text(
+        """
+catalog: "dev"
+sites:
+  - site_key: "demo"
+    display_name: "Demo"
+    seed_url: "https://example.com/"
+    homepage_url: "https://example.com/"
+    fetch_mode: "http"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    selection_path = tmp_path / "selection.yaml"
+    selection_path.write_text(
+        """
+site_key: "demo"
+generated_at: "2026-04-07T01:20:54-04:00"
+selection_mode: "manual_with_agent_assist"
+review_status: "recommended_draft"
+business_goal: "Keep research."
+selected_sections:
+  - path: "/research"
+    selection_reason: "Keep research."
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+    wrong_task = build_monitor_task(
+        task_name="other-site-watch",
+        site_url="https://another.example.com/",
+        task_description="Track another site.",
+        goal="Should not attach to the demo site.",
+    )
+    task_path = tmp_path / "monitor_task.yaml"
+    task_path.write_text(render_task_yaml_text(wrong_task), encoding="utf-8")
+
+    storage = Storage(tmp_path / "tracking-task-mismatch.db")
+    try:
+        site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+        scope = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/research"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed"))
+        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": run.id, "is_initialized": True}))
+
+        try:
+            build_tracking_report(scope_path, storage=storage, run_id=run.id, task_path=task_path)
+            raised = False
+        except ValueError as exc:
+            raised = True
+            assert "does not match monitor scope seed_url" in str(exc)
+    finally:
+        storage.close()
+
+    assert raised is True

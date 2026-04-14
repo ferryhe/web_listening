@@ -106,6 +106,10 @@ def build_tracking_report(
         )
 
     task = load_monitor_task(task_path) if task_path is not None else None
+    if task is not None and task.site_url.rstrip("/") != plan.seed_url.rstrip("/"):
+        raise ValueError(
+            f"Monitor task site_url `{task.site_url}` does not match monitor scope seed_url `{plan.seed_url}`."
+        )
     documents = storage.list_scope_documents(scope.id, run_id=resolved_run_id)
     document_rows = [
         {

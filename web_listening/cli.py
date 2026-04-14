@@ -454,8 +454,12 @@ def bootstrap_scope(
     include_summary: bool = typer.Option(False, "--include-summary", help="Also export bootstrap scope summary markdown."),
 ):
     """Bootstrap a stored monitor scope into the tracking database."""
+    from web_listening.blocks.job_orchestration import persist_job_result
+    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
     from web_listening.blocks.staged_workflow import bootstrap_scope as staged_bootstrap_scope
 
+    plan = load_monitor_scope_plan(scope_path)
+    started = datetime.now(timezone.utc)
     artifacts = staged_bootstrap_scope(
         scope_path=scope_path,
         download_files=download_files,
@@ -468,9 +472,23 @@ def bootstrap_scope(
         include_summary=include_summary,
     )
     first = artifacts.results[0] if artifacts.results else None
+    job = persist_job_result(
+        job_type="scope.bootstrap",
+        scope_id=first.scope_id if first else plan.scope_id,
+        run_id=first.run_id if first else None,
+        produced_artifacts={
+            "scope_path": str(scope_path),
+            "report_path": str(artifacts.report_path),
+            **({"summary_path": str(artifacts.summary_path)} if artifacts.summary_path else {}),
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
     extra_summary = f"\nSummary: {artifacts.summary_path}" if artifacts.summary_path else ""
     console.print(
         f"Bootstrap scope finished\n"
+        f"Job ID: {job.job_id}\n"
         f"Scope: {scope_path}\n"
         f"Report: {artifacts.report_path}{extra_summary}\n"
         f"status={first.status if first else '-'} scope_id={first.scope_id if first else '-'} run_id={first.run_id if first else '-'}"
@@ -487,8 +505,12 @@ def run_scope(
     report_path: str = typer.Option("", "--report-path", help="Optional incremental run report path."),
 ):
     """Run an initialized monitor scope incrementally."""
+    from web_listening.blocks.job_orchestration import persist_job_result
+    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
     from web_listening.blocks.staged_workflow import run_scope as staged_run_scope
 
+    plan = load_monitor_scope_plan(scope_path)
+    started = datetime.now(timezone.utc)
     artifacts = staged_run_scope(
         scope_path=scope_path,
         download_files=download_files,
@@ -497,8 +519,21 @@ def run_scope(
         max_files=max_files,
         report_path=report_path or None,
     )
+    job = persist_job_result(
+        job_type="scope.run",
+        scope_id=artifacts.result.scope_id or plan.scope_id,
+        run_id=artifacts.result.run_id,
+        produced_artifacts={
+            "scope_path": str(scope_path),
+            "report_path": str(artifacts.report_path),
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
     console.print(
         f"Run scope finished\n"
+        f"Job ID: {job.job_id}\n"
         f"Scope: {scope_path}\n"
         f"Report: {artifacts.report_path}\n"
         f"status={artifacts.result.status} scope_id={artifacts.result.scope_id} run_id={artifacts.result.run_id}"
@@ -514,12 +549,16 @@ def report_scope(
     output_format: str = typer.Option("md", "--format", help="Output format: md or yaml."),
 ):
     """Export a tracking report for one monitor scope."""
+    from web_listening.blocks.job_orchestration import persist_job_result
+    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
     from web_listening.blocks.staged_workflow import report_scope as staged_report_scope
 
     normalized_format = (output_format or "md").strip().lower()
     if normalized_format not in {"md", "yaml"}:
         raise typer.BadParameter("--format must be one of: md, yaml")
 
+    plan = load_monitor_scope_plan(scope_path)
+    started = datetime.now(timezone.utc)
     artifacts = staged_report_scope(
         scope_path=scope_path,
         task_path=task_path or None,
@@ -527,8 +566,23 @@ def report_scope(
         output_path=output or None,
         output_format=normalized_format,
     )
+    job = persist_job_result(
+        job_type="scope.report",
+        scope_id=plan.scope_id,
+        run_id=artifacts.report.run_id,
+        produced_artifacts={
+            "scope_path": str(scope_path),
+            "task_path": str(task_path) if task_path else "",
+            "output_path": str(artifacts.output_path),
+            "output_format": artifacts.output_format,
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
     console.print(Panel(
         f"[green]Saved scope report[/green]\n"
+        f"Job ID: {job.job_id}\n"
         f"Path: {artifacts.output_path}\n"
         f"Format: {artifacts.output_format}"
     ))
@@ -542,19 +596,106 @@ def export_manifest(
     report_path: str = typer.Option("", "--report-path", help="Optional manifest Markdown report path."),
 ):
     """Export scope document manifest artifacts."""
+    from web_listening.blocks.job_orchestration import persist_job_result
+    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
     from web_listening.blocks.staged_workflow import export_manifest as staged_export_manifest
 
+    plan = load_monitor_scope_plan(scope_path)
+    started = datetime.now(timezone.utc)
     artifacts = staged_export_manifest(
         scope_path=scope_path,
         run_id=run_id,
         yaml_path=yaml_path or None,
         report_path=report_path or None,
     )
+    job = persist_job_result(
+        job_type="scope.manifest",
+        scope_id=plan.scope_id,
+        run_id=artifacts.manifest.run_id,
+        produced_artifacts={
+            "scope_path": str(scope_path),
+            "yaml_path": str(artifacts.yaml_path),
+            "report_path": str(artifacts.report_path),
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
     console.print(Panel(
         f"[green]Saved scope manifest[/green]\n"
+        f"Job ID: {job.job_id}\n"
         f"YAML: {artifacts.yaml_path}\n"
         f"Report: {artifacts.report_path}"
     ))
+
+
+@app.command("list-jobs")
+def list_jobs(
+    scope_id: Optional[int] = typer.Option(None, "--scope-id", help="Limit to one stored crawl scope."),
+    job_type: str = typer.Option("", "--job-type", help="Limit to one job type."),
+    limit: int = typer.Option(20, "--limit", min=1, max=200, help="Maximum jobs to display."),
+):
+    """List persisted staged-workflow jobs."""
+    storage = _get_storage()
+    try:
+        jobs = storage.list_jobs(scope_id=scope_id, job_type=job_type or None, limit=limit)
+    finally:
+        storage.close()
+
+    table = Table(title="Jobs")
+    table.add_column("Job ID", style="cyan")
+    table.add_column("Type")
+    table.add_column("Status")
+    table.add_column("Scope ID")
+    table.add_column("Run ID")
+    table.add_column("Progress")
+    table.add_column("Finished")
+
+    for job in jobs:
+        table.add_row(
+            str(job.job_id),
+            job.job_type,
+            job.status,
+            str(job.scope_id) if job.scope_id is not None else "-",
+            str(job.run_id) if job.run_id is not None else "-",
+            f"{job.progress}%",
+            str(job.finished_at)[:19] if job.finished_at else "-",
+        )
+    console.print(table)
+
+
+@app.command("get-job")
+def get_job(
+    job_id: int = typer.Argument(..., help="Persisted job id."),
+):
+    """Show one persisted staged-workflow job and its artifact contract."""
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    finally:
+        storage.close()
+
+    if job is None:
+        raise typer.BadParameter(f"Job {job_id} not found")
+
+    artifact_lines = [f"- {key}: {value}" for key, value in sorted(job.produced_artifacts.items())] or ["- <none>"]
+    console.print(
+        Panel(
+            "\n".join(
+                [
+                    f"job_id={job.job_id}",
+                    f"job_type={job.job_type}",
+                    f"status={job.status}",
+                    f"scope_id={job.scope_id if job.scope_id is not None else '-'}",
+                    f"run_id={job.run_id if job.run_id is not None else '-'}",
+                    f"progress={job.progress}",
+                    f"error={job.error or '-'}",
+                    "artifacts:",
+                    *artifact_lines,
+                ]
+            )
+        )
+    )
 
 
 @app.command("create-monitor-task")
@@ -574,9 +715,11 @@ def create_monitor_task(
     output: str = typer.Option("", "--output", help="Optional explicit output YAML path"),
 ):
     """Create a first-class monitor task artifact for agent/human workflows."""
+    from web_listening.blocks.job_orchestration import persist_job_result
     from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
     from web_listening.config import settings
 
+    started = datetime.now(timezone.utc)
     task = build_monitor_task(
         task_name=task_name,
         site_url=site_url,
@@ -594,7 +737,18 @@ def create_monitor_task(
     output_path = Path(output) if output else build_default_task_path(task_name, data_dir=settings.data_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(render_yaml_text(task), encoding="utf-8")
-    console.print(Panel(f"[green]Saved monitor task:[/green] {output_path}"))
+    job = persist_job_result(
+        job_type="monitor_task.create",
+        produced_artifacts={
+            "task_path": str(output_path),
+            "task_name": task.task_name,
+            "site_url": task.site_url,
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
+    console.print(Panel(f"[green]Saved monitor task:[/green] {output_path}\nJob ID: {job.job_id}"))
 
 
 @app.command("export-tracking-report")

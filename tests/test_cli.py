@@ -8,7 +8,7 @@ from web_listening.cli import app
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text as render_scope_yaml_text
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
-from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, PageSnapshot, Site
+from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, Job, PageSnapshot, Site
 
 
 runner = CliRunner()
@@ -27,6 +27,8 @@ def test_cli_help_registers_staged_workflow_commands():
         "run-scope",
         "report-scope",
         "export-manifest",
+        "list-jobs",
+        "get-job",
         "create-monitor-task",
         "export-tracking-report",
     ]:
@@ -208,6 +210,37 @@ def test_create_monitor_task_honors_explicit_output_path(tmp_path: Path, monkeyp
     assert result.exit_code == 0
     assert explicit_output.exists()
     assert "task_name: demo-watch" in explicit_output.read_text(encoding="utf-8")
+
+
+def test_list_jobs_and_get_job_commands_render_persisted_job(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(settings, "db_path", tmp_path / "cli-jobs.db")
+
+    storage = Storage(settings.db_path)
+    try:
+        job = storage.add_job(
+            Job(
+                job_type="scope.report",
+                status="completed",
+                progress=100,
+                scope_id=7,
+                run_id=11,
+                produced_artifacts={"output_path": str(tmp_path / "report.md")},
+                started_at=datetime.now(timezone.utc),
+                finished_at=datetime.now(timezone.utc),
+            )
+        )
+    finally:
+        storage.close()
+
+    list_result = runner.invoke(app, ["list-jobs", "--scope-id", "7"])
+    assert list_result.exit_code == 0
+    assert "scope.report" in list_result.output
+    assert str(job.job_id) in list_result.output
+
+    get_result = runner.invoke(app, ["get-job", str(job.job_id)])
+    assert get_result.exit_code == 0
+    assert f"job_id={job.job_id}" in get_result.output
+    assert "output_path" in get_result.output
 
 
 def test_export_tracking_report_writes_markdown_artifact(tmp_path: Path, monkeypatch):
@@ -450,6 +483,44 @@ def test_report_scope_rejects_invalid_format(tmp_path: Path):
 def test_bootstrap_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
     report_path = tmp_path / "reports" / "bootstrap.md"
     summary_path = tmp_path / "reports" / "bootstrap-summary.md"
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(
+        """
+scope_fingerprint: demo
+site_key: demo
+display_name: Demo
+catalog: dev
+generated_at: 2026-04-14T00:00:00+00:00
+selection_review_status: approved
+selection_mode: manual
+business_goal: Track research.
+seed_url: https://example.com/
+homepage_url: https://example.com/
+fetch_mode: http
+fetch_config_json: {}
+tree_strategy: selected_scope
+tree_budget_profile: selected_scope_default
+file_scope_mode: site_root
+allowed_page_prefixes:
+  - /research
+allowed_file_prefixes:
+  - /
+scope_id: 7
+selected_focus_prefixes:
+  - /research
+excluded_page_prefixes: []
+deferred_page_prefixes: []
+excluded_categories: []
+max_depth: 3
+max_pages: 25
+max_files: 10
+based_on: {}
+selection_summary: {}
+notes: []
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
 
     def fake_bootstrap_scope(**kwargs):
         report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -468,7 +539,7 @@ def test_bootstrap_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch
         [
             "bootstrap-scope",
             "--scope-path",
-            str(tmp_path / "monitor_scope.yaml"),
+            str(scope_path),
             "--report-path",
             str(report_path),
             "--summary-path",
@@ -489,6 +560,44 @@ def test_bootstrap_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch
 
 def test_run_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
     report_path = tmp_path / "reports" / "run.md"
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(
+        """
+scope_fingerprint: demo
+site_key: demo
+display_name: Demo
+catalog: dev
+generated_at: 2026-04-14T00:00:00+00:00
+selection_review_status: approved
+selection_mode: manual
+business_goal: Track research.
+seed_url: https://example.com/
+homepage_url: https://example.com/
+fetch_mode: http
+fetch_config_json: {}
+tree_strategy: selected_scope
+tree_budget_profile: selected_scope_default
+file_scope_mode: site_root
+allowed_page_prefixes:
+  - /research
+allowed_file_prefixes:
+  - /
+scope_id: 5
+selected_focus_prefixes:
+  - /research
+excluded_page_prefixes: []
+deferred_page_prefixes: []
+excluded_categories: []
+max_depth: 3
+max_pages: 25
+max_files: 10
+based_on: {}
+selection_summary: {}
+notes: []
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
 
     def fake_run_scope(**kwargs):
         report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -505,7 +614,7 @@ def test_run_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
         [
             "run-scope",
             "--scope-path",
-            str(tmp_path / "monitor_scope.yaml"),
+            str(scope_path),
             "--report-path",
             str(report_path),
         ],

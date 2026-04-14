@@ -169,6 +169,33 @@ class AnalysisReport(BaseModel):
         return v or []
 
 
+class Job(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    job_id: Optional[int] = None
+    job_type: str
+    status: str = "queued"
+    progress: int = 0
+    scope_id: Optional[int] = None
+    run_id: Optional[int] = None
+    produced_artifacts: dict[str, object] = Field(default_factory=dict)
+    error: str = ""
+    accepted_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+    @field_validator("produced_artifacts", mode="before")
+    @classmethod
+    def parse_produced_artifacts(cls, value):
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return value or {}
+
+
 class MonitorTask(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -19,11 +19,11 @@ DEFAULT_CHANGE_SEVERITY_RULES = {
 }
 
 
-def build_default_task_path(site_key: str, now: datetime | None = None, *, data_dir: str | Path = "data") -> Path:
+def build_default_task_path(task_slug: str, now: datetime | None = None, *, data_dir: str | Path = "data") -> Path:
     moment = now or datetime.now(timezone.utc)
     task_date = moment.date().isoformat()
-    normalized_site_key = str(site_key or "site").strip().lower().replace(" ", "-")
-    return Path(data_dir) / "plans" / f"monitor_task_{normalized_site_key}_{task_date}.yaml"
+    normalized_task_slug = str(task_slug or "task").strip().lower().replace(" ", "-")
+    return Path(data_dir) / "plans" / f"monitor_task_{normalized_task_slug}_{task_date}.yaml"
 
 
 def build_monitor_task(

@@ -40,7 +40,7 @@ These are the long-lived docs that describe the current system:
 ## New Stable Artifacts
 
 - control plane:
-  - `monitor_task_<site>_<date>.yaml`
+  - `monitor_task_<task>_<date>.yaml`
 - explanation plane:
   - `tracking_report_<site>_<date>.md`
   - `tracking_report_<site>_<date>.yaml`

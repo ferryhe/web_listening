@@ -100,6 +100,10 @@ def build_tracking_report(
     run = storage.get_crawl_run(resolved_run_id)
     if run is None:
         raise ValueError(f"Could not find crawl run `{resolved_run_id}`.")
+    if run.scope_id != scope.id:
+        raise ValueError(
+            f"Crawl run `{resolved_run_id}` belongs to scope `{run.scope_id}`, not monitor scope `{scope.id}`."
+        )
 
     task = load_monitor_task(task_path) if task_path is not None else None
     documents = storage.list_scope_documents(scope.id, run_id=resolved_run_id)

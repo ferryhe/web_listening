@@ -254,3 +254,77 @@ selected_sections:
     assert report.document_count == 0
     assert "Task Context" not in markdown
     assert "Scope Context" in markdown
+
+
+def test_build_tracking_report_rejects_run_from_different_scope(tmp_path: Path):
+    classification_path = tmp_path / "classification.yaml"
+    classification_path.write_text(
+        """
+catalog: "dev"
+sites:
+  - site_key: "demo"
+    display_name: "Demo"
+    seed_url: "https://example.com/"
+    homepage_url: "https://example.com/"
+    fetch_mode: "http"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    selection_path = tmp_path / "selection.yaml"
+    selection_path.write_text(
+        """
+site_key: "demo"
+generated_at: "2026-04-07T01:20:54-04:00"
+selection_mode: "manual_with_agent_assist"
+review_status: "recommended_draft"
+business_goal: "Keep research."
+selected_sections:
+  - path: "/research"
+    selection_reason: "Keep research."
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+    storage = Storage(tmp_path / "tracking-mismatch.db")
+    try:
+        site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+        scope_a = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/research"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        scope_b = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/other",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/other"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        bad_run = storage.add_crawl_run(CrawlRun(scope_id=scope_b.id, run_type="incremental", status="completed", pages_seen=99))
+        storage.update_crawl_scope(CrawlScope(**{**scope_a.model_dump(), "baseline_run_id": bad_run.id, "is_initialized": True}))
+
+        try:
+            build_tracking_report(scope_path, storage=storage, run_id=bad_run.id)
+            raised = False
+        except ValueError as exc:
+            raised = True
+            assert "belongs to scope" in str(exc)
+    finally:
+        storage.close()
+
+    assert raised is True

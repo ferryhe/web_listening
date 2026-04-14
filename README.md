@@ -170,7 +170,7 @@ Typical artifacts from the staged workflow:
 - `section_classification_<site>_<date>.yaml`
 - `section_selection_<site>_<date>.yaml`
 - `monitor_scope_<site>_<date>.yaml`
-- `monitor_task_<site>_<date>.yaml`
+- `monitor_task_<task>_<date>.yaml`
 - `tree_bootstrap_scope_<site>_<date>.md`
 - `bootstrap_scope_summary_<site>_<date>.md`
 - `tracking_report_<site>_<date>.md`

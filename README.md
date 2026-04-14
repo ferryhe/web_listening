@@ -23,6 +23,15 @@ Documentation index: [docs/README.md](C:/Project/web_listening/docs/README.md)
 
 What is production-usable now:
 
+- packaged staged workflow commands:
+  - `web-listening discover`
+  - `web-listening classify`
+  - `web-listening select`
+  - `web-listening plan-scope`
+  - `web-listening bootstrap-scope`
+  - `web-listening run-scope`
+  - `web-listening report-scope`
+  - `web-listening export-manifest`
 - staged planning artifacts:
   - `section_inventory.yaml`
   - `section_classification.yaml`
@@ -33,13 +42,13 @@ What is production-usable now:
 - page snapshots, page edges, tracked files, and file observations in SQLite
 - canonical blob storage under `data/downloads/_blobs`
 - source-oriented tracked file views under `data/downloads/_tracked`
-- bootstrap summary, tracking report, and document manifest export for AI or operator review
+- bootstrap summary, bootstrap quality summary, tracking report, and document manifest export for AI or operator review
 
 What still remains future-facing:
 
-- exposing the staged tree workflow through REST or the packaged `web-listening` CLI
 - persistent jobs and webhooks for long-running tree runs
 - richer incremental change bundles and conversion routing
+- REST expansion beyond the current site-level compatibility surface
 
 ## Install
 
@@ -85,10 +94,13 @@ Main settings:
 
 ## Recommended Workflow
 
+The packaged `web-listening` CLI is now the primary entrypoint for the staged tree workflow.
+The older `tools/*.py` scripts still exist, but they should be treated as lower-level compatibility entrypoints.
+
 ### 1. Discover site sections
 
 ```powershell
-.venv\Scripts\python tools\discover_site_sections.py --catalog dev
+web-listening discover --catalog dev
 ```
 
 This produces a structure-first picture of reachable level-2 sections and sampled level-3 branches.
@@ -96,7 +108,7 @@ This produces a structure-first picture of reachable level-2 sections and sample
 ### 2. Classify sections
 
 ```powershell
-.venv\Scripts\python tools\classify_site_sections.py --catalog dev
+web-listening classify --catalog dev
 ```
 
 This adds business categories and importance hints such as:
@@ -112,33 +124,42 @@ The current default project posture is conservative:
 - recognize `governance_management`
 - but do not prioritize them unless the monitoring goal explicitly requires them
 
-### 3. Plan the monitoring scope
+### 3. Review the section selection artifact
 
 ```powershell
-.venv\Scripts\python tools\plan_monitor_scope.py --selection-path data\plans\section_selection_soa_2026-04-07.yaml
+web-listening select --selection-path data\plans\section_selection_soa_2026-04-07.yaml
+```
+
+This surfaces the reviewed selection artifact clearly before scope compilation.
+
+### 4. Plan the monitoring scope
+
+```powershell
+web-listening plan-scope --selection-path data\plans\section_selection_soa_2026-04-07.yaml
 ```
 
 This compiles the chosen sections into a runnable `monitor_scope.yaml`.
 
-### 4. Bootstrap the selected scope
+### 5. Bootstrap the selected scope
 
 ```powershell
-.venv\Scripts\python tools\bootstrap_site_tree.py --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files
+web-listening bootstrap-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files --include-summary
 ```
 
-### 5. Export summaries for people and agents
+`bootstrap-scope` now supports an additional bootstrap summary output with baseline quality signals, including coverage, budget truncation hints, confidence, and recommended follow-up actions.
+
+### 6. Export summaries for people and agents
 
 ```powershell
-.venv\Scripts\python tools\summarize_scope_bootstrap.py --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
-.venv\Scripts\python tools\export_scope_document_manifest.py --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
+web-listening report-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
+web-listening export-manifest --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
 web-listening create-monitor-task --task-name soa-research-watch --site-url https://example.com --task-description "Track research updates" --goal "Find new pages and downloadable reports"
-web-listening export-tracking-report --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
 ```
 
-### 6. Run later incremental checks
+### 7. Run later incremental checks
 
 ```powershell
-.venv\Scripts\python tools\run_site_tree.py --catalog dev --download-files
+web-listening run-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files
 ```
 
 ## Data Layout
@@ -193,10 +214,10 @@ Legacy site-level commands remain:
 - `web-listening analyze`
 - `web-listening serve`
 
-Current limitation:
+Current status:
 
-- the staged discover/classify/plan/bootstrap/run orchestration still lives in `tools/*.py`
-- the new CLI commands stabilize task/report artifacts, but do not replace the tool-driven tree workflow yet
+- the packaged `web-listening` CLI now exposes the staged discover/classify/select/plan/bootstrap/run/report/manifest flow directly
+- the lower-level `tools/*.py` scripts still exist as compatibility entrypoints and developer-oriented wrappers around the same workflow
 
 ## Validation
 

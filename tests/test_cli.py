@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
@@ -11,6 +12,25 @@ from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation
 
 
 runner = CliRunner()
+
+
+def test_cli_help_registers_staged_workflow_commands():
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    for command_name in [
+        "discover",
+        "classify",
+        "select",
+        "plan-scope",
+        "bootstrap-scope",
+        "run-scope",
+        "report-scope",
+        "export-manifest",
+        "create-monitor-task",
+        "export-tracking-report",
+    ]:
+        assert command_name in result.output
 
 
 def test_add_site_rejects_invalid_fetch_config_json():
@@ -26,6 +46,110 @@ def test_add_site_rejects_invalid_fetch_config_json():
 
     assert result.exit_code != 0
     assert "Invalid JSON for --fetch-config" in result.output
+
+
+def test_discover_command_reports_saved_paths(tmp_path: Path, monkeypatch):
+    yaml_path = tmp_path / "plans" / "inventory.yaml"
+    report_path = tmp_path / "reports" / "inventory.md"
+
+    def fake_discover_sections(**kwargs):
+        yaml_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        yaml_path.write_text("catalog: dev\n", encoding="utf-8")
+        report_path.write_text("# Inventory\n", encoding="utf-8")
+        return SimpleNamespace(yaml_path=yaml_path, report_path=report_path)
+
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.discover_sections", fake_discover_sections)
+
+    result = runner.invoke(
+        app,
+        [
+            "discover",
+            "--catalog",
+            "dev",
+            "--yaml-path",
+            str(yaml_path),
+            "--report-path",
+            str(report_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    normalized_output = result.output.replace("\n", "")
+    assert "Saved section inventory" in result.output
+    assert "YAML:" in result.output
+    assert str(yaml_path).replace("\n", "") in normalized_output
+    assert str(report_path).replace("\n", "") in normalized_output
+
+
+def test_classify_command_reports_saved_paths(tmp_path: Path, monkeypatch):
+    inventory_path = tmp_path / "plans" / "inventory.yaml"
+    yaml_path = tmp_path / "plans" / "classification.yaml"
+    report_path = tmp_path / "reports" / "classification.md"
+    inventory_path.parent.mkdir(parents=True, exist_ok=True)
+    inventory_path.write_text("catalog: dev\n", encoding="utf-8")
+
+    def fake_classify_sections(**kwargs):
+        yaml_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        yaml_path.write_text("catalog: dev\n", encoding="utf-8")
+        report_path.write_text("# Classification\n", encoding="utf-8")
+        return SimpleNamespace(inventory_path=inventory_path, yaml_path=yaml_path, report_path=report_path)
+
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.classify_sections", fake_classify_sections)
+
+    result = runner.invoke(
+        app,
+        [
+            "classify",
+            "--catalog",
+            "dev",
+            "--inventory-path",
+            str(inventory_path),
+            "--yaml-path",
+            str(yaml_path),
+            "--report-path",
+            str(report_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    normalized_output = result.output.replace("\n", "")
+    assert "Saved section classification" in result.output
+    assert "Inventory:" in result.output
+    assert str(inventory_path).replace("\n", "") in normalized_output
+    assert str(yaml_path).replace("\n", "") in normalized_output
+    assert str(report_path).replace("\n", "") in normalized_output
+
+
+def test_select_command_exposes_selection_artifact_path(tmp_path: Path):
+    selection_path = tmp_path / "section_selection_demo.yaml"
+    selection_path.write_text(
+        """
+site_key: "demo"
+generated_at: "2026-04-07T01:20:54-04:00"
+selection_mode: "manual_with_agent_assist"
+review_status: "recommended_draft"
+business_goal: "Track research."
+selected_sections:
+  - path: "/research"
+    selection_reason: "Keep research."
+deferred_sections:
+  - path: "/news"
+    selection_reason: "Review later."
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["select", "--selection-path", str(selection_path)])
+
+    assert result.exit_code == 0
+    normalized_output = result.output.replace("\n", "")
+    assert "Selection artifact ready" in result.output
+    assert str(selection_path).replace("\n", "") in normalized_output
+    assert "site_key=demo" in result.output
+    assert "selected=1" in result.output
 
 
 def test_create_monitor_task_writes_yaml_artifact(tmp_path: Path, monkeypatch):
@@ -305,3 +429,196 @@ selected_sections:
     assert result.exit_code == 0
     assert explicit_output.exists()
     assert "site_key: demo" in explicit_output.read_text(encoding="utf-8")
+
+
+def test_report_scope_rejects_invalid_format(tmp_path: Path):
+    result = runner.invoke(
+        app,
+        [
+            "report-scope",
+            "--scope-path",
+            str(tmp_path / "missing-scope.yaml"),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--format must be one of: md, yaml" in result.output
+
+
+def test_bootstrap_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
+    report_path = tmp_path / "reports" / "bootstrap.md"
+    summary_path = tmp_path / "reports" / "bootstrap-summary.md"
+
+    def fake_bootstrap_scope(**kwargs):
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("# Bootstrap\n", encoding="utf-8")
+        summary_path.write_text("# Summary\n", encoding="utf-8")
+        return SimpleNamespace(
+            report_path=report_path,
+            summary_path=summary_path,
+            results=[SimpleNamespace(status="completed", scope_id=7, run_id=11)],
+        )
+
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.bootstrap_scope", fake_bootstrap_scope)
+
+    result = runner.invoke(
+        app,
+        [
+            "bootstrap-scope",
+            "--scope-path",
+            str(tmp_path / "monitor_scope.yaml"),
+            "--report-path",
+            str(report_path),
+            "--summary-path",
+            str(summary_path),
+            "--include-summary",
+        ],
+    )
+
+    assert result.exit_code == 0
+    normalized_output = result.output.replace("\n", "")
+    assert "Bootstrap scope finished" in result.output
+    assert str(report_path).replace("\n", "") in normalized_output
+    assert str(summary_path).replace("\n", "") in normalized_output
+    assert "scope_id=7" in result.output
+    assert "run_id=11" in result.output
+
+
+
+def test_run_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
+    report_path = tmp_path / "reports" / "run.md"
+
+    def fake_run_scope(**kwargs):
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("# Run\n", encoding="utf-8")
+        return SimpleNamespace(
+            report_path=report_path,
+            result=SimpleNamespace(status="completed", scope_id=5, run_id=9),
+        )
+
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.run_scope", fake_run_scope)
+
+    result = runner.invoke(
+        app,
+        [
+            "run-scope",
+            "--scope-path",
+            str(tmp_path / "monitor_scope.yaml"),
+            "--report-path",
+            str(report_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Run scope finished" in result.output
+    assert report_path.name in result.output
+    assert "scope_id=5" in result.output
+    assert "run_id=9" in result.output
+
+
+
+def test_export_manifest_writes_yaml_and_markdown_artifacts(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(settings, "db_path", tmp_path / "manifest.db")
+
+    classification_path = tmp_path / "classification.yaml"
+    classification_path.write_text(
+        """
+catalog: "dev"
+sites:
+  - site_key: "demo"
+    display_name: "Demo"
+    seed_url: "https://example.com/"
+    homepage_url: "https://example.com/"
+    fetch_mode: "http"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    selection_path = tmp_path / "selection.yaml"
+    selection_path.write_text(
+        """
+site_key: "demo"
+generated_at: "2026-04-07T01:20:54-04:00"
+selection_mode: "manual_with_agent_assist"
+review_status: "recommended_draft"
+business_goal: "Keep research."
+selected_sections:
+  - path: "/research"
+    selection_reason: "Keep research."
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+    storage = Storage(settings.db_path)
+    try:
+        site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+        scope = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/research"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed", pages_seen=1, files_seen=1))
+        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": run.id, "is_initialized": True}))
+        page = storage.upsert_tracked_page(scope_id=scope.id, canonical_url="https://example.com/research/page-a", depth=1, run_id=run.id)
+        document = storage.add_document(
+            Document(
+                site_id=site.id,
+                title="Research Report",
+                url="https://example.com/files/report.pdf",
+                download_url="https://example.com/files/report.pdf",
+                page_url="https://example.com/research/page-a",
+                downloaded_at=datetime(2026, 4, 8, 12, 2, 0, tzinfo=timezone.utc),
+                local_path="data/downloads/_blobs/ab/report.pdf",
+                tracked_local_path="data/downloads/_tracked/example.com/research/page-a/report--abc12345.pdf",
+                sha256="abc123",
+                doc_type="pdf",
+            )
+        )
+        tracked_file = storage.upsert_tracked_file(scope_id=scope.id, canonical_url="https://example.com/files/report.pdf", run_id=run.id, latest_document_id=document.id, latest_sha256=document.sha256)
+        storage.add_file_observation(
+            FileObservation(
+                scope_id=scope.id,
+                run_id=run.id,
+                page_id=page.id,
+                file_id=tracked_file.id,
+                document_id=document.id,
+                discovered_url=tracked_file.canonical_url,
+                download_url=tracked_file.canonical_url,
+                tracked_local_path=document.tracked_local_path,
+            )
+        )
+    finally:
+        storage.close()
+
+    result = runner.invoke(
+        app,
+        [
+            "export-manifest",
+            "--scope-path",
+            str(scope_path),
+            "--run-id",
+            str(run.id),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Saved scope manifest" in result.output
+    written_yaml = list((tmp_path / "plans").glob("document_manifest_demo_*.yaml"))
+    written_md = list((tmp_path / "reports").glob("document_manifest_demo_*.md"))
+    assert len(written_yaml) == 1
+    assert len(written_md) == 1
+    assert "Research Report" in written_yaml[0].read_text(encoding="utf-8")
+    assert "Scope Document Manifest" in written_md[0].read_text(encoding="utf-8")

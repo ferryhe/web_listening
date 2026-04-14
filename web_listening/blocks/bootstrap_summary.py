@@ -41,6 +41,14 @@ class ScopeBootstrapSummary:
     selected_focus_prefixes: list[str] = field(default_factory=list)
     page_count: int = 0
     file_count: int = 0
+    coverage_page_count: int = 0
+    coverage_file_count: int = 0
+    truncated_by_budget: bool = False
+    truncation_reasons: list[str] = field(default_factory=list)
+    selected_but_low_coverage_prefixes: list[str] = field(default_factory=list)
+    discovered_but_unselected_candidates: list[str] = field(default_factory=list)
+    baseline_confidence: str = "unknown"
+    recommended_followups: list[str] = field(default_factory=list)
     level1: list[DirectorySummary] = field(default_factory=list)
     level2: list[DirectorySummary] = field(default_factory=list)
     top_source_pages: list[SourcePageSummary] = field(default_factory=list)
@@ -78,6 +86,102 @@ def _dedupe(values: Iterable[str]) -> list[str]:
         seen.add(normalized)
         ordered.append(normalized)
     return ordered
+
+
+def _covers(prefix: str, candidate: str) -> bool:
+    normalized_prefix = _normalize_prefix(prefix)
+    normalized_candidate = _normalize_prefix(candidate)
+    if not normalized_prefix or not normalized_candidate:
+        return False
+    if normalized_prefix == "/":
+        return True
+    return normalized_candidate == normalized_prefix or normalized_candidate.startswith(normalized_prefix + "/")
+
+
+def _count_for_prefix(prefix: str, page_urls: Iterable[str], file_source_urls: Iterable[str]) -> tuple[int, int]:
+    page_count = 0
+    file_count = 0
+    for url in page_urls:
+        if _covers(prefix, urlsplit(url).path or "/"):
+            page_count += 1
+    for url in file_source_urls:
+        if _covers(prefix, urlsplit(url).path or "/"):
+            file_count += 1
+    return page_count, file_count
+
+
+def _compute_truncation(scope: CrawlScope, run: CrawlRun, page_count: int, file_count: int) -> tuple[bool, list[str]]:
+    reasons: list[str] = []
+    pages_seen = max(run.pages_seen or 0, page_count)
+    files_seen = max(run.files_seen or 0, file_count)
+    if scope.max_pages > 0 and pages_seen >= scope.max_pages:
+        reasons.append(f"Reached page budget (`{pages_seen}` seen / max `{scope.max_pages}`).")
+    if scope.max_files > 0 and files_seen >= scope.max_files:
+        reasons.append(f"Reached file budget (`{files_seen}` seen / max `{scope.max_files}`).")
+    return bool(reasons), reasons
+
+
+def _compute_selected_low_coverage(
+    selected_roots: list[str],
+    selected_focus_prefixes: list[str],
+    page_urls: list[str],
+    file_source_urls: list[str],
+) -> list[str]:
+    low_coverage: list[str] = []
+    for prefix in selected_roots + selected_focus_prefixes:
+        page_count, file_count = _count_for_prefix(prefix, page_urls, file_source_urls)
+        if page_count == 0 and file_count == 0:
+            low_coverage.append(prefix)
+    return _dedupe(low_coverage)
+
+
+def _compute_unselected_candidates(selected_roots: list[str], selected_focus_prefixes: list[str], observed_level2: Iterable[str]) -> list[str]:
+    candidates: list[str] = []
+    for path in observed_level2:
+        if any(_covers(prefix, path) for prefix in selected_focus_prefixes):
+            continue
+        if not any(_covers(root, path) for root in selected_roots):
+            continue
+        candidates.append(path)
+    return _dedupe(candidates)
+
+
+def _compute_followups(
+    *,
+    truncated_by_budget: bool,
+    truncation_reasons: list[str],
+    selected_but_low_coverage_prefixes: list[str],
+    discovered_but_unselected_candidates: list[str],
+) -> list[str]:
+    followups: list[str] = []
+    if truncated_by_budget:
+        followups.append(
+            "Review crawl budget before trusting this baseline: " + "; ".join(truncation_reasons)
+        )
+    for prefix in selected_but_low_coverage_prefixes:
+        followups.append(f"Recheck selected prefix `{prefix}` because the bootstrap run captured no pages or files there.")
+    for prefix in discovered_but_unselected_candidates:
+        followups.append(f"Review discovered branch `{prefix}` as a possible focus-prefix follow-up.")
+    if not followups:
+        followups.append("No immediate follow-up required; captured baseline evidence looks consistent with the selected scope.")
+    return followups
+
+
+def _baseline_confidence(
+    *,
+    truncated_by_budget: bool,
+    selected_but_low_coverage_prefixes: list[str],
+    discovered_but_unselected_candidates: list[str],
+    page_count: int,
+    file_count: int,
+) -> str:
+    if page_count == 0:
+        return "low"
+    if truncated_by_budget or selected_but_low_coverage_prefixes:
+        return "low"
+    if discovered_but_unselected_candidates or file_count == 0:
+        return "medium"
+    return "high"
 
 
 def _render_directory_counts(paths: list[str], page_counts: Counter[str], file_counts: Counter[str]) -> list[DirectorySummary]:
@@ -147,10 +251,12 @@ def summarize_monitor_scope_bootstrap(
     file_level2 = Counter()
     source_pages = Counter()
     source_page_paths: dict[str, str] = {}
+    file_source_urls: list[str] = []
     for observation in file_observations:
         page = tracked_pages.get(observation.page_id)
         if page is None:
             continue
+        file_source_urls.append(page.canonical_url)
         level1, level2 = _path_levels(page.canonical_url)
         file_level1[level1] += 1
         file_level2[level2] += 1
@@ -161,11 +267,43 @@ def summarize_monitor_scope_bootstrap(
     selected_roots = _dedupe(plan.allowed_page_prefixes)
     level1_paths = _dedupe(selected_roots + list(page_level1.keys()))
     focus_l2_paths = _dedupe(plan.selected_focus_prefixes)
-    file_l2_paths = [path for path, count in file_level2.most_common() if count > 0]
-    level2_paths = _dedupe(focus_l2_paths + file_l2_paths)
+    observed_l2_paths = [
+        path
+        for path, count in sorted(
+            {**page_level2, **file_level2}.items(),
+            key=lambda item: (-max(page_level2.get(item[0], 0), file_level2.get(item[0], 0)), item[0]),
+        )
+        if page_level2.get(path, 0) > 0 or file_level2.get(path, 0) > 0
+    ]
+    level2_paths = _dedupe(focus_l2_paths + observed_l2_paths)
 
     level1_rows = _render_directory_counts(level1_paths, page_level1, file_level1)
     level2_rows = _render_directory_counts(level2_paths, page_level2, file_level2)
+    truncated_by_budget, truncation_reasons = _compute_truncation(scope, run, len(page_urls), len(file_observations))
+    selected_but_low_coverage_prefixes = _compute_selected_low_coverage(
+        selected_roots,
+        focus_l2_paths,
+        page_urls,
+        file_source_urls,
+    )
+    discovered_but_unselected_candidates = _compute_unselected_candidates(
+        selected_roots,
+        focus_l2_paths,
+        [row.path for row in level2_rows if row.pages > 0 or row.files > 0],
+    )
+    baseline_confidence = _baseline_confidence(
+        truncated_by_budget=truncated_by_budget,
+        selected_but_low_coverage_prefixes=selected_but_low_coverage_prefixes,
+        discovered_but_unselected_candidates=discovered_but_unselected_candidates,
+        page_count=len(page_urls),
+        file_count=len(file_observations),
+    )
+    recommended_followups = _compute_followups(
+        truncated_by_budget=truncated_by_budget,
+        truncation_reasons=truncation_reasons,
+        selected_but_low_coverage_prefixes=selected_but_low_coverage_prefixes,
+        discovered_but_unselected_candidates=discovered_but_unselected_candidates,
+    )
     top_source_pages = [
         SourcePageSummary(
             page_url=url,
@@ -188,6 +326,14 @@ def summarize_monitor_scope_bootstrap(
         selected_focus_prefixes=focus_l2_paths,
         page_count=len(page_urls),
         file_count=len(file_observations),
+        coverage_page_count=len(page_urls),
+        coverage_file_count=len(file_observations),
+        truncated_by_budget=truncated_by_budget,
+        truncation_reasons=truncation_reasons,
+        selected_but_low_coverage_prefixes=selected_but_low_coverage_prefixes,
+        discovered_but_unselected_candidates=discovered_but_unselected_candidates,
+        baseline_confidence=baseline_confidence,
+        recommended_followups=recommended_followups,
         level1=level1_rows,
         level2=level2_rows,
         top_source_pages=top_source_pages,
@@ -215,6 +361,31 @@ def render_markdown(summary: ScopeBootstrapSummary) -> str:
     ]
     for item in summary.narrative:
         lines.append(f"- {item}")
+
+    lines.extend(
+        [
+            "",
+            "## Baseline Quality",
+            "",
+            f"- Coverage page count: `{summary.coverage_page_count}`",
+            f"- Coverage file count: `{summary.coverage_file_count}`",
+            f"- Baseline confidence: `{summary.baseline_confidence}`",
+            f"- Truncated by budget: `{'yes' if summary.truncated_by_budget else 'no'}`",
+        ]
+    )
+    if summary.truncation_reasons:
+        lines.append(f"- Truncation reasons: `{'; '.join(summary.truncation_reasons)}`")
+    else:
+        lines.append("- Truncation reasons: `-`")
+    lines.append(
+        f"- Selected but low coverage prefixes: `{', '.join(summary.selected_but_low_coverage_prefixes) or '-'}`"
+    )
+    lines.append(
+        f"- Discovered but unselected candidates: `{', '.join(summary.discovered_but_unselected_candidates) or '-'}`"
+    )
+    lines.append("- Recommended followups:")
+    for item in summary.recommended_followups:
+        lines.append(f"  - {item}")
 
     lines.extend(["", "## Selected Roots", ""])
     for path in summary.selected_roots:

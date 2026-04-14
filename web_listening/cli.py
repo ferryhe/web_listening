@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 app = typer.Typer(help="Web Listening - monitor websites for changes")
-console = Console()
+console = Console(width=200, soft_wrap=True)
 
 
 def _csv_list(value: str) -> list[str]:
@@ -329,6 +329,232 @@ def serve(
     import uvicorn
 
     uvicorn.run("web_listening.api.app:app", host=host, port=port, reload=False)
+
+
+@app.command("discover")
+def discover(
+    catalog: str = typer.Option("dev", "--catalog", help="Target catalog: dev, smoke, or all."),
+    site_key: list[str] = typer.Option(None, "--site-key", help="Limit discovery to one or more site keys."),
+    max_depth: int = typer.Option(3, "--max-depth", help="Shallow discovery depth."),
+    section_depth: int = typer.Option(3, "--section-depth", help="Section aggregation depth."),
+    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional page safety cap."),
+    detect_documents: bool = typer.Option(False, "--detect-documents", help="Also count document links during discovery."),
+    level3_sample_limit: int = typer.Option(2, "--level3-sample-limit", help="Level-3 sampling limit per level-2 branch."),
+    yaml_path: str = typer.Option("", "--yaml-path", help="Optional section inventory YAML output path."),
+    report_path: str = typer.Option("", "--report-path", help="Optional section inventory Markdown report path."),
+):
+    """Discover staged workflow site sections and write inventory artifacts."""
+    from web_listening.blocks.staged_workflow import discover_sections
+
+    artifacts = discover_sections(
+        catalog=catalog,
+        site_keys={value.strip().lower() for value in site_key or [] if value.strip()} or None,
+        discovery_depth=max_depth,
+        section_depth=section_depth,
+        max_pages=max_pages,
+        detect_documents=detect_documents,
+        level3_sample_limit=level3_sample_limit,
+        yaml_path=yaml_path or None,
+        report_path=report_path or None,
+    )
+    console.print(
+        f"Saved section inventory\n"
+        f"YAML: {artifacts.yaml_path}\n"
+        f"Report: {artifacts.report_path}"
+    )
+
+
+@app.command("classify")
+def classify(
+    catalog: str = typer.Option("dev", "--catalog", help="Target catalog: dev, smoke, or all."),
+    inventory_path: str = typer.Option("", "--inventory-path", help="Optional section inventory YAML path."),
+    site_key: list[str] = typer.Option(None, "--site-key", help="Limit classification to one or more site keys."),
+    use_ai: bool = typer.Option(False, "--use-ai", help="Use AI-assisted classification when configured."),
+    yaml_path: str = typer.Option("", "--yaml-path", help="Optional section classification YAML output path."),
+    report_path: str = typer.Option("", "--report-path", help="Optional section classification Markdown report path."),
+):
+    """Classify discovered sections and write classification artifacts."""
+    from web_listening.blocks.staged_workflow import classify_sections
+
+    artifacts = classify_sections(
+        catalog=catalog,
+        inventory_path=inventory_path or None,
+        site_keys={value.strip().lower() for value in site_key or [] if value.strip()} or None,
+        use_ai=use_ai,
+        yaml_path=yaml_path or None,
+        report_path=report_path or None,
+    )
+    console.print(
+        f"Saved section classification\n"
+        f"Inventory: {artifacts.inventory_path}\n"
+        f"YAML: {artifacts.yaml_path}\n"
+        f"Report: {artifacts.report_path}"
+    )
+
+
+@app.command("select")
+def select(
+    selection_path: str = typer.Option(..., "--selection-path", help="Path to a reviewed section selection artifact."),
+):
+    """Inspect a reviewed selection artifact and expose the chosen path clearly."""
+    from web_listening.blocks.staged_workflow import inspect_selection
+
+    summary = inspect_selection(selection_path=selection_path)
+    console.print(
+        f"Selection artifact ready\n"
+        f"Path: {summary.selection_path}\n"
+        f"site_key={summary.site_key} selected={summary.selected_sections} rejected={summary.rejected_sections} deferred={summary.deferred_sections}\n"
+        f"review_status={summary.review_status}\n"
+        f"business_goal={summary.business_goal or '-'}"
+    )
+
+
+@app.command("plan-scope")
+def plan_scope(
+    selection_path: str = typer.Option(..., "--selection-path", help="Path to section_selection.yaml."),
+    classification_path: str = typer.Option("", "--classification-path", help="Optional override for section classification YAML."),
+    file_scope_mode: str = typer.Option("site_root", "--file-scope-mode", help="File scope mode: site_root or selected_pages."),
+    max_depth: Optional[int] = typer.Option(None, "--max-depth", help="Optional max_depth override."),
+    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
+    max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
+    yaml_path: str = typer.Option("", "--yaml-path", help="Optional monitor scope YAML output path."),
+    report_path: str = typer.Option("", "--report-path", help="Optional monitor scope Markdown report path."),
+):
+    """Compile a reviewed selection into a monitor scope artifact."""
+    from web_listening.blocks.staged_workflow import plan_scope as staged_plan_scope
+
+    artifacts = staged_plan_scope(
+        selection_path=selection_path,
+        classification_path=classification_path or None,
+        file_scope_mode=file_scope_mode,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        max_files=max_files,
+        yaml_path=yaml_path or None,
+        report_path=report_path or None,
+    )
+    console.print(
+        f"Saved monitor scope\n"
+        f"Selection: {artifacts.selection_path}\n"
+        f"YAML: {artifacts.yaml_path}\n"
+        f"Report: {artifacts.report_path}"
+    )
+
+
+@app.command("bootstrap-scope")
+def bootstrap_scope(
+    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
+    download_files: bool = typer.Option(False, "--download-files", help="Download accepted files during bootstrap."),
+    refresh_existing: bool = typer.Option(False, "--refresh-existing", help="Refresh already initialized scopes."),
+    max_depth: Optional[int] = typer.Option(None, "--max-depth", help="Optional max_depth override."),
+    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
+    max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
+    report_path: str = typer.Option("", "--report-path", help="Optional bootstrap Markdown report path."),
+    summary_path: str = typer.Option("", "--summary-path", help="Optional bootstrap summary Markdown path."),
+    include_summary: bool = typer.Option(False, "--include-summary", help="Also export bootstrap scope summary markdown."),
+):
+    """Bootstrap a stored monitor scope into the tracking database."""
+    from web_listening.blocks.staged_workflow import bootstrap_scope as staged_bootstrap_scope
+
+    artifacts = staged_bootstrap_scope(
+        scope_path=scope_path,
+        download_files=download_files,
+        refresh_existing=refresh_existing,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        max_files=max_files,
+        report_path=report_path or None,
+        summary_path=summary_path or None,
+        include_summary=include_summary,
+    )
+    first = artifacts.results[0] if artifacts.results else None
+    extra_summary = f"\nSummary: {artifacts.summary_path}" if artifacts.summary_path else ""
+    console.print(
+        f"Bootstrap scope finished\n"
+        f"Scope: {scope_path}\n"
+        f"Report: {artifacts.report_path}{extra_summary}\n"
+        f"status={first.status if first else '-'} scope_id={first.scope_id if first else '-'} run_id={first.run_id if first else '-'}"
+    )
+
+
+@app.command("run-scope")
+def run_scope(
+    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
+    download_files: bool = typer.Option(False, "--download-files", help="Download accepted files during incremental run."),
+    max_depth: Optional[int] = typer.Option(None, "--max-depth", help="Optional max_depth override."),
+    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
+    max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
+    report_path: str = typer.Option("", "--report-path", help="Optional incremental run report path."),
+):
+    """Run an initialized monitor scope incrementally."""
+    from web_listening.blocks.staged_workflow import run_scope as staged_run_scope
+
+    artifacts = staged_run_scope(
+        scope_path=scope_path,
+        download_files=download_files,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        max_files=max_files,
+        report_path=report_path or None,
+    )
+    console.print(
+        f"Run scope finished\n"
+        f"Scope: {scope_path}\n"
+        f"Report: {artifacts.report_path}\n"
+        f"status={artifacts.result.status} scope_id={artifacts.result.scope_id} run_id={artifacts.result.run_id}"
+    )
+
+
+@app.command("report-scope")
+def report_scope(
+    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
+    task_path: str = typer.Option("", "--task-path", help="Optional monitor_task.yaml path."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run."),
+    output: str = typer.Option("", "--output", help="Optional explicit output path."),
+    output_format: str = typer.Option("md", "--format", help="Output format: md or yaml."),
+):
+    """Export a tracking report for one monitor scope."""
+    from web_listening.blocks.staged_workflow import report_scope as staged_report_scope
+
+    normalized_format = (output_format or "md").strip().lower()
+    if normalized_format not in {"md", "yaml"}:
+        raise typer.BadParameter("--format must be one of: md, yaml")
+
+    artifacts = staged_report_scope(
+        scope_path=scope_path,
+        task_path=task_path or None,
+        run_id=run_id,
+        output_path=output or None,
+        output_format=normalized_format,
+    )
+    console.print(Panel(
+        f"[green]Saved scope report[/green]\n"
+        f"Path: {artifacts.output_path}\n"
+        f"Format: {artifacts.output_format}"
+    ))
+
+
+@app.command("export-manifest")
+def export_manifest(
+    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run."),
+    yaml_path: str = typer.Option("", "--yaml-path", help="Optional manifest YAML output path."),
+    report_path: str = typer.Option("", "--report-path", help="Optional manifest Markdown report path."),
+):
+    """Export scope document manifest artifacts."""
+    from web_listening.blocks.staged_workflow import export_manifest as staged_export_manifest
+
+    artifacts = staged_export_manifest(
+        scope_path=scope_path,
+        run_id=run_id,
+        yaml_path=yaml_path or None,
+        report_path=report_path or None,
+    )
+    console.print(Panel(
+        f"[green]Saved scope manifest[/green]\n"
+        f"YAML: {artifacts.yaml_path}\n"
+        f"Report: {artifacts.report_path}"
+    ))
 
 
 @app.command("create-monitor-task")

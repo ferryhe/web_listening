@@ -1,7 +1,53 @@
 import time
+from datetime import timezone
 from unittest.mock import MagicMock
 
 from web_listening.blocks.scheduler import Scheduler
+
+
+def test_scheduler_passes_explicit_utc_timezone(monkeypatch):
+    """Scheduler startup does not rely on host-local timezone auto-detection."""
+
+    captured: dict[str, object] = {}
+
+    class FakeTrigger:
+        def __init__(self, *, minutes, timezone):
+            captured["minutes"] = minutes
+            captured["timezone"] = timezone
+
+    class FakeBackgroundScheduler:
+        def __init__(self, *, timezone):
+            captured["scheduler_timezone"] = timezone
+            self.running = False
+
+        def add_job(self, callback, *, trigger, id, replace_existing, next_run_time):
+            captured["callback"] = callback
+            captured["trigger"] = trigger
+            captured["job_id"] = id
+            captured["replace_existing"] = replace_existing
+            captured["next_run_time"] = next_run_time
+
+        def start(self):
+            self.running = True
+
+        def shutdown(self, wait=False):
+            self.running = False
+            captured["shutdown_wait"] = wait
+
+    monkeypatch.setattr("web_listening.blocks.scheduler.IntervalTrigger", FakeTrigger)
+    monkeypatch.setattr("web_listening.blocks.scheduler.BackgroundScheduler", FakeBackgroundScheduler)
+
+    scheduler = Scheduler(check_callback=lambda: None)
+    scheduler.start(interval_minutes=15)
+    scheduler.stop()
+
+    assert captured["scheduler_timezone"] is timezone.utc
+    assert captured["minutes"] == 15
+    assert captured["timezone"] is timezone.utc
+    assert captured["job_id"] == "site_check"
+    assert captured["replace_existing"] is True
+    assert captured["next_run_time"].tzinfo is timezone.utc
+    assert captured["shutdown_wait"] is False
 
 
 def test_scheduler_calls_callback():

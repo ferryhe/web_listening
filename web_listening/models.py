@@ -7,6 +7,24 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 
+def _parse_string_list(value):
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+            if parsed is None:
+                return []
+            return [str(parsed).strip()] if str(parsed).strip() else []
+        return parsed
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [] if value is None else [str(value).strip()]
+
+
 class Site(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -149,6 +167,47 @@ class AnalysisReport(BaseModel):
             except json.JSONDecodeError:
                 return []
         return v or []
+
+
+class MonitorTask(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    task_name: str
+    site_url: str
+    task_description: str
+    goal: str
+    focus_topics: List[str] = Field(default_factory=list)
+    must_track_prefixes: List[str] = Field(default_factory=list)
+    exclude_prefixes: List[str] = Field(default_factory=list)
+    prefer_file_types: List[str] = Field(default_factory=list)
+    must_download_patterns: List[str] = Field(default_factory=list)
+    report_style: str = "briefing"
+    change_severity_rules: dict = Field(
+        default_factory=lambda: {
+            "new_page": "medium",
+            "changed_page": "medium",
+            "missing_page": "medium",
+            "new_file": "high",
+            "changed_file": "medium",
+            "missing_file": "medium",
+        }
+    )
+    handoff_requirements: List[str] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+
+    @field_validator(
+        "focus_topics",
+        "must_track_prefixes",
+        "exclude_prefixes",
+        "prefer_file_types",
+        "must_download_patterns",
+        "handoff_requirements",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def parse_monitor_task_lists(cls, value):
+        return _parse_string_list(value)
 
 
 class CrawlScope(BaseModel):

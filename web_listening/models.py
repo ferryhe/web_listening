@@ -175,18 +175,24 @@ class Job(BaseModel):
     job_id: Optional[int] = None
     job_type: str
     status: str = "queued"
+    stage: str = "accepted"
+    stage_message: str = ""
     progress: int = 0
     scope_id: Optional[int] = None
     run_id: Optional[int] = None
     produced_artifacts: dict[str, object] = Field(default_factory=dict)
+    artifact_summary: dict[str, object] = Field(default_factory=dict)
     error: str = ""
+    error_code: str = ""
+    error_detail: dict[str, object] = Field(default_factory=dict)
+    is_retryable: bool = False
     accepted_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
 
-    @field_validator("produced_artifacts", mode="before")
+    @field_validator("produced_artifacts", "artifact_summary", "error_detail", mode="before")
     @classmethod
-    def parse_produced_artifacts(cls, value):
+    def parse_job_dict_payloads(cls, value):
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
@@ -194,6 +200,43 @@ class Job(BaseModel):
                 return {}
             return parsed if isinstance(parsed, dict) else {}
         return value if isinstance(value, dict) else {}
+
+    def next_recommended_action(self) -> str:
+        if self.status in {"queued", "running"}:
+            return "poll_job_status"
+        if self.status == "failed":
+            return "inspect_job_error"
+        if self.produced_artifacts:
+            return "read_job_artifacts"
+        return "inspect_job_record"
+
+    def to_delivery_payload(self) -> dict[str, object]:
+        return {
+            "job": {
+                "job_id": self.job_id,
+                "job_type": self.job_type,
+                "status": self.status,
+                "stage": self.stage,
+                "stage_message": self.stage_message,
+                "progress": self.progress,
+                "scope_id": self.scope_id,
+                "run_id": self.run_id,
+                "accepted_at": self.accepted_at.isoformat() if self.accepted_at else None,
+                "started_at": self.started_at.isoformat() if self.started_at else None,
+                "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            },
+            "error": {
+                "message": self.error,
+                "code": self.error_code,
+                "detail": self.error_detail,
+                "is_retryable": self.is_retryable,
+            },
+            "artifacts": {
+                "produced": self.produced_artifacts,
+                "summary": self.artifact_summary,
+            },
+            "next_action": self.next_recommended_action(),
+        }
 
 
 class MonitorTask(BaseModel):

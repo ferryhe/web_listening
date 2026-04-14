@@ -314,6 +314,10 @@ def test_scope_bootstrap_job_endpoint_persists_completed_job(tmp_path, monkeypat
     assert response.status_code == 201
     payload = response.json()
     assert payload["job_type"] == "scope.bootstrap"
+    assert payload["status"] == "completed"
+    assert payload["stage"] == "completed"
+    assert payload["progress"] == 100
+    assert payload["artifact_summary"]["artifact_count"] == 2
     assert payload["run_id"] == run.id
     assert payload["produced_artifacts"]["report_path"] == str(report_path)
 
@@ -419,6 +423,10 @@ def test_scope_run_job_endpoint_persists_completed_job(tmp_path, monkeypatch):
     assert response.status_code == 201
     payload = response.json()
     assert payload["job_type"] == "scope.run"
+    assert payload["status"] == "completed"
+    assert payload["stage"] == "completed"
+    assert payload["progress"] == 100
+    assert payload["artifact_summary"]["artifact_count"] == 2
     assert payload["run_id"] == run.id
     assert payload["produced_artifacts"]["report_path"] == str(report_path)
 
@@ -495,7 +503,19 @@ selected_sections:
     assert response.status_code == 201
     payload = response.json()
     assert payload["job_type"] == "scope.report"
+    assert payload["status"] == "completed"
+    assert payload["stage"] == "completed"
+    assert payload["progress"] == 100
+    assert payload["artifact_summary"]["artifact_count"] >= 3
     assert payload["produced_artifacts"]["output_path"] == str(report_path)
+
+    payload_response = client.get(f"/api/v1/jobs/{payload['job_id']}/payload")
+    assert payload_response.status_code == 200
+    delivery_payload = payload_response.json()
+    assert delivery_payload["job"]["job_id"] == payload["job_id"]
+    assert delivery_payload["job"]["stage"] == "completed"
+    assert delivery_payload["artifacts"]["produced"]["output_path"] == str(report_path)
+    assert delivery_payload["next_action"] == "read_job_artifacts"
 
     latest = client.get(f"/api/v1/monitor-scopes/{scope.id}/reports/latest")
     assert latest.status_code == 200
@@ -627,6 +647,30 @@ selected_sections:
 
     assert response.status_code == 422
     assert "must stay under" in response.json()["detail"]
+
+
+def test_job_webhook_registration_stub_returns_sample_payload(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/webhooks/job-deliveries",
+        json={
+            "target_url": "https://hooks.example.com/web-listening",
+            "event_types": ["job.completed", "job.failed"],
+            "secret_hint": "configured-in-prod",
+            "active": True,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["registration_id"] == "job-webhook-stub"
+    assert payload["delivery_mode"] == "stub"
+    assert payload["event_types"] == ["job.completed", "job.failed"]
+    assert payload["sample_payload"]["job"]["stage"] == "completed"
+    assert payload["sample_payload"]["next_action"] == "read_job_artifacts"
 
 
 

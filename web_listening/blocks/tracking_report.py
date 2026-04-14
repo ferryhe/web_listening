@@ -76,6 +76,14 @@ def _build_recommended_next_actions(*, run: CrawlRun, document_count: int, has_t
     return actions
 
 
+def build_default_report_path(site_key: str, *, format: str = "md", now: datetime | None = None, data_dir: str | Path = "data") -> Path:
+    moment = now or datetime.now(timezone.utc)
+    report_date = moment.date().isoformat()
+    normalized_site_key = str(site_key or "site").strip().lower().replace(" ", "-")
+    suffix = ".yaml" if format == "yaml" else ".md"
+    return Path(data_dir) / "reports" / f"tracking_report_{normalized_site_key}_{report_date}{suffix}"
+
+
 def build_tracking_report(
     scope_path: str | Path,
     *,

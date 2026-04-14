@@ -36,6 +36,8 @@ These are the long-lived docs that describe the current system:
 - `web-listening run-scope`
 - `web-listening report-scope`
 - `web-listening export-manifest`
+- `web-listening list-jobs`
+- `web-listening get-job`
 - `web-listening create-monitor-task`
 - `web-listening export-tracking-report`
 

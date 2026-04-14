@@ -32,9 +32,11 @@ What is production-usable now:
   - `web-listening run-scope`
   - `web-listening report-scope`
   - `web-listening export-manifest`
+  - `web-listening list-jobs`
+  - `web-listening get-job`
+  - `web-listening create-monitor-task`
+  - `web-listening export-tracking-report`
 - staged planning artifacts:
-  - `section_inventory.yaml`
-  - `section_classification.yaml`
   - `section_selection.yaml`
   - `monitor_scope.yaml`
   - `monitor_task.yaml`

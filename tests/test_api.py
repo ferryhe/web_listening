@@ -263,6 +263,32 @@ def test_create_monitor_task_endpoint_persists_completed_job(tmp_path, monkeypat
     assert job_response.json()["job_id"] == payload["job_id"]
 
 
+def test_create_monitor_task_endpoint_keeps_default_structured_policy_when_policy_fields_omitted(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/monitor-tasks",
+        json={
+            "task_name": "default-policy-watch",
+            "site_url": "https://example.com/",
+            "task_description": "Track default policy behavior.",
+            "goal": "Keep default structured severity policy for API-created tasks.",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    task_path = Path(payload["produced_artifacts"]["task_path"])
+    task_text = task_path.read_text(encoding="utf-8")
+    assert "severity_policy:" in task_text
+    assert "rule_type: change_type" in task_text
+    assert "match_value: new_file" in task_text
+    assert "severity: high" in task_text
+
+
 def test_create_monitor_task_endpoint_rejects_output_path_outside_data_dir(tmp_path, monkeypatch):
     db_path = tmp_path / "api.db"
     monkeypatch.setattr(routes.settings, "db_path", db_path)

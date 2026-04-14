@@ -171,8 +171,8 @@ class CreateMonitorTaskRequest(BaseModel):
     exclude_prefixes: List[str] = Field(default_factory=list)
     prefer_file_types: List[str] = Field(default_factory=list)
     must_download_patterns: List[str] = Field(default_factory=list)
-    severity_policy: List[dict[str, object]] = Field(default_factory=list)
-    change_severity_rules: dict[str, str] = Field(default_factory=dict)
+    severity_policy: Optional[List[dict[str, object]]] = None
+    change_severity_rules: Optional[dict[str, str]] = None
     handoff_requirements: List[str] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
     report_style: str = "briefing"

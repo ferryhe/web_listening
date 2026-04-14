@@ -251,7 +251,7 @@ def _matches_rule(*, rule: dict[str, Any], change_type: str, item: dict[str, Any
     if not rule_type or not match_value:
         return False
     if rule_type == "change_type":
-        return change_type == match_value
+        return change_type.strip().lower() == match_value.lower()
     if rule_type == "prefix":
         candidates = [_extract_path(item.get("url", "")), _extract_path(item.get("page_url", "")), _extract_path(item.get("preferred_display_path", ""))]
         return any(candidate.startswith(match_value) for candidate in candidates if candidate)
@@ -292,7 +292,7 @@ def _report_reader_for_path(report_path: str | Path | None) -> str:
     if not report_path:
         return "markdown_or_yaml"
     suffix = Path(report_path).suffix.lower()
-    if suffix == ".yaml":
+    if suffix in {".yaml", ".yml"}:
         return "yaml"
     if suffix == ".md":
         return "markdown"

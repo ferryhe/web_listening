@@ -638,6 +638,8 @@ def test_build_tracking_report_low_priority_only_sets_review_action_and_report_p
 
         report = build_tracking_report(scope_path, storage=storage, run_id=rerun.id, task_path=task_path)
         set_report_output_path(report, tmp_path / "reports" / "tracking_report_demo.md")
+        yaml_report = build_tracking_report(scope_path, storage=storage, run_id=rerun.id, task_path=task_path)
+        set_report_output_path(yaml_report, tmp_path / "reports" / "tracking_report_demo.yml")
     finally:
         storage.close()
 
@@ -648,6 +650,9 @@ def test_build_tracking_report_low_priority_only_sets_review_action_and_report_p
     report_artifact = next(item for item in report.artifact_index if item["kind"] == "tracking_report")
     assert report_artifact["path"].endswith("tracking_report_demo.md")
     assert report_artifact["recommended_reader"] == "markdown"
+    yaml_report_artifact = next(item for item in yaml_report.artifact_index if item["kind"] == "tracking_report")
+    assert yaml_report_artifact["path"].endswith("tracking_report_demo.yml")
+    assert yaml_report_artifact["recommended_reader"] == "yaml"
 
 
 def test_build_tracking_report_handles_bad_severity_policy_config_with_fallback(tmp_path: Path):
@@ -756,6 +761,77 @@ def test_build_tracking_report_handles_bad_severity_policy_config_with_fallback(
     assert report.review_queue[0]["severity"] == "critical"
     assert report.review_queue[0]["policy_weight"] == 0
     assert report.review_queue[0]["reason"] == "new_file matched severity policy `keyword` at `critical`."
+
+
+def test_build_tracking_report_matches_change_type_rules_case_insensitively(tmp_path: Path):
+    classification_path, selection_path = _write_scope_inputs(tmp_path)
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+
+    monitor_task = build_monitor_task(
+        task_name="demo-change-type-case-watch",
+        site_url="https://example.com/",
+        task_description="Track case-insensitive change-type rules.",
+        goal="Ensure change_type structured policies are not fragile to case.",
+        severity_policy=[
+            {
+                "rule_type": "change_type",
+                "match_value": "Changed_Page",
+                "severity": "critical",
+                "recommended_action": "escalate_case_insensitive",
+                "weight": 25,
+            }
+        ],
+    )
+    task_path = tmp_path / "monitor_task_case_policy.yaml"
+    task_path.write_text(render_task_yaml_text(monitor_task), encoding="utf-8")
+
+    storage = Storage(tmp_path / "tracking-case-policy.db")
+    try:
+        site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+        scope = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/research", "/news"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        bootstrap_run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed"))
+        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": bootstrap_run.id, "is_initialized": True}))
+        rerun = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="incremental", status="completed", pages_seen=1))
+
+        changed_page = storage.upsert_tracked_page(
+            scope_id=scope.id,
+            canonical_url="https://example.com/research/page-a",
+            depth=1,
+            run_id=bootstrap_run.id,
+        )
+        storage.add_page_snapshot(PageSnapshot(scope_id=scope.id, page_id=changed_page.id, run_id=bootstrap_run.id, content_hash="hash-old", final_url="https://example.com/research/page-a"))
+        changed_snapshot = storage.add_page_snapshot(PageSnapshot(scope_id=scope.id, page_id=changed_page.id, run_id=rerun.id, content_hash="hash-new", final_url="https://example.com/research/page-a"))
+        storage.upsert_tracked_page(
+            scope_id=scope.id,
+            canonical_url="https://example.com/research/page-a",
+            depth=1,
+            run_id=rerun.id,
+            latest_hash="hash-new",
+            latest_snapshot_id=changed_snapshot.id,
+        )
+
+        scope_plan.allowed_page_prefixes = ["/news", "/research"]
+        scope_plan.scope_id = scope.id
+        scope_path = tmp_path / "monitor_scope.yaml"
+        scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+        report = build_tracking_report(scope_path, storage=storage, run_id=rerun.id, task_path=task_path)
+    finally:
+        storage.close()
+
+    assert report.review_queue[0]["change_type"] == "changed_page"
+    assert report.review_queue[0]["severity"] == "critical"
+    assert report.review_queue[0]["recommended_action"] == "escalate_case_insensitive"
 
 
 def test_build_tracking_report_sorts_same_severity_by_policy_weight_then_entity_url(tmp_path: Path):

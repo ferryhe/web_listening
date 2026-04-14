@@ -2,7 +2,7 @@ import pytest
 from datetime import datetime, timezone
 
 from web_listening.blocks.storage import Storage
-from web_listening.models import Site, SiteSnapshot, Change, Document, AnalysisReport
+from web_listening.models import Site, SiteSnapshot, Change, Document, AnalysisReport, Job, CrawlRun, CrawlScope
 
 
 @pytest.fixture
@@ -209,3 +209,62 @@ def test_add_and_list_analyses(storage):
     analyses = storage.list_analyses()
     assert len(analyses) == 1
     assert analyses[0].summary_md == "## Summary\n\nNo significant changes."
+
+
+def test_add_update_and_list_jobs(storage):
+    site = storage.add_site(Site(url="https://example.com", name="Example"))
+    scope = storage.add_crawl_scope(
+        CrawlScope(
+            site_id=site.id,
+            seed_url=site.url,
+            allowed_origin="https://example.com",
+            allowed_page_prefixes=["/research"],
+            allowed_file_prefixes=["/"],
+        )
+    )
+    run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed"))
+
+    saved = storage.add_job(
+        Job(
+            job_type="scope.report",
+            status="completed",
+            progress=100,
+            scope_id=scope.id,
+            run_id=run.id,
+            produced_artifacts={"output_path": "data/reports/report.md"},
+            started_at=datetime.now(timezone.utc),
+            finished_at=datetime.now(timezone.utc),
+        )
+    )
+
+    assert saved.job_id is not None
+    assert saved.produced_artifacts["output_path"].endswith("report.md")
+
+    updated = storage.update_job(saved.job_id, status="failed", error="boom")
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error == "boom"
+
+    jobs = storage.list_jobs(scope_id=scope.id)
+    assert len(jobs) == 1
+    assert jobs[0].job_id == saved.job_id
+    latest = storage.get_latest_job(scope_id=scope.id, job_type="scope.report")
+    assert latest is not None
+    assert latest.job_id == saved.job_id
+
+
+def test_job_row_parsing_tolerates_invalid_artifact_json(storage):
+    storage.conn.execute(
+        "INSERT INTO jobs (job_type, status, progress, produced_artifacts_json) VALUES (?, ?, ?, ?)",
+        ("scope.report", "completed", 100, "{not-json"),
+    )
+    storage.conn.execute(
+        "INSERT INTO jobs (job_type, status, progress, produced_artifacts_json) VALUES (?, ?, ?, ?)",
+        ("scope.run", "completed", 100, "[]"),
+    )
+    storage.conn.commit()
+
+    jobs = storage.list_jobs(limit=10)
+    assert len(jobs) == 2
+    assert jobs[0].produced_artifacts == {}
+    assert jobs[1].produced_artifacts == {}

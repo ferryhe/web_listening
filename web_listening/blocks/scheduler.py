@@ -31,6 +31,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 logger = logging.getLogger(__name__)
 
 _JOB_ID = "site_check"
+_SCHEDULER_TIMEZONE = timezone.utc
 
 
 class Scheduler:
@@ -42,7 +43,7 @@ class Scheduler:
 
     def __init__(self, check_callback: Callable[[], None]) -> None:
         self._callback = check_callback
-        self._scheduler = BackgroundScheduler(timezone=timezone.utc)
+        self._scheduler = BackgroundScheduler(timezone=_SCHEDULER_TIMEZONE)
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -57,10 +58,10 @@ class Scheduler:
         """
         self._scheduler.add_job(
             self._run,
-            trigger=IntervalTrigger(minutes=interval_minutes),
+            trigger=IntervalTrigger(minutes=interval_minutes, timezone=_SCHEDULER_TIMEZONE),
             id=_JOB_ID,
             replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
+            next_run_time=datetime.now(_SCHEDULER_TIMEZONE),
         )
         self._scheduler.start()
         logger.info("Scheduler started (interval=%d min)", interval_minutes)

@@ -26,6 +26,23 @@ These are the long-lived docs that describe the current system:
 
 ## Current Entry Points
 
+### Primary staged workflow
+
+- `web-listening discover`
+- `web-listening classify`
+- `web-listening select`
+- `web-listening plan-scope`
+- `web-listening bootstrap-scope`
+- `web-listening run-scope`
+- `web-listening report-scope`
+- `web-listening export-manifest`
+- `web-listening list-jobs`
+- `web-listening get-job`
+- `web-listening create-monitor-task`
+- `web-listening export-tracking-report`
+
+### Lower-level compatibility entrypoints
+
 - `tools/discover_site_sections.py`
 - `tools/classify_site_sections.py`
 - `tools/plan_monitor_scope.py`
@@ -34,8 +51,6 @@ These are the long-lived docs that describe the current system:
 - `tools/export_scope_document_manifest.py`
 - `tools/explain_tree_bootstrap.py`
 - `tools/run_site_tree.py`
-- `web-listening create-monitor-task`
-- `web-listening export-tracking-report`
 
 ## New Stable Artifacts
 

@@ -169,6 +169,33 @@ class AnalysisReport(BaseModel):
         return v or []
 
 
+class Job(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    job_id: Optional[int] = None
+    job_type: str
+    status: str = "queued"
+    progress: int = 0
+    scope_id: Optional[int] = None
+    run_id: Optional[int] = None
+    produced_artifacts: dict[str, object] = Field(default_factory=dict)
+    error: str = ""
+    accepted_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+    @field_validator("produced_artifacts", mode="before")
+    @classmethod
+    def parse_produced_artifacts(cls, value):
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return value if isinstance(value, dict) else {}
+
+
 class MonitorTask(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -181,7 +208,11 @@ class MonitorTask(BaseModel):
     exclude_prefixes: List[str] = Field(default_factory=list)
     prefer_file_types: List[str] = Field(default_factory=list)
     must_download_patterns: List[str] = Field(default_factory=list)
+    run_schedule: dict[str, object] = Field(default_factory=dict)
+    baseline_expectations: dict[str, object] = Field(default_factory=dict)
+    file_policy: dict[str, object] = Field(default_factory=dict)
     report_style: str = "briefing"
+    report_policy: dict[str, object] = Field(default_factory=dict)
     change_severity_rules: dict[str, str] = Field(
         default_factory=lambda: {
             "new_page": "medium",
@@ -192,8 +223,28 @@ class MonitorTask(BaseModel):
             "missing_file": "medium",
         }
     )
+    alert_policy: dict[str, object] = Field(default_factory=dict)
+    human_review_rules: List[str] = Field(default_factory=list)
     handoff_requirements: List[str] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
+
+    @field_validator(
+        "run_schedule",
+        "baseline_expectations",
+        "file_policy",
+        "report_policy",
+        "alert_policy",
+        mode="before",
+    )
+    @classmethod
+    def parse_monitor_task_dicts(cls, value):
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return value or {}
 
     @field_validator(
         "focus_topics",
@@ -201,6 +252,7 @@ class MonitorTask(BaseModel):
         "exclude_prefixes",
         "prefer_file_types",
         "must_download_patterns",
+        "human_review_rules",
         "handoff_requirements",
         "notes",
         mode="before",

@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import typer
 from rich.console import Console
@@ -11,11 +12,19 @@ from rich.panel import Panel
 from rich.table import Table
 
 app = typer.Typer(help="Web Listening - monitor websites for changes")
-console = Console()
+console = Console(width=200, soft_wrap=True)
 
 
 def _csv_list(value: str) -> list[str]:
     return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
+def _validate_http_url(value: str, *, field_name: str) -> str:
+    normalized_value = (value or "").strip()
+    parsed = urlparse(normalized_value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise typer.BadParameter(f"{field_name} must be a valid http or https URL")
+    return normalized_value
 
 
 def _get_storage():
@@ -331,6 +340,373 @@ def serve(
     uvicorn.run("web_listening.api.app:app", host=host, port=port, reload=False)
 
 
+@app.command("discover")
+def discover(
+    catalog: str = typer.Option("dev", "--catalog", help="Target catalog: dev, smoke, or all."),
+    site_key: list[str] = typer.Option(None, "--site-key", help="Limit discovery to one or more site keys."),
+    max_depth: int = typer.Option(3, "--max-depth", help="Shallow discovery depth."),
+    section_depth: int = typer.Option(3, "--section-depth", help="Section aggregation depth."),
+    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional page safety cap."),
+    detect_documents: bool = typer.Option(False, "--detect-documents", help="Also count document links during discovery."),
+    level3_sample_limit: int = typer.Option(2, "--level3-sample-limit", help="Level-3 sampling limit per level-2 branch."),
+    yaml_path: str = typer.Option("", "--yaml-path", help="Optional section inventory YAML output path."),
+    report_path: str = typer.Option("", "--report-path", help="Optional section inventory Markdown report path."),
+):
+    """Discover staged workflow site sections and write inventory artifacts."""
+    from web_listening.blocks.staged_workflow import discover_sections
+
+    artifacts = discover_sections(
+        catalog=catalog,
+        site_keys={value.strip().lower() for value in site_key or [] if value.strip()} or None,
+        discovery_depth=max_depth,
+        section_depth=section_depth,
+        max_pages=max_pages,
+        detect_documents=detect_documents,
+        level3_sample_limit=level3_sample_limit,
+        yaml_path=yaml_path or None,
+        report_path=report_path or None,
+    )
+    console.print(
+        f"Saved section inventory\n"
+        f"YAML: {artifacts.yaml_path}\n"
+        f"Report: {artifacts.report_path}"
+    )
+
+
+@app.command("classify")
+def classify(
+    catalog: str = typer.Option("dev", "--catalog", help="Target catalog: dev, smoke, or all."),
+    inventory_path: str = typer.Option("", "--inventory-path", help="Optional section inventory YAML path."),
+    site_key: list[str] = typer.Option(None, "--site-key", help="Limit classification to one or more site keys."),
+    use_ai: bool = typer.Option(False, "--use-ai", help="Use AI-assisted classification when configured."),
+    yaml_path: str = typer.Option("", "--yaml-path", help="Optional section classification YAML output path."),
+    report_path: str = typer.Option("", "--report-path", help="Optional section classification Markdown report path."),
+):
+    """Classify discovered sections and write classification artifacts."""
+    from web_listening.blocks.staged_workflow import classify_sections
+
+    artifacts = classify_sections(
+        catalog=catalog,
+        inventory_path=inventory_path or None,
+        site_keys={value.strip().lower() for value in site_key or [] if value.strip()} or None,
+        use_ai=use_ai,
+        yaml_path=yaml_path or None,
+        report_path=report_path or None,
+    )
+    console.print(
+        f"Saved section classification\n"
+        f"Inventory: {artifacts.inventory_path}\n"
+        f"YAML: {artifacts.yaml_path}\n"
+        f"Report: {artifacts.report_path}"
+    )
+
+
+@app.command("select")
+def select(
+    selection_path: str = typer.Option(..., "--selection-path", help="Path to a reviewed section selection artifact."),
+):
+    """Inspect a reviewed selection artifact and expose the chosen path clearly."""
+    from web_listening.blocks.staged_workflow import inspect_selection
+
+    summary = inspect_selection(selection_path=selection_path)
+    console.print(
+        f"Selection artifact ready\n"
+        f"Path: {summary.selection_path}\n"
+        f"site_key={summary.site_key} selected={summary.selected_sections} rejected={summary.rejected_sections} deferred={summary.deferred_sections}\n"
+        f"review_status={summary.review_status}\n"
+        f"business_goal={summary.business_goal or '-'}"
+    )
+
+
+@app.command("plan-scope")
+def plan_scope(
+    selection_path: str = typer.Option(..., "--selection-path", help="Path to section_selection.yaml."),
+    classification_path: str = typer.Option("", "--classification-path", help="Optional override for section classification YAML."),
+    file_scope_mode: str = typer.Option("site_root", "--file-scope-mode", help="File scope mode: site_root or selected_pages."),
+    max_depth: Optional[int] = typer.Option(None, "--max-depth", help="Optional max_depth override."),
+    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
+    max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
+    yaml_path: str = typer.Option("", "--yaml-path", help="Optional monitor scope YAML output path."),
+    report_path: str = typer.Option("", "--report-path", help="Optional monitor scope Markdown report path."),
+):
+    """Compile a reviewed selection into a monitor scope artifact."""
+    from web_listening.blocks.staged_workflow import plan_scope as staged_plan_scope
+
+    artifacts = staged_plan_scope(
+        selection_path=selection_path,
+        classification_path=classification_path or None,
+        file_scope_mode=file_scope_mode,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        max_files=max_files,
+        yaml_path=yaml_path or None,
+        report_path=report_path or None,
+    )
+    console.print(
+        f"Saved monitor scope\n"
+        f"Selection: {artifacts.selection_path}\n"
+        f"YAML: {artifacts.yaml_path}\n"
+        f"Report: {artifacts.report_path}"
+    )
+
+
+@app.command("bootstrap-scope")
+def bootstrap_scope(
+    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
+    download_files: bool = typer.Option(False, "--download-files", help="Download accepted files during bootstrap."),
+    refresh_existing: bool = typer.Option(False, "--refresh-existing", help="Refresh already initialized scopes."),
+    max_depth: Optional[int] = typer.Option(None, "--max-depth", help="Optional max_depth override."),
+    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
+    max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
+    report_path: str = typer.Option("", "--report-path", help="Optional bootstrap Markdown report path."),
+    summary_path: str = typer.Option("", "--summary-path", help="Optional bootstrap summary Markdown path."),
+    include_summary: bool = typer.Option(False, "--include-summary", help="Also export bootstrap scope summary markdown."),
+):
+    """Bootstrap a stored monitor scope into the tracking database."""
+    from web_listening.blocks.job_orchestration import persist_job_result
+    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
+    from web_listening.blocks.staged_workflow import bootstrap_scope as staged_bootstrap_scope
+
+    plan = load_monitor_scope_plan(scope_path)
+    started = datetime.now(timezone.utc)
+    artifacts = staged_bootstrap_scope(
+        scope_path=scope_path,
+        download_files=download_files,
+        refresh_existing=refresh_existing,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        max_files=max_files,
+        report_path=report_path or None,
+        summary_path=summary_path or None,
+        include_summary=include_summary,
+    )
+    first = artifacts.results[0] if artifacts.results else None
+    job = persist_job_result(
+        job_type="scope.bootstrap",
+        scope_id=first.scope_id if first else plan.scope_id,
+        run_id=first.run_id if first else None,
+        produced_artifacts={
+            "scope_path": str(scope_path),
+            "report_path": str(artifacts.report_path),
+            **({"summary_path": str(artifacts.summary_path)} if artifacts.summary_path else {}),
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
+    extra_summary = f"\nSummary: {artifacts.summary_path}" if artifacts.summary_path else ""
+    console.print(
+        f"Bootstrap scope finished\n"
+        f"Job ID: {job.job_id}\n"
+        f"Scope: {scope_path}\n"
+        f"Report: {artifacts.report_path}{extra_summary}\n"
+        f"status={first.status if first else '-'} scope_id={first.scope_id if first else '-'} run_id={first.run_id if first else '-'}"
+    )
+
+
+@app.command("run-scope")
+def run_scope(
+    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
+    download_files: bool = typer.Option(False, "--download-files", help="Download accepted files during incremental run."),
+    max_depth: Optional[int] = typer.Option(None, "--max-depth", help="Optional max_depth override."),
+    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
+    max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
+    report_path: str = typer.Option("", "--report-path", help="Optional incremental run report path."),
+):
+    """Run an initialized monitor scope incrementally."""
+    from web_listening.blocks.job_orchestration import persist_job_result
+    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
+    from web_listening.blocks.staged_workflow import run_scope as staged_run_scope
+
+    plan = load_monitor_scope_plan(scope_path)
+    started = datetime.now(timezone.utc)
+    artifacts = staged_run_scope(
+        scope_path=scope_path,
+        download_files=download_files,
+        max_depth=max_depth,
+        max_pages=max_pages,
+        max_files=max_files,
+        report_path=report_path or None,
+    )
+    job = persist_job_result(
+        job_type="scope.run",
+        scope_id=artifacts.result.scope_id or plan.scope_id,
+        run_id=artifacts.result.run_id,
+        produced_artifacts={
+            "scope_path": str(scope_path),
+            "report_path": str(artifacts.report_path),
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
+    console.print(
+        f"Run scope finished\n"
+        f"Job ID: {job.job_id}\n"
+        f"Scope: {scope_path}\n"
+        f"Report: {artifacts.report_path}\n"
+        f"status={artifacts.result.status} scope_id={artifacts.result.scope_id} run_id={artifacts.result.run_id}"
+    )
+
+
+@app.command("report-scope")
+def report_scope(
+    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
+    task_path: str = typer.Option("", "--task-path", help="Optional monitor_task.yaml path."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run."),
+    output: str = typer.Option("", "--output", help="Optional explicit output path."),
+    output_format: str = typer.Option("md", "--format", help="Output format: md or yaml."),
+):
+    """Export a tracking report for one monitor scope."""
+    from web_listening.blocks.job_orchestration import persist_job_result
+    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
+    from web_listening.blocks.staged_workflow import report_scope as staged_report_scope
+
+    normalized_format = (output_format or "md").strip().lower()
+    if normalized_format not in {"md", "yaml"}:
+        raise typer.BadParameter("--format must be one of: md, yaml")
+
+    plan = load_monitor_scope_plan(scope_path)
+    started = datetime.now(timezone.utc)
+    artifacts = staged_report_scope(
+        scope_path=scope_path,
+        task_path=task_path or None,
+        run_id=run_id,
+        output_path=output or None,
+        output_format=normalized_format,
+    )
+    job = persist_job_result(
+        job_type="scope.report",
+        scope_id=plan.scope_id,
+        run_id=artifacts.report.run_id,
+        produced_artifacts={
+            "scope_path": str(scope_path),
+            "task_path": str(task_path) if task_path else "",
+            "output_path": str(artifacts.output_path),
+            "output_format": artifacts.output_format,
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
+    console.print(Panel(
+        f"[green]Saved scope report[/green]\n"
+        f"Job ID: {job.job_id}\n"
+        f"Path: {artifacts.output_path}\n"
+        f"Format: {artifacts.output_format}"
+    ))
+
+
+@app.command("export-manifest")
+def export_manifest(
+    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run."),
+    yaml_path: str = typer.Option("", "--yaml-path", help="Optional manifest YAML output path."),
+    report_path: str = typer.Option("", "--report-path", help="Optional manifest Markdown report path."),
+):
+    """Export scope document manifest artifacts."""
+    from web_listening.blocks.job_orchestration import persist_job_result
+    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
+    from web_listening.blocks.staged_workflow import export_manifest as staged_export_manifest
+
+    plan = load_monitor_scope_plan(scope_path)
+    started = datetime.now(timezone.utc)
+    artifacts = staged_export_manifest(
+        scope_path=scope_path,
+        run_id=run_id,
+        yaml_path=yaml_path or None,
+        report_path=report_path or None,
+    )
+    job = persist_job_result(
+        job_type="scope.manifest",
+        scope_id=plan.scope_id,
+        run_id=artifacts.manifest.run_id,
+        produced_artifacts={
+            "scope_path": str(scope_path),
+            "yaml_path": str(artifacts.yaml_path),
+            "report_path": str(artifacts.report_path),
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
+    console.print(Panel(
+        f"[green]Saved scope manifest[/green]\n"
+        f"Job ID: {job.job_id}\n"
+        f"YAML: {artifacts.yaml_path}\n"
+        f"Report: {artifacts.report_path}"
+    ))
+
+
+@app.command("list-jobs")
+def list_jobs(
+    scope_id: Optional[int] = typer.Option(None, "--scope-id", help="Limit to one stored crawl scope."),
+    job_type: str = typer.Option("", "--job-type", help="Limit to one job type."),
+    limit: int = typer.Option(20, "--limit", min=1, max=200, help="Maximum jobs to display."),
+):
+    """List persisted staged-workflow jobs."""
+    storage = _get_storage()
+    try:
+        jobs = storage.list_jobs(scope_id=scope_id, job_type=job_type or None, limit=limit)
+    finally:
+        storage.close()
+
+    table = Table(title="Jobs")
+    table.add_column("Job ID", style="cyan")
+    table.add_column("Type")
+    table.add_column("Status")
+    table.add_column("Scope ID")
+    table.add_column("Run ID")
+    table.add_column("Progress")
+    table.add_column("Finished")
+
+    for job in jobs:
+        table.add_row(
+            str(job.job_id),
+            job.job_type,
+            job.status,
+            str(job.scope_id) if job.scope_id is not None else "-",
+            str(job.run_id) if job.run_id is not None else "-",
+            f"{job.progress}%",
+            str(job.finished_at)[:19] if job.finished_at else "-",
+        )
+    console.print(table)
+
+
+@app.command("get-job")
+def get_job(
+    job_id: int = typer.Argument(..., help="Persisted job id."),
+):
+    """Show one persisted staged-workflow job and its artifact contract."""
+    storage = _get_storage()
+    try:
+        job = storage.get_job(job_id)
+    finally:
+        storage.close()
+
+    if job is None:
+        raise typer.BadParameter(f"Job {job_id} not found")
+
+    artifact_lines = [f"- {key}: {value}" for key, value in sorted(job.produced_artifacts.items())] or ["- <none>"]
+    console.print(
+        Panel(
+            "\n".join(
+                [
+                    f"job_id={job.job_id}",
+                    f"job_type={job.job_type}",
+                    f"status={job.status}",
+                    f"scope_id={job.scope_id if job.scope_id is not None else '-'}",
+                    f"run_id={job.run_id if job.run_id is not None else '-'}",
+                    f"progress={job.progress}",
+                    f"error={job.error or '-'}",
+                    "artifacts:",
+                    *artifact_lines,
+                ]
+            )
+        )
+    )
+
+
 @app.command("create-monitor-task")
 def create_monitor_task(
     task_name: str = typer.Option(..., "--task-name", help="Stable task name"),
@@ -348,12 +724,15 @@ def create_monitor_task(
     output: str = typer.Option("", "--output", help="Optional explicit output YAML path"),
 ):
     """Create a first-class monitor task artifact for agent/human workflows."""
+    from web_listening.blocks.job_orchestration import persist_job_result
     from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
     from web_listening.config import settings
 
+    started = datetime.now(timezone.utc)
+    normalized_site_url = _validate_http_url(site_url, field_name="site_url")
     task = build_monitor_task(
         task_name=task_name,
-        site_url=site_url,
+        site_url=normalized_site_url,
         task_description=task_description,
         goal=goal,
         focus_topics=_csv_list(focus_topics),
@@ -368,7 +747,18 @@ def create_monitor_task(
     output_path = Path(output) if output else build_default_task_path(task_name, data_dir=settings.data_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(render_yaml_text(task), encoding="utf-8")
-    console.print(Panel(f"[green]Saved monitor task:[/green] {output_path}"))
+    job = persist_job_result(
+        job_type="monitor_task.create",
+        produced_artifacts={
+            "task_path": str(output_path),
+            "task_name": task.task_name,
+            "site_url": task.site_url,
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
+    console.print(Panel(f"[green]Saved monitor task:[/green] {output_path}\nJob ID: {job.job_id}"))
 
 
 @app.command("export-tracking-report")

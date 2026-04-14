@@ -11,6 +11,7 @@ from web_listening.models import (
     CrawlScope,
     Document,
     FileObservation,
+    Job,
     PageEdge,
     PageSnapshot,
     Site,
@@ -120,6 +121,22 @@ class Storage:
                 site_ids TEXT DEFAULT '[]',
                 summary_md TEXT DEFAULT '',
                 change_count INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_type TEXT NOT NULL,
+                status TEXT DEFAULT 'queued',
+                progress INTEGER DEFAULT 0,
+                scope_id INTEGER,
+                run_id INTEGER,
+                produced_artifacts_json TEXT DEFAULT '{}',
+                error TEXT DEFAULT '',
+                accepted_at TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                FOREIGN KEY (scope_id) REFERENCES crawl_scopes(id),
+                FOREIGN KEY (run_id) REFERENCES crawl_runs(id)
             );
 
             CREATE TABLE IF NOT EXISTS crawl_scopes (
@@ -256,6 +273,8 @@ class Storage:
         self._ensure_column("documents", "last_modified", "TEXT DEFAULT ''")
         self._ensure_column("documents", "content_md_status", "TEXT DEFAULT 'pending'")
         self._ensure_column("documents", "content_md_updated_at", "TEXT")
+        self._ensure_column("jobs", "produced_artifacts_json", "TEXT DEFAULT '{}'")
+        self._ensure_column("jobs", "accepted_at", "TEXT")
         self._ensure_column("file_observations", "document_id", "INTEGER")
         self._ensure_column("file_observations", "tracked_local_path", "TEXT DEFAULT ''")
         self.conn.commit()
@@ -737,6 +756,119 @@ class Storage:
         ).fetchall()
         return [self._row_to_analysis(r) for r in rows]
 
+    # ── Jobs ───────────────────────────────────────────────────────────────
+
+    def add_job(self, job: Job) -> Job:
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self.conn.execute(
+            """
+            INSERT INTO jobs (
+                job_type, status, progress, scope_id, run_id,
+                produced_artifacts_json, error, accepted_at, started_at, finished_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job.job_type,
+                job.status,
+                job.progress,
+                job.scope_id,
+                job.run_id,
+                json.dumps(job.produced_artifacts),
+                job.error,
+                job.accepted_at.isoformat() if job.accepted_at else now,
+                job.started_at.isoformat() if job.started_at else None,
+                job.finished_at.isoformat() if job.finished_at else None,
+            ),
+        )
+        self.conn.commit()
+        return self.get_job(cur.lastrowid)
+
+    def update_job(self, job_id: int, **fields) -> Optional[Job]:
+        if not fields:
+            return self.get_job(job_id)
+        assignments = []
+        params = []
+        for key, value in fields.items():
+            column_name = "produced_artifacts_json" if key == "produced_artifacts" else key
+            assignments.append(f"{column_name} = ?")
+            if isinstance(value, datetime):
+                params.append(value.isoformat())
+            elif key == "produced_artifacts":
+                params.append(json.dumps(value or {}))
+            else:
+                params.append(value)
+        params.append(job_id)
+        self.conn.execute(
+            f"UPDATE jobs SET {', '.join(assignments)} WHERE job_id = ?",
+            params,
+        )
+        self.conn.commit()
+        return self.get_job(job_id)
+
+    def get_job(self, job_id: int) -> Optional[Job]:
+        row = self.conn.execute(
+            "SELECT * FROM jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_job(row)
+
+    def list_jobs(
+        self,
+        *,
+        scope_id: Optional[int] = None,
+        job_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Job]:
+        query = "SELECT * FROM jobs WHERE 1=1"
+        params: list[object] = []
+        if scope_id is not None:
+            query += " AND scope_id = ?"
+            params.append(scope_id)
+        if job_type:
+            query += " AND job_type = ?"
+            params.append(job_type)
+        query += " ORDER BY COALESCE(finished_at, started_at, accepted_at) DESC, job_id DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(query, params).fetchall()
+        return [self._row_to_job(row) for row in rows]
+
+    def get_latest_job(self, *, scope_id: int, job_type: str) -> Optional[Job]:
+        row = self.conn.execute(
+            """
+            SELECT * FROM jobs
+            WHERE scope_id = ? AND job_type = ?
+            ORDER BY COALESCE(finished_at, started_at, accepted_at) DESC, job_id DESC
+            LIMIT 1
+            """,
+            (scope_id, job_type),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_job(row)
+
+    def _row_to_job(self, row) -> Job:
+        try:
+            produced_artifacts = json.loads(row["produced_artifacts_json"] or "{}")
+        except json.JSONDecodeError:
+            produced_artifacts = {}
+        if not isinstance(produced_artifacts, dict):
+            produced_artifacts = {}
+        return Job(
+            job_id=row["job_id"],
+            job_type=row["job_type"],
+            status=row["status"] or "queued",
+            progress=row["progress"] or 0,
+            scope_id=row["scope_id"],
+            run_id=row["run_id"],
+            produced_artifacts=produced_artifacts,
+            error=row["error"] or "",
+            accepted_at=_parse_dt(row["accepted_at"]),
+            started_at=_parse_dt(row["started_at"]),
+            finished_at=_parse_dt(row["finished_at"]),
+        )
+
     # ── Recursive Scopes ──────────────────────────────────────────────────
 
     def add_crawl_scope(self, scope: CrawlScope) -> CrawlScope:
@@ -1055,6 +1187,13 @@ class Storage:
         rows = self.conn.execute(
             "SELECT * FROM page_snapshots WHERE scope_id = ? AND run_id = ? ORDER BY id ASC",
             (scope_id, run_id),
+        ).fetchall()
+        return [self._row_to_page_snapshot(row) for row in rows]
+
+    def list_scope_page_snapshots(self, scope_id: int) -> List[PageSnapshot]:
+        rows = self.conn.execute(
+            "SELECT * FROM page_snapshots WHERE scope_id = ? ORDER BY captured_at ASC, id ASC",
+            (scope_id,),
         ).fetchall()
         return [self._row_to_page_snapshot(row) for row in rows]
 

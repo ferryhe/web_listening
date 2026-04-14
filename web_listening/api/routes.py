@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 
-from web_listening.blocks.storage import Storage
+from web_listening.blocks.job_orchestration import execute_job, persist_job_result, resolve_scope_plan_path
 from web_listening.blocks.rescue import run_site_rescue
+from web_listening.blocks.storage import Storage
 from web_listening.config import settings
-from web_listening.models import AnalysisReport, Change, Document, Site, SiteSnapshot
+from web_listening.models import AnalysisReport, Change, Document, Job, Site, SiteSnapshot
 
 router = APIRouter()
 
@@ -27,8 +29,75 @@ def _validate_url(url: str) -> None:
         )
 
 
+def _resolve_data_root() -> Path:
+    return Path(settings.data_dir).resolve()
+
+
+def _ensure_path_within_data_root(path: Path) -> Path:
+    resolved = path.resolve()
+    data_root = _resolve_data_root()
+    try:
+        resolved.relative_to(data_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Path `{path}` must stay under `{data_root}`") from exc
+    return resolved
+
+
+def _safe_output_path(raw_path: str | None, *, default_path: Path) -> Path:
+    if not raw_path:
+        path = default_path
+    else:
+        candidate = Path(raw_path)
+        path = candidate if candidate.is_absolute() else _resolve_data_root() / candidate
+    if ".." in path.parts:
+        raise HTTPException(status_code=422, detail="Path traversal is not allowed")
+    return _ensure_path_within_data_root(path)
+
+
+def _safe_input_path(raw_path: str | None) -> Path | None:
+    if not raw_path:
+        return None
+    candidate = Path(raw_path)
+    path = candidate if candidate.is_absolute() else _resolve_data_root() / candidate
+    if ".." in path.parts:
+        raise HTTPException(status_code=422, detail="Path traversal is not allowed")
+    resolved = _ensure_path_within_data_root(path)
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail=f"Path `{resolved}` not found")
+    return resolved
+
+
 def get_storage() -> Storage:
     return Storage(settings.db_path)
+
+
+def _require_scope(scope_id: int):
+    storage = get_storage()
+    try:
+        scope = storage.get_crawl_scope(scope_id)
+        if scope is None:
+            raise HTTPException(status_code=404, detail="Monitor scope not found")
+        return scope
+    finally:
+        storage.close()
+
+
+def _resolve_scope_path(scope_id: int) -> Path:
+    scope = _require_scope(scope_id)
+    try:
+        return resolve_scope_plan_path(scope_id, scope=scope, data_dir=settings.data_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _read_text_if_present(path_value: str) -> str:
+    path = _ensure_path_within_data_root(Path(path_value))
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Artifact `{path}` not found")
+    max_bytes = 512 * 1024
+    if path.stat().st_size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Artifact `{path}` is too large to inline")
+    return path.read_text(encoding="utf-8")
 
 
 # ── Request bodies ──────────────────────────────────────────────────────────
@@ -90,6 +159,54 @@ class RescueCheckResponse(BaseModel):
     resolved: bool
     attempts: List[RescueAttemptResponse]
     winning_snapshot: Optional[SiteSnapshot] = None
+
+
+class CreateMonitorTaskRequest(BaseModel):
+    task_name: str
+    site_url: str
+    task_description: str
+    goal: str
+    focus_topics: List[str] = Field(default_factory=list)
+    must_track_prefixes: List[str] = Field(default_factory=list)
+    exclude_prefixes: List[str] = Field(default_factory=list)
+    prefer_file_types: List[str] = Field(default_factory=list)
+    must_download_patterns: List[str] = Field(default_factory=list)
+    handoff_requirements: List[str] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+    report_style: str = "briefing"
+    output_path: Optional[str] = None
+
+
+class BootstrapScopeRequest(BaseModel):
+    download_files: bool = False
+    refresh_existing: bool = False
+    max_depth: Optional[int] = None
+    max_pages: Optional[int] = None
+    max_files: Optional[int] = None
+    report_path: Optional[str] = None
+    summary_path: Optional[str] = None
+    include_summary: bool = False
+
+
+class RunScopeRequest(BaseModel):
+    download_files: bool = False
+    max_depth: Optional[int] = None
+    max_pages: Optional[int] = None
+    max_files: Optional[int] = None
+    report_path: Optional[str] = None
+
+
+class ReportScopeRequest(BaseModel):
+    task_path: Optional[str] = None
+    run_id: Optional[int] = None
+    output_path: Optional[str] = None
+    output_format: str = "md"
+
+
+class ArtifactEnvelope(BaseModel):
+    job: Job
+    artifact_path: str
+    content: str
 
 
 # ── Sites ───────────────────────────────────────────────────────────────────
@@ -215,6 +332,210 @@ def deactivate_site(site_id: int):
         storage.deactivate_site(site_id)
     finally:
         storage.close()
+
+
+@router.post("/monitor-tasks", response_model=Job, status_code=201)
+def create_monitor_task(body: CreateMonitorTaskRequest):
+    from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
+
+    _validate_url(body.site_url)
+    started = datetime.now(timezone.utc)
+    task = build_monitor_task(
+        task_name=body.task_name,
+        site_url=body.site_url.strip(),
+        task_description=body.task_description,
+        goal=body.goal,
+        focus_topics=body.focus_topics,
+        must_track_prefixes=body.must_track_prefixes,
+        exclude_prefixes=body.exclude_prefixes,
+        prefer_file_types=body.prefer_file_types,
+        must_download_patterns=body.must_download_patterns,
+        handoff_requirements=body.handoff_requirements,
+        notes=body.notes,
+        report_style=body.report_style,
+    )
+    output_path = _safe_output_path(
+        body.output_path,
+        default_path=build_default_task_path(task.task_name, data_dir=settings.data_dir),
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(render_yaml_text(task), encoding="utf-8")
+    return persist_job_result(
+        job_type="monitor_task.create",
+        produced_artifacts={
+            "task_path": str(output_path),
+            "task_name": task.task_name,
+            "site_url": task.site_url,
+        },
+        accepted_at=started,
+        started_at=started,
+        finished_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/jobs/{job_id}", response_model=Job)
+def get_job(job_id: int):
+    storage = get_storage()
+    try:
+        job = storage.get_job(job_id)
+    finally:
+        storage.close()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@router.post("/monitor-scopes/{scope_id}/bootstrap", response_model=Job, status_code=201)
+def bootstrap_monitor_scope(scope_id: int, body: BootstrapScopeRequest):
+    from web_listening.blocks.staged_workflow import bootstrap_scope as staged_bootstrap_scope
+
+    scope_path = _resolve_scope_path(scope_id)
+
+    def _runner():
+        artifacts = staged_bootstrap_scope(
+            scope_path=scope_path,
+            download_files=body.download_files,
+            refresh_existing=body.refresh_existing,
+            max_depth=body.max_depth,
+            max_pages=body.max_pages,
+            max_files=body.max_files,
+            report_path=body.report_path,
+            summary_path=body.summary_path,
+            include_summary=body.include_summary,
+        )
+        first = artifacts.results[0] if artifacts.results else None
+        return {
+            "scope_id": first.scope_id if first else scope_id,
+            "run_id": first.run_id if first else None,
+            "produced_artifacts": {
+                "scope_path": str(scope_path),
+                "report_path": str(artifacts.report_path),
+                **({"summary_path": str(artifacts.summary_path)} if artifacts.summary_path else {}),
+            },
+        }
+
+    try:
+        return execute_job(job_type="scope.bootstrap", scope_id=scope_id, runner=_runner)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/monitor-scopes/{scope_id}/run", response_model=Job, status_code=201)
+def run_monitor_scope(scope_id: int, body: RunScopeRequest):
+    from web_listening.blocks.staged_workflow import run_scope as staged_run_scope
+
+    scope_path = _resolve_scope_path(scope_id)
+
+    def _runner():
+        artifacts = staged_run_scope(
+            scope_path=scope_path,
+            download_files=body.download_files,
+            max_depth=body.max_depth,
+            max_pages=body.max_pages,
+            max_files=body.max_files,
+            report_path=body.report_path,
+        )
+        return {
+            "scope_id": artifacts.result.scope_id or scope_id,
+            "run_id": artifacts.result.run_id,
+            "produced_artifacts": {
+                "scope_path": str(scope_path),
+                "report_path": str(artifacts.report_path),
+            },
+        }
+
+    try:
+        return execute_job(job_type="scope.run", scope_id=scope_id, runner=_runner)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/monitor-scopes/{scope_id}/report", response_model=Job, status_code=201)
+def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
+    from web_listening.blocks.staged_workflow import report_scope as staged_report_scope
+
+    normalized_format = (body.output_format or "md").strip().lower()
+    if normalized_format not in {"md", "yaml"}:
+        raise HTTPException(status_code=422, detail="output_format must be one of: md, yaml")
+
+    scope_path = _resolve_scope_path(scope_id)
+    resolved_task_path = str(_safe_input_path(body.task_path)) if body.task_path else None
+    resolved_output_path = (
+        str(_safe_output_path(body.output_path, default_path=settings.data_dir / "reports" / f"tracking_report_scope_{scope_id}.{normalized_format}"))
+        if body.output_path
+        else None
+    )
+
+    def _runner():
+        artifacts = staged_report_scope(
+            scope_path=scope_path,
+            task_path=resolved_task_path,
+            run_id=body.run_id,
+            output_path=resolved_output_path,
+            output_format=normalized_format,
+        )
+        return {
+            "scope_id": scope_id,
+            "run_id": artifacts.report.run_id,
+            "produced_artifacts": {
+                "scope_path": str(scope_path),
+                "task_path": body.task_path or "",
+                "output_path": str(artifacts.output_path),
+                "output_format": artifacts.output_format,
+            },
+        }
+
+    try:
+        return execute_job(job_type="scope.report", scope_id=scope_id, runner=_runner)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/monitor-scopes/{scope_id}/reports/latest", response_model=ArtifactEnvelope)
+def get_latest_scope_report(scope_id: int):
+    storage = get_storage()
+    try:
+        job = storage.get_latest_job(scope_id=scope_id, job_type="scope.report")
+    finally:
+        storage.close()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Report job not found")
+    artifact_path = str(job.produced_artifacts.get("output_path") or "")
+    if not artifact_path:
+        raise HTTPException(status_code=404, detail="Report artifact path missing")
+    return ArtifactEnvelope(job=job, artifact_path=artifact_path, content=_read_text_if_present(artifact_path))
+
+
+@router.get("/monitor-scopes/{scope_id}/manifest/latest", response_model=ArtifactEnvelope)
+def get_latest_scope_manifest(scope_id: int):
+    from web_listening.blocks.staged_workflow import export_manifest as staged_export_manifest
+
+    storage = get_storage()
+    try:
+        job = storage.get_latest_job(scope_id=scope_id, job_type="scope.manifest")
+    finally:
+        storage.close()
+    if job is None:
+        scope_path = _resolve_scope_path(scope_id)
+        started = datetime.now(timezone.utc)
+        artifacts = staged_export_manifest(scope_path=scope_path)
+        job = persist_job_result(
+            job_type="scope.manifest",
+            scope_id=scope_id,
+            run_id=artifacts.manifest.run_id,
+            produced_artifacts={
+                "scope_path": str(scope_path),
+                "yaml_path": str(artifacts.yaml_path),
+                "report_path": str(artifacts.report_path),
+            },
+            accepted_at=started,
+            started_at=started,
+            finished_at=datetime.now(timezone.utc),
+        )
+    artifact_path = str(job.produced_artifacts.get("yaml_path") or "")
+    if not artifact_path:
+        raise HTTPException(status_code=404, detail="Manifest artifact path missing")
+    return ArtifactEnvelope(job=job, artifact_path=artifact_path, content=_read_text_if_present(artifact_path))
 
 
 @router.post("/sites/{site_id}/check")

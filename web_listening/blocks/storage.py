@@ -2,7 +2,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Final, List, Optional
 
 from web_listening.models import (
     AnalysisReport,
@@ -802,17 +802,42 @@ class Storage:
         self.conn.commit()
         return self.get_job(cur.lastrowid)
 
+    _UPDATABLE_JOB_FIELDS: Final[frozenset[str]] = frozenset(
+        [
+            "status",
+            "stage",
+            "stage_message",
+            "progress",
+            "scope_id",
+            "run_id",
+            "produced_artifacts",
+            "artifact_summary",
+            "error",
+            "error_code",
+            "error_detail",
+            "is_retryable",
+            "accepted_at",
+            "started_at",
+            "finished_at",
+        ]
+    )
+
+    _JOB_FIELD_COLUMN_MAP: Final[dict[str, str]] = {
+        "produced_artifacts": "produced_artifacts_json",
+        "artifact_summary": "artifact_summary_json",
+        "error_detail": "error_detail_json",
+    }
+
     def update_job(self, job_id: int, **fields) -> Optional[Job]:
         if not fields:
             return self.get_job(job_id)
+        unknown = set(fields) - self._UPDATABLE_JOB_FIELDS
+        if unknown:
+            raise ValueError(f"Unknown job fields: {sorted(unknown)}")
         assignments = []
         params = []
         for key, value in fields.items():
-            column_name = {
-                "produced_artifacts": "produced_artifacts_json",
-                "artifact_summary": "artifact_summary_json",
-                "error_detail": "error_detail_json",
-            }.get(key, key)
+            column_name = self._JOB_FIELD_COLUMN_MAP.get(key, key)
             assignments.append(f"{column_name} = ?")
             if isinstance(value, datetime):
                 params.append(value.isoformat())

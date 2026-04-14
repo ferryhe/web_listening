@@ -154,12 +154,13 @@ def execute_job(*, job_type: str, scope_id: int | None, runner: Callable[..., di
         storage.close()
 
     reporter = JobProgressReporter(job_id=job.job_id)
-    reporter.update(
+    started_at = datetime.now(timezone.utc)
+    job = reporter.update(
         status="running",
         stage="loading_scope",
         stage_message="Loading scope inputs and preparing execution.",
         progress=5,
-        started_at=accepted_at,
+        started_at=started_at,
     )
 
     try:

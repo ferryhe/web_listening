@@ -4,7 +4,7 @@ from pathlib import Path
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text as render_scope_yaml_text
 from web_listening.blocks.monitor_task import build_monitor_task, render_yaml_text as render_task_yaml_text
 from web_listening.blocks.storage import Storage
-from web_listening.blocks.tracking_report import build_tracking_report, render_markdown, render_yaml_text
+from web_listening.blocks.tracking_report import build_tracking_report, render_markdown, render_yaml_text, set_report_output_path
 from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, PageSnapshot, Site
 
 
@@ -56,6 +56,32 @@ def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_
         must_track_prefixes=["/research"],
         prefer_file_types=["pdf"],
         must_download_patterns=["report"],
+        severity_policy=[
+            {
+                "rule_type": "prefix",
+                "match_value": "/research",
+                "severity": "high",
+                "reason_template": "Research sections changed and require review.",
+                "recommended_action": "review_research_changes",
+                "weight": 40,
+            },
+            {
+                "rule_type": "file_type",
+                "match_value": "pdf",
+                "severity": "high",
+                "reason_template": "PDF files should be reviewed promptly.",
+                "recommended_action": "open_document_first",
+                "weight": 60,
+            },
+            {
+                "rule_type": "keyword",
+                "match_value": "Quarterly",
+                "severity": "critical",
+                "reason_template": "Quarterly updates need immediate escalation.",
+                "recommended_action": "escalate_immediately",
+                "weight": 80,
+            },
+        ],
         alert_policy={"channels": ["email"]},
         human_review_rules=["new_file", "missing_page"],
         notes=["Escalate new files quickly."],
@@ -341,18 +367,35 @@ def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_
     assert [item["url"] for item in report.new_files] == ["https://example.com/files/update.pdf"]
     assert [item["url"] for item in report.changed_files] == ["https://example.com/files/report.pdf"]
     assert [item["url"] for item in report.missing_files] == ["https://example.com/files/missing.pdf"]
-    assert report.priority_summary["highest_priority"] == "high"
-    assert report.priority_summary["severity_counts"]["high"] == 1
+    assert report.priority_summary["highest_priority"] == "critical"
+    assert report.priority_summary["severity_counts"]["critical"] == 1
+    assert report.priority_summary["severity_counts"]["high"] >= 1
     assert report.review_queue[0]["change_type"] == "new_file"
-    assert any(item["kind"] == "monitor_scope" for item in report.artifact_index)
-    assert any(item["kind"] == "monitor_task" for item in report.artifact_index)
-    assert sum(1 for item in report.artifact_index if item["kind"] == "document") == 2
+    assert report.review_queue[0]["severity"] == "critical"
+    assert report.review_queue[0]["entity_type"] == "file"
+    assert report.review_queue[0]["entity_url"] == "https://example.com/files/update.pdf"
+    assert report.review_queue[0]["recommended_action"] == "escalate_immediately"
+    assert report.review_queue[0]["matched_policy"]["rule_type"] == "keyword"
+    assert report.review_queue[0]["preferred_display_path"].endswith("update.pdf")
+    assert report.next_action == "escalate_review_queue"
+    assert report.escalation_needed is True
+    assert report.review_required_count == len(report.review_queue)
+    assert report.high_priority_count >= 3
+    assert any(item["plane"] == "control_plane" and item["kind"] == "monitor_scope" for item in report.artifact_index)
+    assert any(item["plane"] == "control_plane" and item["kind"] == "monitor_task" for item in report.artifact_index)
+    assert any(item["plane"] == "status_plane" and item["kind"] == "run_metadata" for item in report.artifact_index)
+    assert any(item["plane"] == "explanation_plane" and item["kind"] == "tracking_report" for item in report.artifact_index)
+    assert sum(1 for item in report.artifact_index if item["plane"] == "evidence_plane" and item["kind"] == "document") == 2
+    assert all("recommended_reader" in item for item in report.artifact_index)
     assert "Scope identity" in markdown
     assert "Priority Summary" in markdown
     assert "Review Queue" in markdown
     assert "Artifact Index" in markdown
+    assert "control_plane" in markdown
     assert "new_pages:" in yaml_text
-    assert "priority_summary:" in yaml_text
+    assert "review_required_count:" in yaml_text
+    assert "high_priority_count:" in yaml_text
+    assert "matched_policy:" in yaml_text
     assert "artifact_index:" in yaml_text
 
 
@@ -390,6 +433,10 @@ def test_build_tracking_report_without_task_uses_scope_context_only(tmp_path: Pa
     assert report.goal == "Keep research and publication updates."
     assert report.priority_summary == {}
     assert report.review_queue == []
+    assert report.next_action == "attach_monitor_task"
+    assert report.escalation_needed is False
+    assert report.review_required_count == 0
+    assert report.high_priority_count == 0
     assert "Task Context" not in markdown
     assert "Scope Context" in markdown
 
@@ -482,3 +529,335 @@ def test_build_tracking_report_rejects_task_for_different_site(tmp_path: Path):
         storage.close()
 
     assert raised is True
+
+
+def test_build_tracking_report_failed_run_sets_status_driven_next_action(tmp_path: Path):
+    classification_path, selection_path = _write_scope_inputs(tmp_path)
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+    storage = Storage(tmp_path / "tracking-failed-run.db")
+    try:
+        site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+        scope = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/research", "/news"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        run = storage.add_crawl_run(
+            CrawlRun(scope_id=scope.id, run_type="incremental", status="failed", error_message="network timeout")
+        )
+        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": run.id, "is_initialized": True}))
+
+        report = build_tracking_report(scope_path, storage=storage, run_id=run.id)
+    finally:
+        storage.close()
+
+    assert report.run_status == "failed"
+    assert report.next_action == "investigate_failed_run"
+    assert report.escalation_needed is True
+    assert report.review_required_count == 0
+    assert report.high_priority_count == 0
+
+
+def test_build_tracking_report_low_priority_only_sets_review_action_and_report_path(tmp_path: Path):
+    classification_path, selection_path = _write_scope_inputs(tmp_path)
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+
+    monitor_task = build_monitor_task(
+        task_name="demo-low-priority-watch",
+        site_url="https://example.com/",
+        task_description="Track research changes with low-priority defaults.",
+        goal="Review routine page updates.",
+    )
+    task_path = tmp_path / "monitor_task.yaml"
+    task_path.write_text(render_task_yaml_text(monitor_task), encoding="utf-8")
+
+    storage = Storage(tmp_path / "tracking-low-priority.db")
+    try:
+        site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+        scope = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/research", "/news"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        bootstrap_run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed"))
+        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": bootstrap_run.id, "is_initialized": True}))
+        rerun = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="incremental", status="completed", pages_seen=1))
+
+        changed_page = storage.upsert_tracked_page(
+            scope_id=scope.id,
+            canonical_url="https://example.com/research/page-a",
+            depth=1,
+            run_id=bootstrap_run.id,
+        )
+        storage.add_page_snapshot(
+            PageSnapshot(
+                scope_id=scope.id,
+                page_id=changed_page.id,
+                run_id=bootstrap_run.id,
+                content_hash="hash-old",
+                final_url="https://example.com/research/page-a",
+            )
+        )
+        changed_snapshot = storage.add_page_snapshot(
+            PageSnapshot(
+                scope_id=scope.id,
+                page_id=changed_page.id,
+                run_id=rerun.id,
+                content_hash="hash-new",
+                final_url="https://example.com/research/page-a",
+            )
+        )
+        storage.upsert_tracked_page(
+            scope_id=scope.id,
+            canonical_url="https://example.com/research/page-a",
+            depth=1,
+            run_id=rerun.id,
+            latest_hash="hash-new",
+            latest_snapshot_id=changed_snapshot.id,
+        )
+
+        scope_plan.allowed_page_prefixes = ["/news", "/research"]
+        scope_plan.scope_id = scope.id
+        scope_path = tmp_path / "monitor_scope.yaml"
+        scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+        report = build_tracking_report(scope_path, storage=storage, run_id=rerun.id, task_path=task_path)
+        set_report_output_path(report, tmp_path / "reports" / "tracking_report_demo.md")
+    finally:
+        storage.close()
+
+    assert report.next_action == "review_low_priority_changes"
+    assert report.escalation_needed is False
+    assert report.review_required_count == 1
+    assert report.high_priority_count == 0
+    report_artifact = next(item for item in report.artifact_index if item["kind"] == "tracking_report")
+    assert report_artifact["path"].endswith("tracking_report_demo.md")
+    assert report_artifact["recommended_reader"] == "markdown"
+
+
+def test_build_tracking_report_handles_bad_severity_policy_config_with_fallback(tmp_path: Path):
+    classification_path, selection_path = _write_scope_inputs(tmp_path)
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+
+    monitor_task = build_monitor_task(
+        task_name="demo-bad-policy-watch",
+        site_url="https://example.com/",
+        task_description="Track research file changes.",
+        goal="Keep bad severity policy config from breaking report generation.",
+        severity_policy=[
+            {
+                "rule_type": "keyword",
+                "match_value": "Quarterly",
+                "severity": "critical",
+                "weight": "not-a-number",
+                "reason_template": "bad {missing_key}",
+                "recommended_action": "escalate_immediately",
+            }
+        ],
+        change_severity_rules={"new_file": "high"},
+    )
+    task_path = tmp_path / "monitor_task_bad_policy.yaml"
+    task_path.write_text(render_task_yaml_text(monitor_task), encoding="utf-8")
+
+    storage = Storage(tmp_path / "tracking-bad-policy.db")
+    try:
+        site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+        scope = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/research", "/news"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        bootstrap_run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed"))
+        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": bootstrap_run.id, "is_initialized": True}))
+        rerun = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="incremental", status="completed", files_seen=1))
+
+        new_page = storage.upsert_tracked_page(
+            scope_id=scope.id,
+            canonical_url="https://example.com/news/new-page",
+            depth=1,
+            run_id=rerun.id,
+        )
+        storage.add_page_snapshot(
+            PageSnapshot(
+                scope_id=scope.id,
+                page_id=new_page.id,
+                run_id=rerun.id,
+                content_hash="hash-fresh",
+                final_url="https://example.com/news/new-page",
+            )
+        )
+        new_file_doc = storage.add_document(
+            Document(
+                site_id=site.id,
+                title="Quarterly Update",
+                url="https://example.com/files/update.pdf",
+                download_url="https://example.com/files/update.pdf",
+                institution="Demo",
+                page_url="https://example.com/news/new-page",
+                downloaded_at=datetime(2026, 4, 8, 12, 4, 30, tzinfo=timezone.utc),
+                local_path="data/downloads/_blobs/cd/update.pdf",
+                tracked_local_path="data/downloads/_tracked/example.com/news/new-page/update.pdf",
+                doc_type="pdf",
+                sha256="sha-update",
+                content_type="application/pdf",
+            )
+        )
+        new_file = storage.upsert_tracked_file(
+            scope_id=scope.id,
+            canonical_url="https://example.com/files/update.pdf",
+            run_id=rerun.id,
+            latest_document_id=new_file_doc.id,
+            latest_sha256=new_file_doc.sha256,
+        )
+        storage.add_file_observation(
+            FileObservation(
+                scope_id=scope.id,
+                run_id=rerun.id,
+                page_id=new_page.id,
+                file_id=new_file.id,
+                document_id=new_file_doc.id,
+                discovered_url=new_file.canonical_url,
+                download_url=new_file.canonical_url,
+                tracked_local_path=new_file_doc.tracked_local_path,
+            )
+        )
+        storage.conn.commit()
+
+        scope_plan.allowed_page_prefixes = ["/news", "/research"]
+        scope_plan.scope_id = scope.id
+        scope_path = tmp_path / "monitor_scope.yaml"
+        scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+        report = build_tracking_report(scope_path, storage=storage, run_id=rerun.id, task_path=task_path)
+    finally:
+        storage.close()
+
+    assert report.review_queue[0]["severity"] == "critical"
+    assert report.review_queue[0]["policy_weight"] == 0
+    assert report.review_queue[0]["reason"] == "new_file matched severity policy `keyword` at `critical`."
+
+
+def test_build_tracking_report_sorts_same_severity_by_policy_weight_then_entity_url(tmp_path: Path):
+    classification_path, selection_path = _write_scope_inputs(tmp_path)
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+
+    monitor_task = build_monitor_task(
+        task_name="demo-weighted-policy-watch",
+        site_url="https://example.com/",
+        task_description="Track policy-sorted page changes.",
+        goal="Sort same-severity queue entries by policy weight, then URL.",
+        severity_policy=[
+            {
+                "rule_type": "prefix",
+                "match_value": "/research/a",
+                "severity": "high",
+                "recommended_action": "review_a",
+                "weight": 10,
+            },
+            {
+                "rule_type": "prefix",
+                "match_value": "/research/b",
+                "severity": "high",
+                "recommended_action": "review_b",
+                "weight": 50,
+            },
+            {
+                "rule_type": "change_type",
+                "match_value": "changed_page",
+                "severity": "high",
+                "recommended_action": "review_generic",
+                "weight": 10,
+            },
+        ],
+    )
+    task_path = tmp_path / "monitor_task_weighted.yaml"
+    task_path.write_text(render_task_yaml_text(monitor_task), encoding="utf-8")
+
+    storage = Storage(tmp_path / "tracking-weighted-policy.db")
+    try:
+        site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+        scope = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/research", "/news"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        bootstrap_run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed"))
+        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": bootstrap_run.id, "is_initialized": True}))
+        rerun = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="incremental", status="completed", pages_seen=3))
+
+        for slug in ("a-page", "b-page", "c-page"):
+            page = storage.upsert_tracked_page(
+                scope_id=scope.id,
+                canonical_url=f"https://example.com/research/{slug}",
+                depth=1,
+                run_id=bootstrap_run.id,
+            )
+            storage.add_page_snapshot(
+                PageSnapshot(
+                    scope_id=scope.id,
+                    page_id=page.id,
+                    run_id=bootstrap_run.id,
+                    content_hash=f"old-{slug}",
+                    final_url=f"https://example.com/research/{slug}",
+                )
+            )
+            changed_snapshot = storage.add_page_snapshot(
+                PageSnapshot(
+                    scope_id=scope.id,
+                    page_id=page.id,
+                    run_id=rerun.id,
+                    content_hash=f"new-{slug}",
+                    final_url=f"https://example.com/research/{slug}",
+                )
+            )
+            storage.upsert_tracked_page(
+                scope_id=scope.id,
+                canonical_url=f"https://example.com/research/{slug}",
+                depth=1,
+                run_id=rerun.id,
+                latest_hash=f"new-{slug}",
+                latest_snapshot_id=changed_snapshot.id,
+            )
+
+        scope_plan.allowed_page_prefixes = ["/news", "/research"]
+        scope_plan.scope_id = scope.id
+        scope_path = tmp_path / "monitor_scope.yaml"
+        scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+        report = build_tracking_report(scope_path, storage=storage, run_id=rerun.id, task_path=task_path)
+    finally:
+        storage.close()
+
+    changed_page_items = [item for item in report.review_queue if item["change_type"] == "changed_page"]
+    assert [item["entity_url"] for item in changed_page_items] == [
+        "https://example.com/research/b-page",
+        "https://example.com/research/a-page",
+        "https://example.com/research/c-page",
+    ]

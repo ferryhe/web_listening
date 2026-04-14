@@ -193,7 +193,7 @@ class Job(BaseModel):
             except json.JSONDecodeError:
                 return {}
             return parsed if isinstance(parsed, dict) else {}
-        return value or {}
+        return value if isinstance(value, dict) else {}
 
 
 class MonitorTask(BaseModel):

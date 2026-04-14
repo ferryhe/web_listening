@@ -20,10 +20,11 @@ def _csv_list(value: str) -> list[str]:
 
 
 def _validate_http_url(value: str, *, field_name: str) -> str:
-    parsed = urlparse((value or "").strip())
+    normalized_value = (value or "").strip()
+    parsed = urlparse(normalized_value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise typer.BadParameter(f"{field_name} must be a valid http or https URL")
-    return value
+    return normalized_value
 
 
 def _get_storage():

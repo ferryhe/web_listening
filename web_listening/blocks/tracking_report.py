@@ -90,9 +90,19 @@ def _severity_rank(severity: str) -> int:
     return {"critical": 0, "high": 1, "medium": 2, "low": 3}.get((severity or "").lower(), 4)
 
 
-def _build_page_change_bundles(storage: Storage, scope_id: int, run_id: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def _build_page_change_bundles(
+    storage: Storage,
+    scope_id: int,
+    run_id: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     tracked_pages = storage.list_tracked_pages(scope_id)
     current_snapshots = {snapshot.page_id: snapshot for snapshot in storage.list_page_snapshots_for_run(scope_id, run_id)}
+    scope_snapshots = storage.list_scope_page_snapshots(scope_id)
+    previous_snapshot_by_page: dict[int, PageSnapshot] = {}
+    for snapshot in scope_snapshots:
+        if snapshot.run_id >= run_id:
+            continue
+        previous_snapshot_by_page[snapshot.page_id] = snapshot
     new_pages: list[dict[str, Any]] = []
     changed_pages: list[dict[str, Any]] = []
     missing_pages: list[dict[str, Any]] = []
@@ -111,8 +121,7 @@ def _build_page_change_bundles(storage: Storage, scope_id: int, run_id: int) -> 
             )
             continue
         if tracked_page.last_seen_run_id == run_id and snapshot is not None:
-            previous_snapshots = [item for item in storage.list_page_snapshots(tracked_page.id) if item.run_id != run_id]
-            previous_snapshot = previous_snapshots[0] if previous_snapshots else None
+            previous_snapshot = previous_snapshot_by_page.get(tracked_page.id or 0)
             if previous_snapshot is not None and previous_snapshot.content_hash != snapshot.content_hash:
                 changed_pages.append(
                     {

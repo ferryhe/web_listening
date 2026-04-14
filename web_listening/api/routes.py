@@ -29,6 +29,44 @@ def _validate_url(url: str) -> None:
         )
 
 
+def _resolve_data_root() -> Path:
+    return Path(settings.data_dir).resolve()
+
+
+def _ensure_path_within_data_root(path: Path) -> Path:
+    resolved = path.resolve()
+    data_root = _resolve_data_root()
+    try:
+        resolved.relative_to(data_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Path `{path}` must stay under `{data_root}`") from exc
+    return resolved
+
+
+def _safe_output_path(raw_path: str | None, *, default_path: Path) -> Path:
+    if not raw_path:
+        path = default_path
+    else:
+        candidate = Path(raw_path)
+        path = candidate if candidate.is_absolute() else _resolve_data_root() / candidate
+    if ".." in path.parts:
+        raise HTTPException(status_code=422, detail="Path traversal is not allowed")
+    return _ensure_path_within_data_root(path)
+
+
+def _safe_input_path(raw_path: str | None) -> Path | None:
+    if not raw_path:
+        return None
+    candidate = Path(raw_path)
+    path = candidate if candidate.is_absolute() else _resolve_data_root() / candidate
+    if ".." in path.parts:
+        raise HTTPException(status_code=422, detail="Path traversal is not allowed")
+    resolved = _ensure_path_within_data_root(path)
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail=f"Path `{resolved}` not found")
+    return resolved
+
+
 def get_storage() -> Storage:
     return Storage(settings.db_path)
 
@@ -53,9 +91,12 @@ def _resolve_scope_path(scope_id: int) -> Path:
 
 
 def _read_text_if_present(path_value: str) -> str:
-    path = Path(path_value)
+    path = _ensure_path_within_data_root(Path(path_value))
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Artifact `{path}` not found")
+    max_bytes = 512 * 1024
+    if path.stat().st_size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Artifact `{path}` is too large to inline")
     return path.read_text(encoding="utf-8")
 
 
@@ -301,7 +342,7 @@ def create_monitor_task(body: CreateMonitorTaskRequest):
     started = datetime.now(timezone.utc)
     task = build_monitor_task(
         task_name=body.task_name,
-        site_url=body.site_url,
+        site_url=body.site_url.strip(),
         task_description=body.task_description,
         goal=body.goal,
         focus_topics=body.focus_topics,
@@ -313,7 +354,10 @@ def create_monitor_task(body: CreateMonitorTaskRequest):
         notes=body.notes,
         report_style=body.report_style,
     )
-    output_path = Path(body.output_path) if body.output_path else build_default_task_path(task.task_name, data_dir=settings.data_dir)
+    output_path = _safe_output_path(
+        body.output_path,
+        default_path=build_default_task_path(task.task_name, data_dir=settings.data_dir),
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(render_yaml_text(task), encoding="utf-8")
     return persist_job_result(
@@ -415,13 +459,19 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
         raise HTTPException(status_code=422, detail="output_format must be one of: md, yaml")
 
     scope_path = _resolve_scope_path(scope_id)
+    resolved_task_path = str(_safe_input_path(body.task_path)) if body.task_path else None
+    resolved_output_path = (
+        str(_safe_output_path(body.output_path, default_path=settings.data_dir / "reports" / f"tracking_report_scope_{scope_id}.{normalized_format}"))
+        if body.output_path
+        else None
+    )
 
     def _runner():
         artifacts = staged_report_scope(
             scope_path=scope_path,
-            task_path=body.task_path,
+            task_path=resolved_task_path,
             run_id=body.run_id,
-            output_path=body.output_path,
+            output_path=resolved_output_path,
             output_format=normalized_format,
         )
         return {

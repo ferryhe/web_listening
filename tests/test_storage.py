@@ -251,3 +251,20 @@ def test_add_update_and_list_jobs(storage):
     latest = storage.get_latest_job(scope_id=scope.id, job_type="scope.report")
     assert latest is not None
     assert latest.job_id == saved.job_id
+
+
+def test_job_row_parsing_tolerates_invalid_artifact_json(storage):
+    storage.conn.execute(
+        "INSERT INTO jobs (job_type, status, progress, produced_artifacts_json) VALUES (?, ?, ?, ?)",
+        ("scope.report", "completed", 100, "{not-json"),
+    )
+    storage.conn.execute(
+        "INSERT INTO jobs (job_type, status, progress, produced_artifacts_json) VALUES (?, ?, ?, ?)",
+        ("scope.run", "completed", 100, "[]"),
+    )
+    storage.conn.commit()
+
+    jobs = storage.list_jobs(limit=10)
+    assert len(jobs) == 2
+    assert jobs[0].produced_artifacts == {}
+    assert jobs[1].produced_artifacts == {}

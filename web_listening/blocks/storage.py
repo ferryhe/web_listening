@@ -273,7 +273,7 @@ class Storage:
         self._ensure_column("documents", "last_modified", "TEXT DEFAULT ''")
         self._ensure_column("documents", "content_md_status", "TEXT DEFAULT 'pending'")
         self._ensure_column("documents", "content_md_updated_at", "TEXT")
-        self._ensure_column("jobs", "produced_artifacts_json", "TEXT DEFAULT '{}' ")
+        self._ensure_column("jobs", "produced_artifacts_json", "TEXT DEFAULT '{}'")
         self._ensure_column("jobs", "accepted_at", "TEXT")
         self._ensure_column("file_observations", "document_id", "INTEGER")
         self._ensure_column("file_observations", "tracked_local_path", "TEXT DEFAULT ''")
@@ -849,6 +849,12 @@ class Storage:
         return self._row_to_job(row)
 
     def _row_to_job(self, row) -> Job:
+        try:
+            produced_artifacts = json.loads(row["produced_artifacts_json"] or "{}")
+        except json.JSONDecodeError:
+            produced_artifacts = {}
+        if not isinstance(produced_artifacts, dict):
+            produced_artifacts = {}
         return Job(
             job_id=row["job_id"],
             job_type=row["job_type"],
@@ -856,7 +862,7 @@ class Storage:
             progress=row["progress"] or 0,
             scope_id=row["scope_id"],
             run_id=row["run_id"],
-            produced_artifacts=json.loads(row["produced_artifacts_json"] or "{}"),
+            produced_artifacts=produced_artifacts,
             error=row["error"] or "",
             accepted_at=_parse_dt(row["accepted_at"]),
             started_at=_parse_dt(row["started_at"]),
@@ -1181,6 +1187,13 @@ class Storage:
         rows = self.conn.execute(
             "SELECT * FROM page_snapshots WHERE scope_id = ? AND run_id = ? ORDER BY id ASC",
             (scope_id, run_id),
+        ).fetchall()
+        return [self._row_to_page_snapshot(row) for row in rows]
+
+    def list_scope_page_snapshots(self, scope_id: int) -> List[PageSnapshot]:
+        rows = self.conn.execute(
+            "SELECT * FROM page_snapshots WHERE scope_id = ? ORDER BY captured_at ASC, id ASC",
+            (scope_id,),
         ).fetchall()
         return [self._row_to_page_snapshot(row) for row in rows]
 

@@ -251,6 +251,27 @@ def test_create_monitor_task_endpoint_persists_completed_job(tmp_path, monkeypat
     assert job_response.json()["job_id"] == payload["job_id"]
 
 
+def test_create_monitor_task_endpoint_rejects_output_path_outside_data_dir(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/monitor-tasks",
+        json={
+            "task_name": "demo-watch",
+            "site_url": "https://example.com/",
+            "task_description": "Track research updates.",
+            "goal": "Find new pages and files.",
+            "output_path": "/tmp/outside-task.yaml",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "must stay under" in response.json()["detail"]
+
+
 
 def test_scope_bootstrap_job_endpoint_persists_completed_job(tmp_path, monkeypatch):
     db_path = tmp_path / "api.db"
@@ -542,6 +563,70 @@ selected_sections:
 
     assert response.status_code == 422
     assert response.json()["detail"] == "output_format must be one of: md, yaml"
+
+
+def test_scope_report_endpoint_rejects_task_path_outside_data_dir(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+
+    storage = Storage(db_path)
+    site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+    scope = storage.add_crawl_scope(
+        CrawlScope(
+            site_id=site.id,
+            seed_url="https://example.com/",
+            allowed_origin="https://example.com",
+            allowed_page_prefixes=["/research"],
+            allowed_file_prefixes=["/"],
+            fetch_mode="http",
+            is_initialized=True,
+        )
+    )
+    storage.close()
+
+    classification_path = tmp_path / "classification.yaml"
+    classification_path.write_text(
+        """
+catalog: "dev"
+sites:
+  - site_key: "demo"
+    display_name: "Demo"
+    seed_url: "https://example.com/"
+    homepage_url: "https://example.com/"
+    fetch_mode: "http"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    selection_path = tmp_path / "selection.yaml"
+    selection_path.write_text(
+        """
+site_key: "demo"
+generated_at: "2026-04-07T01:20:54-04:00"
+selection_mode: "manual_with_agent_assist"
+review_status: "recommended_draft"
+business_goal: "Keep research."
+selected_sections:
+  - path: "/research"
+    selection_reason: "Keep research."
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_plan.scope_id = scope.id
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+    client = TestClient(create_app())
+    response = client.post(
+        f"/api/v1/monitor-scopes/{scope.id}/report",
+        json={"task_path": "/tmp/not-allowed-task.yaml"},
+    )
+
+    assert response.status_code == 422
+    assert "must stay under" in response.json()["detail"]
 
 
 

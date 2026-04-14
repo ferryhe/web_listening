@@ -52,6 +52,7 @@ def find_scope_for_plan(storage: Storage, plan: MonitorScopePlan) -> tuple[Site,
             if (
                 scope.allowed_page_prefixes == plan.allowed_page_prefixes
                 and scope.allowed_file_prefixes == plan.allowed_file_prefixes
+                and scope.fetch_mode == plan.fetch_mode
             ):
                 return site, scope
     raise ValueError(f"Could not find a stored crawl scope matching monitor scope for `{plan.site_key}`.")

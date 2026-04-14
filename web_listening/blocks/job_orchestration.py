@@ -104,6 +104,10 @@ def resolve_scope_plan_path(scope_id: int, *, scope: CrawlScope | None = None, d
     if not root.exists():
         raise FileNotFoundError(f"Could not find data directory `{root}` for scope plan lookup.")
 
+    plans_root = root / "plans"
+    search_root = plans_root if plans_root.exists() else root
+    pattern = "monitor_scope_*.yaml" if plans_root.exists() else "*.yaml"
+
     expected_fingerprint = None
     if scope is not None:
         expected_fingerprint = compute_scope_fingerprint(
@@ -113,7 +117,7 @@ def resolve_scope_plan_path(scope_id: int, *, scope: CrawlScope | None = None, d
             fetch_mode=scope.fetch_mode,
         )
 
-    for candidate in sorted(root.rglob("*.yaml")):
+    for candidate in sorted(search_root.rglob(pattern)):
         try:
             plan = load_monitor_scope_plan(candidate)
         except Exception:

@@ -20,6 +20,28 @@ The repo now has two stable artifact commands in the packaged CLI:
 
 ## Core Workflow
 
+### First-time initialization workflow
+
+For a brand-new catalog or a newly imported multi-site list, the skill should **not** jump directly to bootstrap.
+The correct initialization flow is:
+
+1. run a broad smoke or tree-validation pass across the full list
+2. summarize what is reachable, blocked, thin HTML, or section-seed-sensitive
+3. convert that result into **suggested scope profiles** such as:
+   - `blocked_hold`
+   - `thin_html_watch`
+   - `section_news`
+   - `section_documents`
+   - `homepage_standard`
+4. generate draft `section_selection.yaml` and `monitor_scope.yaml` artifacts for each site
+5. send those draft scope artifacts to a human for confirmation or adjustment
+6. only after the human confirms the scope, run bootstrap and later reruns
+
+This rule exists because the first pass is meant to define the monitoring boundary, not just prove that a crawler can fetch a homepage.
+For large lists, draft scope artifacts are **review artifacts first** and only become production monitoring artifacts after confirmation.
+
+### Standard staged workflow after scope confirmation
+
 1. Discover site structure:
    - `.venv\Scripts\python tools\discover_site_sections.py --catalog dev`
 2. Classify the discovered sections:

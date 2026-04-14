@@ -56,9 +56,23 @@ These are the long-lived docs that describe the current system:
 
 - control plane:
   - `monitor_task_<task>_<date>.yaml`
+  - `section_selection_<site>_<date>.yaml`
+  - `monitor_scope_<site>_<date>.yaml`
 - explanation plane:
   - `tracking_report_<site>_<date>.md`
   - `tracking_report_<site>_<date>.yaml`
+
+## Initialization Rule For New Site Lists
+
+For a newly imported site list, the expected flow is:
+
+1. run smoke and tree validation across the full catalog
+2. generate suggested scope profiles and draft `section_selection` / `monitor_scope` artifacts
+3. send the draft scope artifacts for human confirmation
+4. only after confirmation, run bootstrap, reruns, and tracking reports
+
+This is the default initialization rule for both human operators and AI agents.
+Draft scope artifacts are review-stage outputs, not automatically approved production scopes.
 
 ## Legacy Entry Points
 

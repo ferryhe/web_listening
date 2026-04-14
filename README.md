@@ -99,6 +99,34 @@ Main settings:
 The packaged `web-listening` CLI is now the primary entrypoint for the staged tree workflow.
 The older `tools/*.py` scripts still exist, but they should be treated as lower-level compatibility entrypoints.
 
+### First-time initialization rule
+
+For a new site list or a newly imported catalog, **do not jump straight into bootstrap or recurring runs**.
+The initialization sequence should always be:
+
+1. run a broad smoke or tree-validation pass to understand what is reachable and what kind of site shape we are dealing with
+2. classify the sites into suggested scope profiles such as `blocked_hold`, `thin_html_watch`, `section_news`, `section_documents`, or `homepage_standard`
+3. generate draft `section_selection.yaml` and `monitor_scope.yaml` artifacts from those suggestions
+4. send the draft scope artifacts to a human operator for confirmation or adjustment
+5. only after that confirmation, run `bootstrap-scope`, later `run-scope`, and then generate tracking reports
+
+Why this matters:
+
+- first-pass smoke results are often enough to tell us the site is blocked, thin HTML, or should start from a better section seed
+- the correct monitoring boundary is a product decision, not just a crawler default
+- generating a draft scope first avoids wasting bootstrap runs on the wrong homepage or the wrong subtree
+
+### Suggested initialization flow for large catalogs
+
+For large lists such as the 30+ or 37-site smoke catalog, the expected sequence is:
+
+```text
+smoke / tree validation -> suggested scope profiles -> draft section_selection + monitor_scope -> human review -> bootstrap -> rerun -> tracking report
+```
+
+The draft scope artifacts are therefore **review artifacts**, not final production monitoring state.
+They become production-ready only after explicit confirmation.
+
 ### 1. Discover site sections
 
 ```powershell

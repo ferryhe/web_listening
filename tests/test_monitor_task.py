@@ -118,3 +118,50 @@ def test_render_yaml_text_includes_phase_two_contract_fields():
     assert "report_policy:" in yaml_text
     assert "human_review_rules:" in yaml_text
     assert "change_severity_rules:" in yaml_text
+
+
+def test_monitor_task_supports_structured_severity_policy_and_legacy_yaml_defaults(tmp_path: Path):
+    task = build_monitor_task(
+        task_name="delivery-v3-watch",
+        site_url="https://example.com/",
+        task_description="Track delivery-v3 review severity.",
+        goal="Escalate important report files.",
+        severity_policy=[
+            {
+                "rule_type": "prefix",
+                "match_value": "/research/urgent",
+                "severity": "critical",
+                "reason_template": "Urgent research path changed.",
+                "recommended_action": "escalate_immediately",
+                "weight": 90,
+            }
+        ],
+    )
+    task_path = tmp_path / "monitor_task_v3.yaml"
+    task_path.write_text(render_yaml_text(task), encoding="utf-8")
+
+    loaded = load_monitor_task(task_path)
+
+    assert loaded.severity_policy[0]["rule_type"] == "prefix"
+    assert loaded.severity_policy[0]["match_value"] == "/research/urgent"
+    assert loaded.severity_policy[0]["severity"] == "critical"
+    assert loaded.severity_policy[0]["recommended_action"] == "escalate_immediately"
+
+    legacy_path = tmp_path / "legacy_monitor_task.yaml"
+    legacy_path.write_text(
+        """
+task_name: legacy-watch
+site_url: https://example.com/
+task_description: Old task file without structured severity policy.
+goal: Keep legacy task files working.
+change_severity_rules:
+  new_file: critical
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    legacy = load_monitor_task(legacy_path)
+
+    assert legacy.severity_policy == []
+    assert legacy.change_severity_rules["new_file"] == "critical"

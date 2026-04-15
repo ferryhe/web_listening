@@ -18,6 +18,7 @@ from web_listening.blocks.storage import Storage
 from web_listening.blocks.tracking_report import build_default_report_path as build_tracking_report_path
 from web_listening.blocks.tracking_report import build_tracking_report, render_markdown as render_tracking_report_markdown
 from web_listening.blocks.tracking_report import render_yaml_text as render_tracking_report_yaml
+from web_listening.blocks.tracking_report import set_report_output_path
 from web_listening.blocks.tree_crawler import TreeCrawler
 from web_listening.config import settings
 from web_listening.models import CrawlScope
@@ -349,6 +350,7 @@ def report_scope(
         storage.close()
     resolved_output_path = Path(output_path) if output_path else build_tracking_report_path(report.site_key, format=normalized_format, data_dir=settings.data_dir)
     resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
+    report = set_report_output_path(report, resolved_output_path)
     payload = render_tracking_report_yaml(report) if normalized_format == "yaml" else render_tracking_report_markdown(report)
     resolved_output_path.write_text(payload, encoding="utf-8")
     return ScopeReportArtifacts(report=report, output_path=resolved_output_path, output_format=normalized_format)

@@ -884,16 +884,17 @@ class Storage:
         rows = self.conn.execute(query, params).fetchall()
         return [self._row_to_job(row) for row in rows]
 
-    def get_latest_job(self, *, scope_id: int, job_type: str) -> Optional[Job]:
-        row = self.conn.execute(
-            """
+    def get_latest_job(self, *, scope_id: int, job_type: str, status: Optional[str] = None) -> Optional[Job]:
+        query = """
             SELECT * FROM jobs
             WHERE scope_id = ? AND job_type = ?
-            ORDER BY COALESCE(finished_at, started_at, accepted_at) DESC, job_id DESC
-            LIMIT 1
-            """,
-            (scope_id, job_type),
-        ).fetchone()
+        """
+        params: list[object] = [scope_id, job_type]
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY COALESCE(finished_at, started_at, accepted_at) DESC, job_id DESC LIMIT 1"
+        row = self.conn.execute(query, params).fetchone()
         if row is None:
             return None
         return self._row_to_job(row)

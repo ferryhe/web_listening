@@ -20,6 +20,20 @@ DEFAULT_CHANGE_SEVERITY_RULES = {
 }
 
 
+def _default_severity_policy(change_severity_rules: dict[str, str]) -> list[dict[str, object]]:
+    return [
+        {
+            "rule_type": "change_type",
+            "match_value": change_type,
+            "severity": severity,
+            "reason_template": f"{change_type} matched fallback change severity `{severity}`.",
+            "recommended_action": "review_change",
+            "weight": 10,
+        }
+        for change_type, severity in change_severity_rules.items()
+    ]
+
+
 def _safe_slug(value: str) -> str:
     """Return a filesystem-safe slug: lowercase, only [a-z0-9-], no path separators or dot-dot segments."""
     slug = str(value or "task").strip().lower()
@@ -51,6 +65,7 @@ def build_monitor_task(
     file_policy: dict[str, object] | None = None,
     report_style: str = "briefing",
     report_policy: dict[str, object] | None = None,
+    severity_policy: list[dict[str, object]] | None = None,
     change_severity_rules: dict[str, str] | None = None,
     alert_policy: dict[str, object] | None = None,
     human_review_rules: list[str] | None = None,
@@ -73,6 +88,7 @@ def build_monitor_task(
         file_policy=file_policy or {},
         report_style=report_style,
         report_policy=report_policy or {},
+        severity_policy=severity_policy if severity_policy is not None else _default_severity_policy(rules),
         change_severity_rules=rules,
         alert_policy=alert_policy or {},
         human_review_rules=human_review_rules or [],

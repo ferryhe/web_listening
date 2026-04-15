@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -40,6 +41,10 @@ class TrackingReport:
     pages_changed: int = 0
     files_changed: int = 0
     document_count: int = 0
+    next_action: str = ""
+    escalation_needed: bool = False
+    review_required_count: int = 0
+    high_priority_count: int = 0
     new_pages: list[dict[str, Any]] = field(default_factory=list)
     changed_pages: list[dict[str, Any]] = field(default_factory=list)
     missing_pages: list[dict[str, Any]] = field(default_factory=list)
@@ -74,13 +79,13 @@ def _build_recommended_next_actions(*, run: CrawlRun, document_count: int, has_t
     if run.status != "completed":
         actions.append("Inspect the failed run logs or rerun the scope before trusting any downstream interpretation.")
     if review_queue:
-        actions.append("Work the review queue in priority order; it is already sorted using the monitor task severity rules when available.")
+        actions.append("Work the review queue in priority order; it is already sorted using severity and policy weight.")
     if document_count > 0:
         actions.append("Open the preferred_display_path entries first; they are the best human/agent browsing paths for downloaded files.")
     if document_count == 0 and run.files_seen > 0:
         actions.append("The run saw file URLs but no persisted documents were linked into the manifest; verify download_files settings and file acceptance rules.")
     if has_task:
-        actions.append("Compare the observed changes against the task goal, policy fields, and focus topics before escalating to downstream agents or alerts.")
+        actions.append("Compare the observed changes against the task goal, severity policy, and focus topics before escalating downstream.")
     else:
         actions.append("Attach a monitor task artifact on the next run so future reports can explain why this scope matters.")
     return actions
@@ -172,9 +177,13 @@ def _build_file_change_bundles(
             if persisted_current is not None:
                 current_document = {
                     "document_id": persisted_current.id or 0,
+                    "title": persisted_current.title,
                     "sha256": persisted_current.sha256,
                     "page_url": persisted_current.page_url,
                     "preferred_display_path": persisted_current.preferred_display_path,
+                    "download_url": persisted_current.download_url,
+                    "doc_type": persisted_current.doc_type,
+                    "content_type": persisted_current.content_type,
                 }
         current_row = {
             "url": tracked_file.canonical_url,
@@ -183,6 +192,10 @@ def _build_file_change_bundles(
             "document_id": current_observation.document_id if current_observation and current_observation.document_id else 0,
             "page_url": current_document.get("page_url", "") if current_document else "",
             "preferred_display_path": current_document.get("preferred_display_path", "") if current_document else (current_observation.tracked_local_path if current_observation else ""),
+            "title": current_document.get("title", "") if current_document else "",
+            "download_url": current_document.get("download_url", "") if current_document else tracked_file.canonical_url,
+            "doc_type": current_document.get("doc_type", "") if current_document else "",
+            "content_type": current_document.get("content_type", "") if current_document else "",
         }
         if tracked_file.first_seen_run_id == run_id and current_observation is not None:
             new_files.append(current_row)
@@ -214,6 +227,123 @@ def _build_file_change_bundles(
     return sorted(new_files, key=lambda item: item["url"]), sorted(changed_files, key=lambda item: item["url"]), sorted(missing_files, key=lambda item: item["url"])
 
 
+def _string_values(item: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in ("url", "page_url", "download_url", "preferred_display_path", "title", "doc_type", "content_type"):
+        value = item.get(key)
+        if value:
+            values.append(str(value))
+    return values
+
+
+def _extract_path(url_or_path: str) -> str:
+    if not url_or_path:
+        return ""
+    parsed = urlparse(url_or_path)
+    if parsed.scheme:
+        return parsed.path or ""
+    return str(url_or_path)
+
+
+def _matches_rule(*, rule: dict[str, Any], change_type: str, item: dict[str, Any]) -> bool:
+    rule_type = str(rule.get("rule_type", "")).strip().lower()
+    match_value = str(rule.get("match_value", "")).strip()
+    if not rule_type or not match_value:
+        return False
+    if rule_type == "change_type":
+        return change_type.strip().lower() == match_value.lower()
+    if rule_type == "prefix":
+        candidates = [_extract_path(item.get("url", "")), _extract_path(item.get("page_url", "")), _extract_path(item.get("preferred_display_path", ""))]
+        return any(candidate.startswith(match_value) for candidate in candidates if candidate)
+    if rule_type == "file_type":
+        normalized = match_value.lower().lstrip(".")
+        doc_type = str(item.get("doc_type", "")).lower().lstrip(".")
+        if doc_type == normalized:
+            return True
+        for value in _string_values(item):
+            lower_value = value.lower()
+            if lower_value.endswith(f".{normalized}") or f"/{normalized}" in lower_value or normalized in lower_value.split("/"):
+                return True
+        return False
+    if rule_type == "keyword":
+        keyword = match_value.lower()
+        return any(keyword in value.lower() for value in _string_values(item))
+    return False
+
+
+def _policy_reason(rule: dict[str, Any], change_type: str, item: dict[str, Any], severity: str) -> str:
+    template = str(rule.get("reason_template", "")).strip()
+    if template:
+        try:
+            return template.format(change_type=change_type, entity_url=item.get("url", ""), severity=severity)
+        except (KeyError, ValueError, IndexError):
+            pass
+    return f"{change_type} matched severity policy `{rule.get('rule_type', 'change_type')}` at `{severity}`."
+
+
+def _safe_policy_weight(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _report_reader_for_path(report_path: str | Path | None) -> str:
+    if not report_path:
+        return "markdown_or_yaml"
+    suffix = Path(report_path).suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        return "yaml"
+    if suffix == ".md":
+        return "markdown"
+    return "markdown_or_yaml"
+
+
+def _evaluate_review_item(task: Any, change_type: str, entity_type: str, item: dict[str, Any]) -> dict[str, Any]:
+    structured_rules = list(getattr(task, "severity_policy", []) or [])
+    matched_rule: dict[str, Any] | None = None
+    for rule in structured_rules:
+        if _matches_rule(rule=rule, change_type=change_type, item=item):
+            if matched_rule is None or (
+                _severity_rank(str(rule.get("severity", "medium"))) < _severity_rank(str(matched_rule.get("severity", "medium")))
+                or (
+                    _severity_rank(str(rule.get("severity", "medium"))) == _severity_rank(str(matched_rule.get("severity", "medium")))
+                    and _safe_policy_weight(rule.get("weight", 0)) > _safe_policy_weight(matched_rule.get("weight", 0))
+                )
+            ):
+                matched_rule = dict(rule)
+
+    if matched_rule is None:
+        rules = {**DEFAULT_CHANGE_SEVERITY_RULES, **dict(task.change_severity_rules)}
+        severity = rules.get(change_type, "medium")
+        matched_rule = {
+            "rule_type": "change_type",
+            "match_value": change_type,
+            "severity": severity,
+            "recommended_action": "review_change",
+            "weight": 0,
+            "reason_template": f"{change_type} matched fallback change severity `{severity}`.",
+            "source": "change_severity_rules",
+        }
+
+    severity = str(matched_rule.get("severity", "medium")).lower()
+    policy_weight = _safe_policy_weight(matched_rule.get("weight", 0))
+    entity_url = item.get("url", "")
+    preferred_display_path = item.get("preferred_display_path", "")
+    return {
+        "severity": severity,
+        "change_type": change_type,
+        "entity_type": entity_type,
+        "entity_url": entity_url,
+        "url": entity_url,
+        "preferred_display_path": preferred_display_path,
+        "reason": _policy_reason(matched_rule, change_type, item, severity),
+        "recommended_action": str(matched_rule.get("recommended_action", "review_change") or "review_change"),
+        "matched_policy": matched_rule,
+        "policy_weight": policy_weight,
+    }
+
+
 def _build_priority_summary(
     *,
     task: Any,
@@ -227,7 +357,6 @@ def _build_priority_summary(
     if task is None:
         return {}, []
 
-    rules = {**DEFAULT_CHANGE_SEVERITY_RULES, **dict(task.change_severity_rules)}
     queue: list[dict[str, Any]] = []
     bundles = [
         ("new_page", new_pages, "page"),
@@ -237,20 +366,17 @@ def _build_priority_summary(
         ("changed_file", changed_files, "file"),
         ("missing_file", missing_files, "file"),
     ]
-    for change_type, items, artifact_type in bundles:
-        severity = rules.get(change_type, "medium")
+    for change_type, items, entity_type in bundles:
         for item in items:
-            queue.append(
-                {
-                    "severity": severity,
-                    "change_type": change_type,
-                    "artifact_type": artifact_type,
-                    "url": item.get("url", ""),
-                    "preferred_display_path": item.get("preferred_display_path", ""),
-                    "reason": f"{change_type} matched monitor task severity `{severity}`.",
-                }
-            )
-    queue.sort(key=lambda item: (_severity_rank(item["severity"]), item["change_type"], item["url"]))
+            queue.append(_evaluate_review_item(task, change_type, entity_type, item))
+
+    queue.sort(
+        key=lambda item: (
+            _severity_rank(item["severity"]),
+            -_safe_policy_weight(item.get("policy_weight", 0)),
+            item.get("entity_url", "") or item.get("preferred_display_path", ""),
+        )
+    )
     severity_counts: dict[str, int] = {}
     for item in queue:
         severity_counts[item["severity"]] = severity_counts.get(item["severity"], 0) + 1
@@ -262,37 +388,93 @@ def _build_priority_summary(
     }, queue
 
 
+def _artifact_row(*, plane: str, kind: str, label: str, path: str = "", url: str = "", recommended_reader: str = "text") -> dict[str, str]:
+    return {
+        "plane": plane,
+        "kind": kind,
+        "label": label,
+        "path": path,
+        "url": url,
+        "recommended_reader": recommended_reader,
+    }
+
+
 def _build_artifact_index(
     *,
     scope_path: str | Path,
     task_path: str | Path | None,
+    report_path: str | Path | None,
+    run: CrawlRun,
     documents: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     artifacts = [
-        {
-            "kind": "monitor_scope",
-            "label": Path(scope_path).name,
-            "path": str(scope_path),
-        }
+        _artifact_row(
+            plane="control_plane",
+            kind="monitor_scope",
+            label=Path(scope_path).name,
+            path=str(scope_path),
+            recommended_reader="yaml",
+        ),
+        _artifact_row(
+            plane="status_plane",
+            kind="run_metadata",
+            label=f"run-{run.id or 0}",
+            path=f"scope:{run.scope_id}:run:{run.id or 0}",
+            recommended_reader="metadata",
+        ),
+        _artifact_row(
+            plane="explanation_plane",
+            kind="tracking_report",
+            label="tracking-report-contract-v3",
+            path=str(report_path) if report_path else "",
+            recommended_reader=_report_reader_for_path(report_path),
+        ),
     ]
     if task_path is not None:
         artifacts.append(
-            {
-                "kind": "monitor_task",
-                "label": Path(task_path).name,
-                "path": str(task_path),
-            }
+            _artifact_row(
+                plane="control_plane",
+                kind="monitor_task",
+                label=Path(task_path).name,
+                path=str(task_path),
+                recommended_reader="yaml",
+            )
         )
     for document in documents:
         artifacts.append(
-            {
-                "kind": "document",
-                "label": document.get("title", "") or document.get("download_url", ""),
-                "path": document.get("preferred_display_path", "") or document.get("tracked_local_path", "") or document.get("local_path", ""),
-                "url": document.get("download_url", ""),
-            }
+            _artifact_row(
+                plane="evidence_plane",
+                kind="document",
+                label=document.get("title", "") or document.get("download_url", ""),
+                path=document.get("preferred_display_path", "") or document.get("tracked_local_path", "") or document.get("local_path", ""),
+                url=document.get("download_url", ""),
+                recommended_reader="document",
+            )
         )
     return artifacts
+
+
+def _derive_top_level_decision(*, run: CrawlRun, task: Any, review_queue: list[dict[str, Any]]) -> tuple[str, bool, int, int]:
+    review_required_count = len(review_queue)
+    high_priority_count = sum(1 for item in review_queue if item.get("severity") in {"critical", "high"})
+    if run.status != "completed":
+        return "investigate_failed_run", True, review_required_count, high_priority_count
+    if task is None:
+        return "attach_monitor_task", False, review_required_count, high_priority_count
+    if high_priority_count > 0:
+        return "escalate_review_queue", True, review_required_count, high_priority_count
+    if review_required_count > 0:
+        return "review_low_priority_changes", False, review_required_count, high_priority_count
+    return "no_immediate_action", False, review_required_count, high_priority_count
+
+
+def set_report_output_path(report: TrackingReport, output_path: str | Path) -> TrackingReport:
+    resolved_output_path = str(output_path)
+    for artifact in report.artifact_index:
+        if artifact.get("kind") == "tracking_report":
+            artifact["path"] = resolved_output_path
+            artifact["recommended_reader"] = _report_reader_for_path(resolved_output_path)
+    return report
 
 
 def build_default_report_path(site_key: str, *, format: str = "md", now: datetime | None = None, data_dir: str | Path = "data") -> Path:
@@ -358,6 +540,11 @@ def build_tracking_report(
         changed_files=changed_files,
         missing_files=missing_files,
     )
+    next_action, escalation_needed, review_required_count, high_priority_count = _derive_top_level_decision(
+        run=run,
+        task=task,
+        review_queue=review_queue,
+    )
 
     goal = task.goal if task is not None else plan.business_goal
     notes = list(plan.notes)
@@ -388,6 +575,10 @@ def build_tracking_report(
         pages_changed=run.pages_changed,
         files_changed=run.files_changed,
         document_count=len(document_rows),
+        next_action=next_action,
+        escalation_needed=escalation_needed,
+        review_required_count=review_required_count,
+        high_priority_count=high_priority_count,
         new_pages=new_pages,
         changed_pages=changed_pages,
         missing_pages=missing_pages,
@@ -396,7 +587,7 @@ def build_tracking_report(
         missing_files=missing_files,
         priority_summary=priority_summary,
         review_queue=review_queue,
-        artifact_index=_build_artifact_index(scope_path=scope_path, task_path=task_path, documents=document_rows),
+        artifact_index=_build_artifact_index(scope_path=scope_path, task_path=task_path, report_path=None, run=run, documents=document_rows),
         documents=document_rows,
         recommended_next_actions=_build_recommended_next_actions(
             run=run,
@@ -439,6 +630,10 @@ def render_markdown(report: TrackingReport) -> str:
         f"- Scope identity: scope_id=`{report.scope_id}`, fingerprint=`{report.scope_fingerprint}`",
         f"- Run: scope_id=`{report.scope_id}`, run_id=`{report.run_id}`, type=`{report.run_type}`, status=`{report.run_status}`",
         f"- Summary: pages_seen=`{report.pages_seen}`, files_seen=`{report.files_seen}`, pages_changed=`{report.pages_changed}`, files_changed=`{report.files_changed}`, documents=`{report.document_count}`",
+        f"- Next action: `{report.next_action}`",
+        f"- Escalation needed: `{report.escalation_needed}`",
+        f"- Review required count: `{report.review_required_count}`",
+        f"- High priority count: `{report.high_priority_count}`",
     ]
     if report.goal:
         lines.append(f"- Goal: {report.goal}")
@@ -487,16 +682,17 @@ def render_markdown(report: TrackingReport) -> str:
         "",
         "## Review Queue",
         "",
-        "| Severity | Change | URL | Reason |",
-        "|---|---|---|---|",
+        "| Severity | Change | Entity | URL | Recommended action | Matched policy | Reason |",
+        "|---|---|---|---|---|---|---|",
     ])
     if report.review_queue:
         for item in report.review_queue:
+            matched_policy = item.get("matched_policy", {})
             lines.append(
-                f"| {item['severity']} | {item['change_type']} | {item['url'] or '-'} | {item['reason']} |"
+                f"| {item['severity']} | {item['change_type']} | {item.get('entity_type', '-')} | {item.get('entity_url', '-') or '-'} | {item.get('recommended_action', '-') or '-'} | {matched_policy.get('rule_type', '-')}:{matched_policy.get('match_value', '-')} | {item['reason']} |"
             )
     else:
-        lines.append("| - | - | - | - |")
+        lines.append("| - | - | - | - | - | - | - |")
 
     lines.extend([
         "",
@@ -516,15 +712,15 @@ def render_markdown(report: TrackingReport) -> str:
         "",
         "## Artifact Index",
         "",
-        "| Kind | Label | Path | URL |",
-        "|---|---|---|---|",
+        "| Plane | Kind | Label | Path | URL | Recommended reader |",
+        "|---|---|---|---|---|---|",
     ])
     for item in report.artifact_index:
         lines.append(
-            f"| {item.get('kind', '-')} | {item.get('label', '-') or '-'} | {item.get('path', '-') or '-'} | {item.get('url', '-') or '-'} |"
+            f"| {item.get('plane', '-')} | {item.get('kind', '-')} | {item.get('label', '-') or '-'} | {item.get('path', '-') or '-'} | {item.get('url', '-') or '-'} | {item.get('recommended_reader', '-') or '-'} |"
         )
     if not report.artifact_index:
-        lines.append("| - | - | - | - |")
+        lines.append("| - | - | - | - | - | - |")
 
     lines.extend(["", "## Recommended Next Actions", ""])
     for action in report.recommended_next_actions:

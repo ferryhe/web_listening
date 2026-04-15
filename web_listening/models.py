@@ -256,6 +256,7 @@ class MonitorTask(BaseModel):
     file_policy: dict[str, object] = Field(default_factory=dict)
     report_style: str = "briefing"
     report_policy: dict[str, object] = Field(default_factory=dict)
+    severity_policy: List[dict[str, object]] = Field(default_factory=list)
     change_severity_rules: dict[str, str] = Field(
         default_factory=lambda: {
             "new_page": "medium",
@@ -276,6 +277,7 @@ class MonitorTask(BaseModel):
         "baseline_expectations",
         "file_policy",
         "report_policy",
+        "change_severity_rules",
         "alert_policy",
         mode="before",
     )
@@ -303,6 +305,22 @@ class MonitorTask(BaseModel):
     @classmethod
     def parse_monitor_task_lists(cls, value):
         return _parse_string_list(value)
+
+    @field_validator(
+        "severity_policy",
+        mode="before",
+    )
+    @classmethod
+    def parse_monitor_task_severity_policy(cls, value):
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return []
+            return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        return []
 
 
 class CrawlScope(BaseModel):

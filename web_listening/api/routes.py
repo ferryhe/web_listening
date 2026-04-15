@@ -171,6 +171,8 @@ class CreateMonitorTaskRequest(BaseModel):
     exclude_prefixes: List[str] = Field(default_factory=list)
     prefer_file_types: List[str] = Field(default_factory=list)
     must_download_patterns: List[str] = Field(default_factory=list)
+    severity_policy: Optional[List[dict[str, object]]] = None
+    change_severity_rules: Optional[dict[str, str]] = None
     handoff_requirements: List[str] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
     report_style: str = "briefing"
@@ -207,6 +209,7 @@ class ArtifactEnvelope(BaseModel):
     job: Job
     artifact_path: str
     content: str
+    report_payload: Optional[dict[str, object]] = None
 
 
 class JobDeliveryPayload(BaseModel):
@@ -230,6 +233,18 @@ class JobWebhookRegistrationResponse(BaseModel):
     active: bool
     delivery_mode: str
     sample_payload: JobDeliveryPayload
+
+
+def _serialize_report_payload(report: object) -> Optional[dict[str, object]]:
+    if hasattr(report, "to_dict") and callable(getattr(report, "to_dict")):
+        payload = report.to_dict()
+        return payload if isinstance(payload, dict) else None
+    if hasattr(report, "model_dump") and callable(getattr(report, "model_dump")):
+        payload = report.model_dump(mode="json")
+        return payload if isinstance(payload, dict) else None
+    if isinstance(report, dict):
+        return report
+    return None
 
 
 # ── Sites ───────────────────────────────────────────────────────────────────
@@ -373,6 +388,8 @@ def create_monitor_task(body: CreateMonitorTaskRequest):
         exclude_prefixes=body.exclude_prefixes,
         prefer_file_types=body.prefer_file_types,
         must_download_patterns=body.must_download_patterns,
+        severity_policy=body.severity_policy,
+        change_severity_rules=body.change_severity_rules,
         handoff_requirements=body.handoff_requirements,
         notes=body.notes,
         report_style=body.report_style,
@@ -582,14 +599,19 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
             stage_message="Persisting tracking report artifacts.",
             progress=90,
         )
+        serialized_report_payload = _serialize_report_payload(artifacts.report)
+        report_run_id = getattr(artifacts.report, "run_id", None)
+        if report_run_id is None and isinstance(serialized_report_payload, dict):
+            report_run_id = serialized_report_payload.get("run_id")
         return {
             "scope_id": scope_id,
-            "run_id": artifacts.report.run_id,
+            "run_id": report_run_id,
             "produced_artifacts": {
                 "scope_path": str(scope_path),
-                "task_path": body.task_path or "",
+                "task_path": resolved_task_path or "",
                 "output_path": str(artifacts.output_path),
                 "output_format": artifacts.output_format,
+                "report_payload": serialized_report_payload,
             },
         }
 
@@ -605,15 +627,16 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
 def get_latest_scope_report(scope_id: int):
     storage = get_storage()
     try:
-        job = storage.get_latest_job(scope_id=scope_id, job_type="scope.report")
+        job = storage.get_latest_job(scope_id=scope_id, job_type="scope.report", status="completed")
     finally:
         storage.close()
     if job is None:
-        raise HTTPException(status_code=404, detail="Report job not found")
+        raise HTTPException(status_code=404, detail="Completed report artifact not found")
     artifact_path = str(job.produced_artifacts.get("output_path") or "")
     if not artifact_path:
-        raise HTTPException(status_code=404, detail="Report artifact path missing")
-    return ArtifactEnvelope(job=job, artifact_path=artifact_path, content=_read_text_if_present(artifact_path))
+        raise HTTPException(status_code=404, detail="Completed report artifact path missing")
+    report_payload = job.produced_artifacts.get("report_payload") if isinstance(job.produced_artifacts.get("report_payload"), dict) else None
+    return ArtifactEnvelope(job=job, artifact_path=artifact_path, content=_read_text_if_present(artifact_path), report_payload=report_payload)
 
 
 @router.get("/monitor-scopes/{scope_id}/manifest/latest", response_model=ArtifactEnvelope)

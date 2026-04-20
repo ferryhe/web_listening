@@ -100,7 +100,7 @@ def run_incremental(
                             missing_files=0,
                             page_failures=0,
                             file_failures=0,
-                            notes="Run bootstrap_site_tree.py first.",
+                            notes="Run `web-listening bootstrap-scope` first.",
                         )
                     )
                     continue

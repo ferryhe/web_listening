@@ -34,6 +34,17 @@ from web_listening.tree_defaults import PRODUCTION_TREE_LIMITS
 from web_listening.tree_targets import filter_tree_targets, load_tree_targets
 
 
+def _safe_key(value: str) -> str:
+    key = str(value or "site").strip().lower()
+    key = key.replace("/", "-").replace("\\", "-")
+    key = key.replace("..", "-")
+    key = "-".join(part for part in key.split() if part)
+    key = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in key)
+    while "--" in key:
+        key = key.replace("--", "-")
+    return key.strip("-") or "site"
+
+
 def _dated_output_path(*, folder: str, stem: str, suffix: str, now: datetime | None = None) -> Path:
     moment = now.astimezone() if now is not None else datetime.now().astimezone()
     report_date = moment.date().isoformat()
@@ -41,7 +52,7 @@ def _dated_output_path(*, folder: str, stem: str, suffix: str, now: datetime | N
 
 
 def build_default_inventory_path(catalog: str, now: datetime | None = None) -> Path:
-    return _dated_output_path(folder="plans", stem=f"section_inventory_{catalog}", suffix="yaml", now=now)
+    return _dated_output_path(folder="plans", stem=f"section_inventory_{_safe_key(catalog)}", suffix="yaml", now=now)
 
 
 def build_default_discovery_yaml_path(catalog: str, now: datetime | None = None) -> Path:
@@ -49,31 +60,31 @@ def build_default_discovery_yaml_path(catalog: str, now: datetime | None = None)
 
 
 def build_default_discovery_report_path(catalog: str, now: datetime | None = None) -> Path:
-    return _dated_output_path(folder="reports", stem=f"section_inventory_{catalog}", suffix="md", now=now)
+    return _dated_output_path(folder="reports", stem=f"section_inventory_{_safe_key(catalog)}", suffix="md", now=now)
 
 
 def build_default_classification_yaml_path(catalog: str, now: datetime | None = None) -> Path:
-    return _dated_output_path(folder="plans", stem=f"section_classification_{catalog}", suffix="yaml", now=now)
+    return _dated_output_path(folder="plans", stem=f"section_classification_{_safe_key(catalog)}", suffix="yaml", now=now)
 
 
 def build_default_classification_report_path(catalog: str, now: datetime | None = None) -> Path:
-    return _dated_output_path(folder="reports", stem=f"section_classification_{catalog}", suffix="md", now=now)
+    return _dated_output_path(folder="reports", stem=f"section_classification_{_safe_key(catalog)}", suffix="md", now=now)
 
 
 def build_default_scope_yaml_path(site_key: str, now: datetime | None = None) -> Path:
-    return _dated_output_path(folder="plans", stem=f"monitor_scope_{site_key}", suffix="yaml", now=now)
+    return _dated_output_path(folder="plans", stem=f"monitor_scope_{_safe_key(site_key)}", suffix="yaml", now=now)
 
 
 def build_default_scope_report_path(site_key: str, now: datetime | None = None) -> Path:
-    return _dated_output_path(folder="reports", stem=f"monitor_scope_{site_key}", suffix="md", now=now)
+    return _dated_output_path(folder="reports", stem=f"monitor_scope_{_safe_key(site_key)}", suffix="md", now=now)
 
 
 def build_default_manifest_yaml_path(site_key: str, now: datetime | None = None) -> Path:
-    return _dated_output_path(folder="plans", stem=f"document_manifest_{site_key}", suffix="yaml", now=now)
+    return _dated_output_path(folder="plans", stem=f"document_manifest_{_safe_key(site_key)}", suffix="yaml", now=now)
 
 
 def build_default_manifest_report_path(site_key: str, now: datetime | None = None) -> Path:
-    return _dated_output_path(folder="reports", stem=f"document_manifest_{site_key}", suffix="md", now=now)
+    return _dated_output_path(folder="reports", stem=f"document_manifest_{_safe_key(site_key)}", suffix="md", now=now)
 
 
 def build_section_inventory(

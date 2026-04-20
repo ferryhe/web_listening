@@ -237,8 +237,8 @@ def render_markdown(
             f"Bootstrap inventory discovered `{total_pages}` pages and `{total_files}` accepted files."
         ),
         (
-            f"- Operational note: bootstrap establishes the baseline only. Re-run with `run_site_tree.py` later to detect new pages, "
-            f"changed content, new files, and missing items against this baseline."
+            f"- Operational note: bootstrap establishes the baseline only. Re-run later with `web-listening run-scope` "
+            f"to detect new pages, changed content, new files, and missing items against this baseline."
         ),
         "",
         f"- Generated at: `{generated_at}`",

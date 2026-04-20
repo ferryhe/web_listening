@@ -8,6 +8,7 @@ import tools.discover_site_sections as discover_site_sections_tool
 import tools.export_scope_document_manifest as export_scope_document_manifest_tool
 import tools.plan_monitor_scope as plan_monitor_scope_tool
 import tools.run_site_tree as run_site_tree_tool
+from web_listening.config import settings
 import web_listening.blocks.staged_workflow as staged_workflow
 
 
@@ -15,6 +16,7 @@ def test_staged_workflow_does_not_import_legacy_tools_modules():
     source = inspect.getsource(staged_workflow)
 
     assert "from tools." not in source
+    assert "from tools import" not in source
     assert "import tools" not in source
     assert "import tools." not in source
 
@@ -53,3 +55,17 @@ def test_run_tool_delegates_to_package_run_workflow():
     source = inspect.getsource(run_site_tree_tool)
 
     assert "web_listening.blocks.tree_run_workflow" in source
+
+
+def test_default_output_path_builders_sanitize_catalog_and_site_keys(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+
+    report_path = staged_workflow.build_default_scope_report_path("../Bad Site/Name")
+    inventory_path = staged_workflow.build_default_inventory_path("../Bad Catalog/Name")
+
+    assert report_path.parent == tmp_path / "reports"
+    assert inventory_path.parent == tmp_path / "plans"
+    assert ".." not in report_path.name
+    assert ".." not in inventory_path.name
+    assert "/" not in report_path.name
+    assert "/" not in inventory_path.name

@@ -5,7 +5,7 @@
 The current product direction is:
 
 ```text
-discover -> classify -> select -> task -> bootstrap -> run -> explain -> convert
+discover -> classify -> select -> task -> bootstrap -> run -> report -> manifest
 ```
 
 Instead of monitoring a whole site blindly from the homepage, the repo now supports:
@@ -48,9 +48,9 @@ What is production-usable now:
 
 What still remains future-facing:
 
-- persistent jobs and webhooks for long-running tree runs
+- persistent jobs and webhooks for longer-running or external delivery workflows
 - richer incremental change bundles and conversion routing
-- REST expansion beyond the current site-level compatibility surface
+- REST/API expansion beyond the current staged workflow and compatibility surfaces
 
 ## Install
 

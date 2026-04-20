@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 
 import tools.bootstrap_site_tree as bootstrap_site_tree_tool
+import tools.classify_site_sections as classify_site_sections_tool
+import tools.discover_site_sections as discover_site_sections_tool
 import tools.export_scope_document_manifest as export_scope_document_manifest_tool
 import tools.plan_monitor_scope as plan_monitor_scope_tool
 import tools.run_site_tree as run_site_tree_tool
@@ -17,6 +19,18 @@ def test_staged_workflow_does_not_import_legacy_tools_modules():
 
 def test_plan_monitor_scope_tool_delegates_to_staged_workflow_authority():
     source = inspect.getsource(plan_monitor_scope_tool)
+
+    assert "web_listening.blocks.staged_workflow" in source
+
+
+def test_discover_tool_delegates_to_staged_workflow_authority():
+    source = inspect.getsource(discover_site_sections_tool)
+
+    assert "web_listening.blocks.staged_workflow" in source
+
+
+def test_classify_tool_delegates_to_staged_workflow_authority():
+    source = inspect.getsource(classify_site_sections_tool)
 
     assert "web_listening.blocks.staged_workflow" in source
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,29 +14,116 @@ from web_listening.blocks.monitor_scope_planner import monitor_scope_to_tree_tar
 from web_listening.blocks.monitor_scope_planner import render_markdown as render_scope_markdown
 from web_listening.blocks.monitor_scope_planner import render_yaml_text as render_scope_yaml
 from web_listening.blocks.scope_lookup import find_scope_for_plan
+from web_listening.blocks.section_discovery import CatalogSectionInventory, SectionDiscoverer
+from web_listening.blocks.section_discovery import render_markdown as render_discovery_markdown
+from web_listening.blocks.section_discovery import render_yaml as render_discovery_yaml
 from web_listening.blocks.storage import Storage
 from web_listening.blocks.tracking_report import build_default_report_path as build_tracking_report_path
 from web_listening.blocks.tracking_report import build_tracking_report, render_markdown as render_tracking_report_markdown
 from web_listening.blocks.tracking_report import render_yaml_text as render_tracking_report_yaml
 from web_listening.blocks.tracking_report import set_report_output_path
+from web_listening.blocks.tree_bootstrap_workflow import BootstrapResult, build_default_report_path as build_bootstrap_report_path
+from web_listening.blocks.tree_bootstrap_workflow import render_markdown as render_bootstrap_run_markdown
+from web_listening.blocks.tree_bootstrap_workflow import run_bootstrap
 from web_listening.blocks.tree_crawler import TreeCrawler
+from web_listening.blocks.tree_run_workflow import RunResult, build_default_report_path as build_run_report_path
+from web_listening.blocks.tree_run_workflow import render_markdown as render_run_markdown
 from web_listening.config import settings
 from web_listening.models import CrawlScope
 from web_listening.tree_defaults import PRODUCTION_TREE_LIMITS
-from tools.bootstrap_site_tree import BootstrapResult, build_default_report_path as build_bootstrap_report_path
-from tools.bootstrap_site_tree import render_markdown as render_bootstrap_run_markdown
-from tools.bootstrap_site_tree import run_bootstrap
-from tools.classify_site_sections import build_default_inventory_path, build_default_report_path as build_classification_report_path
-from tools.classify_site_sections import build_default_yaml_path as build_classification_yaml_path
-from tools.discover_site_sections import build_default_report_path as build_discovery_report_path
-from tools.discover_site_sections import build_default_yaml_path as build_discovery_yaml_path
-from tools.discover_site_sections import discover_sections as build_section_inventory
-from tools.export_scope_document_manifest import build_default_report_path as build_manifest_report_path
-from tools.export_scope_document_manifest import build_default_yaml_path as build_manifest_yaml_path
-from tools.plan_monitor_scope import build_default_report_path as build_scope_report_path
-from tools.plan_monitor_scope import build_default_yaml_path as build_scope_yaml_path
-from tools.run_site_tree import RunResult, build_default_report_path as build_run_report_path
-from tools.run_site_tree import render_markdown as render_run_markdown
+from web_listening.tree_targets import filter_tree_targets, load_tree_targets
+
+
+def _dated_output_path(*, folder: str, stem: str, suffix: str, now: datetime | None = None) -> Path:
+    moment = now or datetime.now(timezone.utc)
+    report_date = moment.date().isoformat()
+    return settings.data_dir / folder / f"{stem}_{report_date}.{suffix}"
+
+
+def build_default_inventory_path(catalog: str, now: datetime | None = None) -> Path:
+    return _dated_output_path(folder="plans", stem=f"section_inventory_{catalog}", suffix="yaml", now=now)
+
+
+def build_default_discovery_yaml_path(catalog: str, now: datetime | None = None) -> Path:
+    return _dated_output_path(folder="plans", stem=f"section_inventory_{catalog}", suffix="yaml", now=now)
+
+
+def build_default_discovery_report_path(catalog: str, now: datetime | None = None) -> Path:
+    return _dated_output_path(folder="reports", stem=f"section_inventory_{catalog}", suffix="md", now=now)
+
+
+def build_default_classification_yaml_path(catalog: str, now: datetime | None = None) -> Path:
+    return _dated_output_path(folder="plans", stem=f"section_classification_{catalog}", suffix="yaml", now=now)
+
+
+def build_default_classification_report_path(catalog: str, now: datetime | None = None) -> Path:
+    return _dated_output_path(folder="reports", stem=f"section_classification_{catalog}", suffix="md", now=now)
+
+
+def build_default_scope_yaml_path(site_key: str, now: datetime | None = None) -> Path:
+    return _dated_output_path(folder="plans", stem=f"monitor_scope_{site_key}", suffix="yaml", now=now)
+
+
+def build_default_scope_report_path(site_key: str, now: datetime | None = None) -> Path:
+    return _dated_output_path(folder="reports", stem=f"monitor_scope_{site_key}", suffix="md", now=now)
+
+
+def build_default_manifest_yaml_path(site_key: str, now: datetime | None = None) -> Path:
+    return _dated_output_path(folder="plans", stem=f"document_manifest_{site_key}", suffix="yaml", now=now)
+
+
+def build_default_manifest_report_path(site_key: str, now: datetime | None = None) -> Path:
+    return _dated_output_path(folder="reports", stem=f"document_manifest_{site_key}", suffix="md", now=now)
+
+
+def build_section_inventory(
+    *,
+    catalog: str,
+    site_keys: set[str] | None = None,
+    discovery_depth: int = 3,
+    section_depth: int = 3,
+    max_pages: int | None = None,
+    detect_documents: bool = False,
+    level3_sample_limit: int = 2,
+) -> CatalogSectionInventory:
+    targets = filter_tree_targets(load_tree_targets(catalog), site_keys)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    sites = []
+
+    with SectionDiscoverer() as discoverer:
+        for target in targets:
+            sites.append(
+                discoverer.discover_target(
+                    site_key=target.site_key,
+                    display_name=target.display_name,
+                    seed_url=target.seed_url,
+                    homepage_url=target.homepage_url,
+                    fetch_mode=target.fetch_mode,
+                    fetch_config_json=target.fetch_config_json,
+                    allowed_page_prefixes=target.allowed_page_prefixes,
+                    allowed_file_prefixes=target.allowed_file_prefixes,
+                    discovery_depth=discovery_depth,
+                    section_depth=section_depth,
+                    max_pages=max_pages,
+                    detect_documents=detect_documents,
+                    level3_sample_limit=level3_sample_limit,
+                    notes=target.notes,
+                )
+            )
+
+    return CatalogSectionInventory(
+        catalog=catalog,
+        generated_at=generated_at,
+        discovery_depth=discovery_depth,
+        section_depth=section_depth,
+        max_pages=max_pages or 0,
+        page_limit_mode="unbounded" if not max_pages else "bounded",
+        discovery_mode="structure_only" if not detect_documents else "structure_plus_documents",
+        discovery_strategy="adaptive_sections",
+        detect_documents=detect_documents,
+        level3_sample_limit=level3_sample_limit,
+        sites=sites,
+    )
 
 
 @dataclass(slots=True)
@@ -123,14 +210,13 @@ def discover_sections(
         detect_documents=detect_documents,
         level3_sample_limit=max(1, level3_sample_limit),
     )
-    resolved_yaml_path = Path(yaml_path) if yaml_path else build_discovery_yaml_path(catalog)
-    resolved_report_path = Path(report_path) if report_path else build_discovery_report_path(catalog)
+    resolved_yaml_path = Path(yaml_path) if yaml_path else build_default_discovery_yaml_path(catalog)
+    resolved_report_path = Path(report_path) if report_path else build_default_discovery_report_path(catalog)
     resolved_yaml_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_report_path.parent.mkdir(parents=True, exist_ok=True)
-    from web_listening.blocks.section_discovery import render_markdown, render_yaml
 
-    resolved_yaml_path.write_text(render_yaml(inventory.to_dict()), encoding="utf-8")
-    resolved_report_path.write_text(render_markdown(inventory), encoding="utf-8")
+    resolved_yaml_path.write_text(render_discovery_yaml(inventory.to_dict()), encoding="utf-8")
+    resolved_report_path.write_text(render_discovery_markdown(inventory), encoding="utf-8")
     return DiscoveryArtifacts(inventory=inventory, yaml_path=resolved_yaml_path, report_path=resolved_report_path)
 
 
@@ -154,8 +240,8 @@ def classify_sections(
         use_ai=use_ai,
         site_keys=site_keys,
     )
-    resolved_yaml_path = Path(yaml_path) if yaml_path else build_classification_yaml_path(catalog)
-    resolved_report_path = Path(report_path) if report_path else build_classification_report_path(catalog)
+    resolved_yaml_path = Path(yaml_path) if yaml_path else build_default_classification_yaml_path(catalog)
+    resolved_report_path = Path(report_path) if report_path else build_default_classification_report_path(catalog)
     resolved_yaml_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_report_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_yaml_path.write_text(render_yaml_text(classification), encoding="utf-8")
@@ -203,8 +289,8 @@ def plan_scope(
         max_pages=max_pages,
         max_files=max_files,
     )
-    resolved_yaml_path = Path(yaml_path) if yaml_path else build_scope_yaml_path(selection.site_key)
-    resolved_report_path = Path(report_path) if report_path else build_scope_report_path(selection.site_key)
+    resolved_yaml_path = Path(yaml_path) if yaml_path else build_default_scope_yaml_path(selection.site_key)
+    resolved_report_path = Path(report_path) if report_path else build_default_scope_report_path(selection.site_key)
     resolved_yaml_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_report_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_yaml_path.write_text(render_scope_yaml(plan), encoding="utf-8")
@@ -369,8 +455,8 @@ def export_manifest(
         manifest = build_scope_document_manifest(scope_path, storage=storage, run_id=run_id)
     finally:
         storage.close()
-    resolved_yaml_path = Path(yaml_path) if yaml_path else build_manifest_yaml_path(plan.site_key)
-    resolved_report_path = Path(report_path) if report_path else build_manifest_report_path(plan.site_key)
+    resolved_yaml_path = Path(yaml_path) if yaml_path else build_default_manifest_yaml_path(plan.site_key)
+    resolved_report_path = Path(report_path) if report_path else build_default_manifest_report_path(plan.site_key)
     resolved_yaml_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_report_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_yaml_path.write_text(render_manifest_yaml(manifest), encoding="utf-8")

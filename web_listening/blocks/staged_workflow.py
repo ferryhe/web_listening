@@ -35,7 +35,7 @@ from web_listening.tree_targets import filter_tree_targets, load_tree_targets
 
 
 def _dated_output_path(*, folder: str, stem: str, suffix: str, now: datetime | None = None) -> Path:
-    moment = now or datetime.now(timezone.utc)
+    moment = now.astimezone() if now is not None else datetime.now().astimezone()
     report_date = moment.date().isoformat()
     return settings.data_dir / folder / f"{stem}_{report_date}.{suffix}"
 
@@ -45,7 +45,7 @@ def build_default_inventory_path(catalog: str, now: datetime | None = None) -> P
 
 
 def build_default_discovery_yaml_path(catalog: str, now: datetime | None = None) -> Path:
-    return _dated_output_path(folder="plans", stem=f"section_inventory_{catalog}", suffix="yaml", now=now)
+    return build_default_inventory_path(catalog, now)
 
 
 def build_default_discovery_report_path(catalog: str, now: datetime | None = None) -> Path:

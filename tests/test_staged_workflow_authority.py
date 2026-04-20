@@ -15,6 +15,8 @@ def test_staged_workflow_does_not_import_legacy_tools_modules():
     source = inspect.getsource(staged_workflow)
 
     assert "from tools." not in source
+    assert "import tools" not in source
+    assert "import tools." not in source
 
 
 def test_plan_monitor_scope_tool_delegates_to_staged_workflow_authority():

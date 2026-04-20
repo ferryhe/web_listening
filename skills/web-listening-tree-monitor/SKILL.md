@@ -42,20 +42,27 @@ For large lists, draft scope artifacts are **review artifacts first** and only b
 
 ### Standard staged workflow after scope confirmation
 
+Primary path:
+
 1. Discover site structure:
-   - `.venv\Scripts\python tools\discover_site_sections.py --catalog dev`
-2. Classify the discovered sections:
-   - `.venv\Scripts\python tools\classify_site_sections.py --catalog dev`
+   - `web-listening discover --catalog dev`
+2. Classify discovered sections:
+   - `web-listening classify --catalog dev`
 3. Review or edit `section_selection.yaml`.
 4. Compile the monitoring scope:
-   - `.venv\Scripts\python tools\plan_monitor_scope.py --selection-path data\plans\section_selection_soa_2026-04-07.yaml`
+   - `web-listening plan-scope --selection-path data\plans\section_selection_soa_2026-04-07.yaml`
 5. Bootstrap the selected scope:
-   - `.venv\Scripts\python tools\bootstrap_site_tree.py --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files`
+   - `web-listening bootstrap-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files`
 6. Export human and agent summaries:
-   - `.venv\Scripts\python tools\summarize_scope_bootstrap.py --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml`
-   - `.venv\Scripts\python tools\export_scope_document_manifest.py --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml`
+   - `web-listening report-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml`
+   - `web-listening export-manifest --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml`
 7. Run later reruns:
-   - `.venv\Scripts\python tools\run_site_tree.py --catalog dev --download-files`
+   - `web-listening run-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files`
+
+Compatibility path:
+
+- The older `tools/*.py` scripts remain available as lower-level wrappers around the same package workflow modules.
+- Use them only when a downstream integration still expects those legacy entrypoints.
 
 ## Important Data Rules
 
@@ -74,5 +81,5 @@ For large lists, draft scope artifacts are **review artifacts first** and only b
 
 ## Current Limitation
 
-The staged tree workflow is implemented through `tools/*.py`.
-It is not yet exposed as a first-class REST or packaged `web-listening` CLI workflow.
+The staged tree workflow is now exposed as a first-class packaged `web-listening` CLI workflow, with package-internal workflow modules as the execution authority.
+Some lower-level scripts still exist for compatibility, but they are no longer the primary product path.

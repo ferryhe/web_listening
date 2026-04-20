@@ -82,7 +82,7 @@ Draft scope artifacts are review-stage outputs, not automatically approved produ
 - `web-listening analyze`
 - `web-listening serve`
 
-These legacy commands still work for site-level monitoring, but the staged tree workflow currently lives in `tools/*.py`.
+These legacy commands still work for site-level monitoring, while the staged tree workflow now lives in the packaged `web-listening` CLI and package-internal workflow modules. The `tools/*.py` scripts remain compatibility wrappers around that same authority path.
 
 ## Archive
 

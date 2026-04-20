@@ -50,14 +50,14 @@ Primary path:
    - `web-listening classify --catalog dev`
 3. Review or edit `section_selection.yaml`.
 4. Compile the monitoring scope:
-   - `web-listening plan-scope --selection-path data\\plans\\section_selection_soa_2026-04-07.yaml`
+   - `web-listening plan-scope --selection-path data\plans\section_selection_soa_2026-04-07.yaml`
 5. Bootstrap the selected scope:
-   - `web-listening bootstrap-scope --scope-path data\\plans\\monitor_scope_soa_2026-04-07.yaml --download-files`
+   - `web-listening bootstrap-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files`
 6. Export human and agent summaries:
-   - `web-listening report-scope --scope-path data\\plans\\monitor_scope_soa_2026-04-07.yaml`
-   - `web-listening export-manifest --scope-path data\\plans\\monitor_scope_soa_2026-04-07.yaml`
+   - `web-listening report-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml`
+   - `web-listening export-manifest --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml`
 7. Run later reruns:
-   - `web-listening run-scope --scope-path data\\plans\\monitor_scope_soa_2026-04-07.yaml --download-files`
+   - `web-listening run-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files`
 
 Compatibility path:
 

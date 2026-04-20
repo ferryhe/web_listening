@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import inspect
 from datetime import datetime
 from types import SimpleNamespace
@@ -19,11 +20,16 @@ import web_listening.blocks.tree_run_workflow as tree_run_workflow
 
 def test_staged_workflow_does_not_import_legacy_tools_modules():
     source = inspect.getsource(staged_workflow)
+    tree = ast.parse(source)
 
-    assert "from tools." not in source
-    assert "from tools import" not in source
-    assert "import tools" not in source
-    assert "import tools." not in source
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert alias.name != "tools"
+                assert not alias.name.startswith("tools.")
+        if isinstance(node, ast.ImportFrom):
+            assert node.module != "tools"
+            assert not (node.module or "").startswith("tools.")
 
 
 def test_plan_monitor_scope_tool_delegates_to_staged_workflow_authority():

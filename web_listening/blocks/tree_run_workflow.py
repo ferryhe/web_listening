@@ -14,10 +14,21 @@ from web_listening.tree_defaults import PRODUCTION_TREE_LIMITS
 from web_listening.tree_targets import TreeTarget, filter_tree_targets, load_tree_targets
 
 
+def _safe_key(value: str) -> str:
+    key = str(value or "catalog").strip().lower()
+    key = key.replace("/", "-").replace("\\", "-")
+    key = key.replace("..", "-")
+    key = "-".join(part for part in key.split() if part)
+    key = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in key)
+    while "--" in key:
+        key = key.replace("--", "-")
+    return key.strip("-") or "catalog"
+
+
 def build_default_report_path(catalog: str, now: datetime | None = None) -> Path:
     moment = now or datetime.now().astimezone()
     report_date = moment.date().isoformat()
-    return settings.data_dir / "reports" / f"tree_run_{catalog}_{report_date}.md"
+    return settings.data_dir / "reports" / f"tree_run_{_safe_key(catalog)}_{report_date}.md"
 
 
 @dataclass(slots=True)

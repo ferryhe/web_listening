@@ -9,6 +9,7 @@ from web_listening.blocks.bootstrap_summary import render_markdown as render_boo
 from web_listening.blocks.bootstrap_summary import summarize_monitor_scope_bootstrap
 from web_listening.blocks.document_manifest import build_scope_document_manifest, render_markdown as render_manifest_markdown
 from web_listening.blocks.document_manifest import render_yaml_text as render_manifest_yaml
+from web_listening.blocks.document import DocumentProcessor
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, load_monitor_scope_plan, load_section_selection
 from web_listening.blocks.monitor_scope_planner import monitor_scope_to_tree_target
 from web_listening.blocks.monitor_scope_planner import render_markdown as render_scope_markdown
@@ -46,7 +47,13 @@ def _safe_key(value: str) -> str:
 
 
 def _dated_output_path(*, folder: str, stem: str, suffix: str, now: datetime | None = None) -> Path:
-    moment = now.astimezone() if now is not None else datetime.now().astimezone()
+    if now is None:
+        moment = datetime.now().astimezone()
+    else:
+        local_tz = datetime.now().astimezone().tzinfo
+        if now.tzinfo is None or now.tzinfo.utcoffset(now) is None:
+            now = now.replace(tzinfo=local_tz)
+        moment = now.astimezone()
     report_date = moment.date().isoformat()
     return settings.data_dir / folder / f"{stem}_{report_date}.{suffix}"
 
@@ -378,6 +385,7 @@ def run_scope(
 ) -> ScopeRunArtifacts:
     plan = load_monitor_scope_plan(scope_path)
     storage = Storage(settings.db_path)
+    processor = DocumentProcessor(storage=storage) if download_files else None
     try:
         _, stored_scope = find_scope_for_plan(storage, plan)
         scoped_run = CrawlScope(
@@ -388,7 +396,7 @@ def run_scope(
                 "max_files": max_files or plan.max_files or stored_scope.max_files,
             }
         )
-        with TreeCrawler(storage=storage) as tree:
+        with TreeCrawler(storage=storage, document_processor=processor) as tree:
             crawl = tree.run_scope(scoped_run, institution=plan.display_name, download_files=download_files)
         result = RunResult(
             catalog=plan.catalog,

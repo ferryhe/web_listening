@@ -135,7 +135,7 @@ def build_section_inventory(
         discovery_depth=discovery_depth,
         section_depth=section_depth,
         max_pages=max_pages or 0,
-        page_limit_mode="unbounded" if not max_pages else "bounded",
+        page_limit_mode="unbounded" if max_pages is None else "bounded",
         discovery_mode="structure_only" if not detect_documents else "structure_plus_documents",
         discovery_strategy="adaptive_sections",
         detect_documents=detect_documents,

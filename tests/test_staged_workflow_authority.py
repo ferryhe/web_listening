@@ -177,3 +177,36 @@ def test_staged_run_scope_provides_document_processor_when_downloading(monkeypat
     assert artifacts.result.run_id == 11
     assert captured["download_files"] is True
     assert captured["document_processor"] is not None
+
+
+def test_build_section_inventory_treats_zero_max_pages_as_bounded(monkeypatch):
+    fake_target = SimpleNamespace(
+        site_key="demo",
+        display_name="Demo",
+        seed_url="https://example.com/",
+        homepage_url="https://example.com/",
+        fetch_mode="http",
+        fetch_config_json={},
+        allowed_page_prefixes=["/research"],
+        allowed_file_prefixes=["/"],
+        notes="",
+    )
+
+    class FakeDiscoverer:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def discover_target(self, **kwargs):
+            return SimpleNamespace(site_key=kwargs["site_key"])
+
+    monkeypatch.setattr(staged_workflow, "load_tree_targets", lambda catalog: [fake_target])
+    monkeypatch.setattr(staged_workflow, "filter_tree_targets", lambda targets, site_keys: targets)
+    monkeypatch.setattr(staged_workflow, "SectionDiscoverer", FakeDiscoverer)
+
+    inventory = staged_workflow.build_section_inventory(catalog="dev", max_pages=0)
+
+    assert inventory.max_pages == 0
+    assert inventory.page_limit_mode == "bounded"

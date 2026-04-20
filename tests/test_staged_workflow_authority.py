@@ -210,3 +210,139 @@ def test_build_section_inventory_treats_zero_max_pages_as_bounded(monkeypatch):
 
     assert inventory.max_pages == 0
     assert inventory.page_limit_mode == "bounded"
+
+
+def test_staged_bootstrap_scope_preserves_zero_limit_overrides(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+    plan = SimpleNamespace(site_key="demo", catalog="dev", max_depth=3, max_pages=8, max_files=2)
+    fake_target = SimpleNamespace(site_key="demo")
+
+    monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
+    monkeypatch.setattr(staged_workflow, "monitor_scope_to_tree_target", lambda plan: fake_target)
+    monkeypatch.setattr(
+        staged_workflow,
+        "run_bootstrap",
+        lambda **kwargs: captured.setdefault("bootstrap_kwargs", kwargs) or [],
+    )
+    monkeypatch.setattr(staged_workflow, "render_bootstrap_run_markdown", lambda *args, **kwargs: "report")
+
+    artifacts = staged_workflow.bootstrap_scope(
+        scope_path="dummy",
+        max_depth=0,
+        max_pages=0,
+        max_files=0,
+        report_path=tmp_path / "bootstrap.md",
+    )
+
+    assert artifacts.report_path == tmp_path / "bootstrap.md"
+    assert captured["bootstrap_kwargs"]["max_depth"] == 0
+    assert captured["bootstrap_kwargs"]["max_pages"] == 0
+    assert captured["bootstrap_kwargs"]["max_files"] == 0
+
+
+def test_staged_run_scope_preserves_zero_limit_overrides(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    plan = SimpleNamespace(
+        catalog="dev",
+        site_key="demo",
+        display_name="Demo",
+        seed_url="https://example.com/",
+        max_depth=3,
+        max_pages=8,
+        max_files=1,
+    )
+    stored_scope = CrawlScope(
+        id=7,
+        site_id=1,
+        seed_url="https://example.com/",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/research"],
+        allowed_file_prefixes=["/"],
+        max_depth=3,
+        max_pages=8,
+        max_files=1,
+        fetch_mode="http",
+    )
+
+    class FakeStorage:
+        def __init__(self, db_path):
+            captured["db_path"] = db_path
+
+        def close(self):
+            captured["storage_closed"] = True
+
+    class FakeTreeCrawler:
+        def __init__(self, *, storage, document_processor=None):
+            captured["document_processor"] = document_processor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def run_scope(self, scoped_run, institution, download_files):
+            captured["scoped_run"] = scoped_run
+            return SimpleNamespace(
+                scope=SimpleNamespace(id=stored_scope.id),
+                run=SimpleNamespace(id=11, status="completed"),
+                pages=[1],
+                files=[1],
+                new_pages=[],
+                changed_pages=[],
+                missing_pages=[],
+                new_files=[],
+                changed_files=[],
+                missing_files=[],
+                page_failures=[],
+                file_failures=[],
+            )
+
+    monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
+    monkeypatch.setattr(staged_workflow, "Storage", FakeStorage)
+    monkeypatch.setattr(staged_workflow, "TreeCrawler", FakeTreeCrawler)
+    monkeypatch.setattr(staged_workflow, "find_scope_for_plan", lambda storage, loaded_plan: (None, stored_scope))
+    monkeypatch.setattr(staged_workflow, "render_run_markdown", lambda *args, **kwargs: "report")
+
+    artifacts = staged_workflow.run_scope(
+        scope_path="dummy",
+        max_depth=0,
+        max_pages=0,
+        max_files=0,
+        report_path=tmp_path / "run.md",
+    )
+
+    assert artifacts.report_path == tmp_path / "run.md"
+    assert captured["scoped_run"].max_depth == 0
+    assert captured["scoped_run"].max_pages == 0
+    assert captured["scoped_run"].max_files == 0
+
+
+def test_tree_bootstrap_main_preserves_explicit_zero_cli_limits(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+    args = SimpleNamespace(
+        catalog="dev",
+        scope_path=None,
+        max_depth=0,
+        max_pages=0,
+        max_files=0,
+        download_files=False,
+        refresh_existing=False,
+        site_key=None,
+        report_path=tmp_path / "bootstrap-cli.md",
+    )
+
+    monkeypatch.setattr(tree_bootstrap_workflow.argparse.ArgumentParser, "parse_args", lambda self: args)
+    monkeypatch.setattr(
+        tree_bootstrap_workflow,
+        "run_bootstrap",
+        lambda **kwargs: captured.setdefault("bootstrap_kwargs", kwargs) or [],
+    )
+    monkeypatch.setattr(tree_bootstrap_workflow, "render_markdown", lambda *args, **kwargs: "report")
+
+    tree_bootstrap_workflow.main()
+
+    assert captured["bootstrap_kwargs"]["max_depth"] == 0
+    assert captured["bootstrap_kwargs"]["max_pages"] == 0
+    assert captured["bootstrap_kwargs"]["max_files"] == 0

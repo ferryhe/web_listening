@@ -144,6 +144,13 @@ def build_section_inventory(
     )
 
 
+def _first_defined(*values: int | None) -> int | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 @dataclass(slots=True)
 class DiscoveryArtifacts:
     inventory: Any
@@ -335,9 +342,9 @@ def bootstrap_scope(
 ) -> ScopeBootstrapArtifacts:
     plan = load_monitor_scope_plan(scope_path)
     report_catalog = f"scope_{plan.site_key}"
-    effective_max_depth = max_depth or plan.max_depth or PRODUCTION_TREE_LIMITS.max_depth
-    effective_max_pages = max_pages or plan.max_pages or PRODUCTION_TREE_LIMITS.max_pages
-    effective_max_files = max_files or plan.max_files or PRODUCTION_TREE_LIMITS.max_files
+    effective_max_depth = _first_defined(max_depth, plan.max_depth, PRODUCTION_TREE_LIMITS.max_depth)
+    effective_max_pages = _first_defined(max_pages, plan.max_pages, PRODUCTION_TREE_LIMITS.max_pages)
+    effective_max_files = _first_defined(max_files, plan.max_files, PRODUCTION_TREE_LIMITS.max_files)
     results = run_bootstrap(
         catalog=plan.catalog or "scope",
         max_depth=effective_max_depth,
@@ -384,6 +391,9 @@ def run_scope(
     report_path: str | Path | None = None,
 ) -> ScopeRunArtifacts:
     plan = load_monitor_scope_plan(scope_path)
+    effective_max_depth = _first_defined(max_depth, plan.max_depth)
+    effective_max_pages = _first_defined(max_pages, plan.max_pages)
+    effective_max_files = _first_defined(max_files, plan.max_files)
     storage = Storage(settings.db_path)
     processor = DocumentProcessor(storage=storage) if download_files else None
     try:
@@ -391,9 +401,9 @@ def run_scope(
         scoped_run = CrawlScope(
             **{
                 **stored_scope.model_dump(),
-                "max_depth": max_depth or plan.max_depth or stored_scope.max_depth,
-                "max_pages": max_pages or plan.max_pages or stored_scope.max_pages,
-                "max_files": max_files or plan.max_files or stored_scope.max_files,
+                "max_depth": _first_defined(effective_max_depth, stored_scope.max_depth),
+                "max_pages": _first_defined(effective_max_pages, stored_scope.max_pages),
+                "max_files": _first_defined(effective_max_files, stored_scope.max_files),
             }
         )
         with TreeCrawler(storage=storage, document_processor=processor) as tree:
@@ -427,9 +437,9 @@ def run_scope(
         render_run_markdown(
             [result],
             catalog=f"scope_{plan.site_key}",
-            max_depth=max_depth or plan.max_depth,
-            max_pages=max_pages or plan.max_pages,
-            max_files=max_files or plan.max_files,
+            max_depth=effective_max_depth,
+            max_pages=effective_max_pages,
+            max_files=effective_max_files,
             download_files=download_files,
         ),
         encoding="utf-8",

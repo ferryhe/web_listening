@@ -316,9 +316,9 @@ def main() -> None:
     site_keys = {value.strip().lower() for value in args.site_key or [] if value.strip()} or None
     targets: list[TreeTarget] | None = None
     report_catalog = args.catalog
-    max_depth = args.max_depth or PRODUCTION_TREE_LIMITS.max_depth
-    max_pages = args.max_pages or PRODUCTION_TREE_LIMITS.max_pages
-    max_files = args.max_files or PRODUCTION_TREE_LIMITS.max_files
+    max_depth = args.max_depth if args.max_depth is not None else PRODUCTION_TREE_LIMITS.max_depth
+    max_pages = args.max_pages if args.max_pages is not None else PRODUCTION_TREE_LIMITS.max_pages
+    max_files = args.max_files if args.max_files is not None else PRODUCTION_TREE_LIMITS.max_files
 
     if args.scope_path:
         scope_plan = load_monitor_scope_plan(args.scope_path)

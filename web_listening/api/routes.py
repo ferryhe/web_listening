@@ -17,6 +17,7 @@ from web_listening.blocks.job_artifacts import (
     load_latest_scope_manifest_artifact_or_create,
     load_latest_scope_report_artifact_or_raise,
 )
+from web_listening.blocks.scope_lookup import require_site_or_raise, resolve_scope_path_or_raise
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
 from web_listening.models import AnalysisReport, Change, Document, Job, Site, SiteSnapshot
@@ -78,23 +79,14 @@ def get_storage() -> Storage:
     return Storage(settings.db_path)
 
 
-def _require_scope(scope_id: int):
+def _resolve_scope_path(scope_id: int) -> Path:
     storage = get_storage()
     try:
-        scope = storage.get_crawl_scope(scope_id)
-        if scope is None:
-            raise HTTPException(status_code=404, detail="Monitor scope not found")
-        return scope
+        return resolve_scope_path_or_raise(storage, scope_id, data_dir=settings.data_dir)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
-
-
-def _resolve_scope_path(scope_id: int) -> Path:
-    scope = _require_scope(scope_id)
-    try:
-        return resolve_scope_plan_path(scope_id, scope=scope, data_dir=settings.data_dir)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _read_text_if_present(path_value: str) -> str:
@@ -290,10 +282,9 @@ def add_site(body: AddSiteRequest):
 def get_site(site_id: int):
     storage = get_storage()
     try:
-        site = storage.get_site(site_id)
-        if not site:
-            raise HTTPException(status_code=404, detail="Site not found")
-        return site
+        return require_site_or_raise(storage, site_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
 
@@ -302,13 +293,13 @@ def get_site(site_id: int):
 def get_latest_snapshot(site_id: int):
     storage = get_storage()
     try:
-        site = storage.get_site(site_id)
-        if not site:
-            raise HTTPException(status_code=404, detail="Site not found")
+        require_site_or_raise(storage, site_id)
         snapshot = storage.get_latest_snapshot(site_id)
         if not snapshot:
             raise HTTPException(status_code=404, detail="Snapshot not found")
         return snapshot
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
 
@@ -322,9 +313,9 @@ def rescue_check_site(site_id: int, body: RescueCheckRequest):
 
     storage = get_storage()
     try:
-        site = storage.get_site(site_id)
-        if not site:
-            raise HTTPException(status_code=404, detail="Site not found")
+        site = require_site_or_raise(storage, site_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
 
@@ -373,10 +364,10 @@ def rescue_check_site(site_id: int, body: RescueCheckRequest):
 def deactivate_site(site_id: int):
     storage = get_storage()
     try:
-        site = storage.get_site(site_id)
-        if not site:
-            raise HTTPException(status_code=404, detail="Site not found")
+        require_site_or_raise(storage, site_id)
         storage.deactivate_site(site_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
 
@@ -662,10 +653,12 @@ def get_latest_scope_manifest(scope_id: int):
 @router.post("/sites/{site_id}/check")
 def check_site(site_id: int, background_tasks: BackgroundTasks):
     storage = get_storage()
-    site = storage.get_site(site_id)
-    storage.close()
-    if not site:
-        raise HTTPException(status_code=404, detail="Site not found")
+    try:
+        require_site_or_raise(storage, site_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        storage.close()
 
     background_tasks.add_task(_do_check, site_id)
     return {"status": "check queued", "site_id": site_id}
@@ -784,10 +777,12 @@ def download_docs_for_site(site_id: int, body: DownloadDocsRequest, background_t
     if body.url is not None:
         _validate_url(body.url)
     storage = get_storage()
-    site = storage.get_site(site_id)
-    storage.close()
-    if not site:
-        raise HTTPException(status_code=404, detail="Site not found")
+    try:
+        require_site_or_raise(storage, site_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        storage.close()
 
     background_tasks.add_task(_do_download, site_id, body.institution, body.url)
     return {"status": "download queued", "site_id": site_id}

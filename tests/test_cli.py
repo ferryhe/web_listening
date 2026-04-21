@@ -299,6 +299,7 @@ def test_list_jobs_and_get_job_commands_render_persisted_job(tmp_path: Path, mon
     json_payload = json.loads(json_result.output)
     assert json_payload["contract_version"] == "job_delivery.v1"
     assert json_payload["job"]["job_id"] == job.job_id
+    assert json_payload["artifact_contract"]["contract_version"] == "artifact_contract.v1"
     assert json_payload["artifact_contract"]["primary_kind"] == "tracking_report"
     assert json_payload["artifact_contract"]["primary_path"] == str(tmp_path / "report.md")
     assert json_payload["artifact_contract"]["path_map"]["output_path"] == str(tmp_path / "report.md")

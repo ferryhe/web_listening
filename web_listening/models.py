@@ -235,7 +235,7 @@ class Job(BaseModel):
                 primary_path = candidate_path
                 break
         return {
-            "version": "artifact_contract.v1",
+            "contract_version": "artifact_contract.v1",
             "primary_key": primary_key,
             "primary_kind": primary_kind,
             "primary_path": primary_path,

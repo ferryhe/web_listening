@@ -33,13 +33,13 @@ def _get_storage():
     return Storage(settings.db_path)
 
 
-def _print_job_result(job, *, human_text: object) -> None:
+def _print_job_result(job: object, *, human_text: object) -> None:
     console.print(human_text)
 
 
-def _emit_job(job, *, json_output: bool, human_text: str) -> None:
+def _emit_job(job: object, *, json_output: bool, human_text: object) -> None:
     if json_output:
-        console.print(json.dumps(job.to_delivery_payload(), ensure_ascii=False, indent=2))
+        typer.echo(json.dumps(job.to_delivery_payload(), ensure_ascii=False, indent=2))
     else:
         _print_job_result(job, human_text=human_text)
 
@@ -724,7 +724,7 @@ def get_job(
         raise typer.BadParameter(f"Job {job_id} not found")
 
     if json_output:
-        console.print(json.dumps(job.to_delivery_payload(), ensure_ascii=False, indent=2))
+        typer.echo(json.dumps(job.to_delivery_payload(), ensure_ascii=False, indent=2))
         return
 
     artifact_lines = [f"- {key}: {value}" for key, value in sorted(job.produced_artifacts.items())] or ["- <none>"]

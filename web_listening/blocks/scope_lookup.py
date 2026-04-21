@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+
+from web_listening.blocks.job_orchestration import resolve_scope_plan_path
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, compute_scope_fingerprint
 from web_listening.blocks.storage import Storage
-from web_listening.models import CrawlScope, Site
+from web_listening.models import CrawlScope, Site, SiteSnapshot
+
+
+@dataclass(frozen=True)
+class SiteContext:
+    site: Site
+    latest_snapshot: SiteSnapshot | None
 
 
 def _scope_fingerprint(scope: CrawlScope) -> str:
@@ -16,6 +26,35 @@ def _scope_fingerprint(scope: CrawlScope) -> str:
 
 def _site_by_id(storage: Storage, site_id: int) -> Site | None:
     return storage.get_site(site_id)
+
+
+def require_site_or_raise(storage: Storage, site_id: int) -> Site:
+    site = storage.get_site(site_id)
+    if site is None:
+        raise LookupError("Site not found")
+    return site
+
+
+def require_scope_or_raise(storage: Storage, scope_id: int) -> CrawlScope:
+    scope = storage.get_crawl_scope(scope_id)
+    if scope is None:
+        raise LookupError("Monitor scope not found")
+    return scope
+
+
+def load_site_context_or_none(storage: Storage, site_id: int) -> SiteContext | None:
+    site = storage.get_site(site_id)
+    if site is None:
+        return None
+    return SiteContext(site=site, latest_snapshot=storage.get_latest_snapshot(site_id))
+
+
+def resolve_scope_path_or_raise(storage: Storage, scope_id: int, *, data_dir: str | Path) -> Path:
+    scope = require_scope_or_raise(storage, scope_id)
+    try:
+        return resolve_scope_plan_path(scope_id, scope=scope, data_dir=data_dir)
+    except FileNotFoundError as exc:
+        raise LookupError(str(exc)) from exc
 
 
 def find_scope_for_plan(storage: Storage, plan: MonitorScopePlan) -> tuple[Site, CrawlScope]:

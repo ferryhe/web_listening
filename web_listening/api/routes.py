@@ -8,8 +8,16 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 
-from web_listening.blocks.job_orchestration import execute_job, persist_job_result, resolve_scope_plan_path
+from web_listening.blocks.job_orchestration import execute_job, persist_job_result
+from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
 from web_listening.blocks.rescue import run_site_rescue
+from web_listening.blocks.job_artifacts import (
+    load_job_delivery_payload_or_raise,
+    load_job_or_raise,
+    load_latest_scope_manifest_artifact_or_create,
+    load_latest_scope_report_artifact_or_raise,
+)
+from web_listening.blocks.scope_lookup import load_site_context_or_none, require_site_or_raise, resolve_scope_path_or_raise
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
 from web_listening.models import AnalysisReport, Change, Document, Job, Site, SiteSnapshot
@@ -71,23 +79,14 @@ def get_storage() -> Storage:
     return Storage(settings.db_path)
 
 
-def _require_scope(scope_id: int):
+def _resolve_scope_path(scope_id: int) -> Path:
     storage = get_storage()
     try:
-        scope = storage.get_crawl_scope(scope_id)
-        if scope is None:
-            raise HTTPException(status_code=404, detail="Monitor scope not found")
-        return scope
+        return resolve_scope_path_or_raise(storage, scope_id, data_dir=settings.data_dir)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
-
-
-def _resolve_scope_path(scope_id: int) -> Path:
-    scope = _require_scope(scope_id)
-    try:
-        return resolve_scope_plan_path(scope_id, scope=scope, data_dir=settings.data_dir)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _read_text_if_present(path_value: str) -> str:
@@ -283,10 +282,9 @@ def add_site(body: AddSiteRequest):
 def get_site(site_id: int):
     storage = get_storage()
     try:
-        site = storage.get_site(site_id)
-        if not site:
-            raise HTTPException(status_code=404, detail="Site not found")
-        return site
+        return require_site_or_raise(storage, site_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
 
@@ -295,13 +293,13 @@ def get_site(site_id: int):
 def get_latest_snapshot(site_id: int):
     storage = get_storage()
     try:
-        site = storage.get_site(site_id)
-        if not site:
-            raise HTTPException(status_code=404, detail="Site not found")
+        require_site_or_raise(storage, site_id)
         snapshot = storage.get_latest_snapshot(site_id)
         if not snapshot:
             raise HTTPException(status_code=404, detail="Snapshot not found")
         return snapshot
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
 
@@ -315,9 +313,9 @@ def rescue_check_site(site_id: int, body: RescueCheckRequest):
 
     storage = get_storage()
     try:
-        site = storage.get_site(site_id)
-        if not site:
-            raise HTTPException(status_code=404, detail="Site not found")
+        site = require_site_or_raise(storage, site_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
 
@@ -366,18 +364,16 @@ def rescue_check_site(site_id: int, body: RescueCheckRequest):
 def deactivate_site(site_id: int):
     storage = get_storage()
     try:
-        site = storage.get_site(site_id)
-        if not site:
-            raise HTTPException(status_code=404, detail="Site not found")
+        require_site_or_raise(storage, site_id)
         storage.deactivate_site(site_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
 
 
 @router.post("/monitor-tasks", response_model=Job, status_code=201)
 def create_monitor_task(body: CreateMonitorTaskRequest):
-    from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
-
     _validate_url(body.site_url)
     started = datetime.now(timezone.utc)
     task = build_monitor_task(
@@ -417,26 +413,18 @@ def create_monitor_task(body: CreateMonitorTaskRequest):
 
 @router.get("/jobs/{job_id}", response_model=Job)
 def get_job(job_id: int):
-    storage = get_storage()
     try:
-        job = storage.get_job(job_id)
-    finally:
-        storage.close()
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return job
+        return load_job_or_raise(db_path=settings.db_path, job_id=job_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/jobs/{job_id}/payload", response_model=JobDeliveryPayload)
 def get_job_payload(job_id: int):
-    storage = get_storage()
     try:
-        job = storage.get_job(job_id)
-    finally:
-        storage.close()
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return JobDeliveryPayload(**job.to_delivery_payload())
+        return JobDeliveryPayload(**load_job_delivery_payload_or_raise(db_path=settings.db_path, job_id=job_id))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/webhooks/job-deliveries", response_model=JobWebhookRegistrationResponse, status_code=201)
@@ -627,59 +615,48 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
 
 @router.get("/monitor-scopes/{scope_id}/reports/latest", response_model=ArtifactEnvelope)
 def get_latest_scope_report(scope_id: int):
-    storage = get_storage()
     try:
-        job = storage.get_latest_job(scope_id=scope_id, job_type="scope.report", status="completed")
-    finally:
-        storage.close()
-    if job is None:
-        raise HTTPException(status_code=404, detail="Completed report artifact not found")
-    artifact_path = str(job.produced_artifacts.get("output_path") or "")
-    if not artifact_path:
-        raise HTTPException(status_code=404, detail="Completed report artifact path missing")
-    report_payload = job.produced_artifacts.get("report_payload") if isinstance(job.produced_artifacts.get("report_payload"), dict) else None
-    return ArtifactEnvelope(job=job, artifact_path=artifact_path, content=_read_text_if_present(artifact_path), report_payload=report_payload)
+        envelope = load_latest_scope_report_artifact_or_raise(db_path=settings.db_path, scope_id=scope_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ArtifactEnvelope(
+        job=envelope.job,
+        artifact_path=envelope.artifact_path,
+        content=_read_text_if_present(envelope.artifact_path),
+        report_payload=envelope.report_payload,
+    )
 
 
 @router.get("/monitor-scopes/{scope_id}/manifest/latest", response_model=ArtifactEnvelope)
 def get_latest_scope_manifest(scope_id: int):
     from web_listening.blocks.staged_workflow import export_manifest as staged_export_manifest
 
-    storage = get_storage()
     try:
-        job = storage.get_latest_job(scope_id=scope_id, job_type="scope.manifest")
-    finally:
-        storage.close()
-    if job is None:
-        scope_path = _resolve_scope_path(scope_id)
-        started = datetime.now(timezone.utc)
-        artifacts = staged_export_manifest(scope_path=scope_path)
-        job = persist_job_result(
-            job_type="scope.manifest",
+        envelope = load_latest_scope_manifest_artifact_or_create(
+            db_path=settings.db_path,
             scope_id=scope_id,
-            run_id=artifacts.manifest.run_id,
-            produced_artifacts={
-                "scope_path": str(scope_path),
-                "yaml_path": str(artifacts.yaml_path),
-                "report_path": str(artifacts.report_path),
-            },
-            accepted_at=started,
-            started_at=started,
-            finished_at=datetime.now(timezone.utc),
+            resolve_scope_path=_resolve_scope_path,
+            export_manifest=staged_export_manifest,
         )
-    artifact_path = str(job.produced_artifacts.get("yaml_path") or "")
-    if not artifact_path:
-        raise HTTPException(status_code=404, detail="Manifest artifact path missing")
-    return ArtifactEnvelope(job=job, artifact_path=artifact_path, content=_read_text_if_present(artifact_path))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ArtifactEnvelope(
+        job=envelope.job,
+        artifact_path=envelope.artifact_path,
+        content=_read_text_if_present(envelope.artifact_path),
+        report_payload=envelope.report_payload,
+    )
 
 
 @router.post("/sites/{site_id}/check")
 def check_site(site_id: int, background_tasks: BackgroundTasks):
     storage = get_storage()
-    site = storage.get_site(site_id)
-    storage.close()
-    if not site:
-        raise HTTPException(status_code=404, detail="Site not found")
+    try:
+        require_site_or_raise(storage, site_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        storage.close()
 
     background_tasks.add_task(_do_check, site_id)
     return {"status": "check queued", "site_id": site_id}
@@ -691,15 +668,16 @@ def _do_check(site_id: int):
     from web_listening.models import Change
 
     storage = get_storage()
-    site = storage.get_site(site_id)
-    if not site:
+    context = load_site_context_or_none(storage, site_id)
+    if context is None:
         storage.close()
         return
+    site = context.site
 
     try:
         with Crawler() as crawler:
             new_snap = crawler.snapshot(site)
-            old_snap = storage.get_latest_snapshot(site.id)
+            old_snap = context.latest_snapshot
 
             if old_snap:
                 has_changed, diff_snippet = compute_diff(
@@ -798,10 +776,12 @@ def download_docs_for_site(site_id: int, body: DownloadDocsRequest, background_t
     if body.url is not None:
         _validate_url(body.url)
     storage = get_storage()
-    site = storage.get_site(site_id)
-    storage.close()
-    if not site:
-        raise HTTPException(status_code=404, detail="Site not found")
+    try:
+        require_site_or_raise(storage, site_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        storage.close()
 
     background_tasks.add_task(_do_download, site_id, body.institution, body.url)
     return {"status": "download queued", "site_id": site_id}
@@ -812,16 +792,17 @@ def _do_download(site_id: int, institution: str, url: Optional[str]):
     from web_listening.blocks.diff import find_document_links
 
     storage = get_storage()
-    site = storage.get_site(site_id)
-    if not site:
+    context = load_site_context_or_none(storage, site_id)
+    if context is None:
         storage.close()
         return
+    site = context.site
 
     urls_to_download = []
     if url:
         urls_to_download = [url]
     else:
-        snap = storage.get_latest_snapshot(site_id)
+        snap = context.latest_snapshot
         if snap:
             urls_to_download = find_document_links(snap.links)
 

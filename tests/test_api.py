@@ -9,7 +9,7 @@ from web_listening.api.app import create_app
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text as render_scope_yaml_text
 from web_listening.blocks.rescue import RescueAttempt, RescueResult
 from web_listening.blocks.storage import Storage
-from web_listening.models import CrawlRun, CrawlScope, Document, Site, SiteSnapshot
+from web_listening.models import CrawlRun, CrawlScope, Document, Job, Site, SiteSnapshot
 
 
 def test_get_latest_snapshot_endpoint(tmp_path, monkeypatch):
@@ -649,6 +649,54 @@ selected_sections:
     assert response.json()["detail"] == "output_format must be one of: md, yaml"
 
 
+def test_scope_report_latest_endpoint_rejects_artifact_outside_data_dir(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+
+    outside_dir = tmp_path.parent / "outside"
+    outside_dir.mkdir(parents=True, exist_ok=True)
+    outside_path = outside_dir / "report.md"
+    outside_path.write_text("# Outside report\n", encoding="utf-8")
+
+    started = datetime.now(timezone.utc)
+    storage = Storage(db_path)
+    try:
+        site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+        scope = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/research"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        storage.add_job(
+            Job(
+                job_type="scope.report",
+                status="completed",
+                stage="completed",
+                progress=100,
+                scope_id=scope.id,
+                produced_artifacts={"output_path": str(outside_path)},
+                accepted_at=started,
+                started_at=started,
+                finished_at=started,
+            )
+        )
+    finally:
+        storage.close()
+
+    client = TestClient(create_app())
+    response = client.get(f"/api/v1/monitor-scopes/{scope.id}/reports/latest")
+
+    assert response.status_code == 422
+    assert "must stay under" in response.json()["detail"]
+
+
 def test_scope_report_job_supports_yaml_v3_contract(tmp_path, monkeypatch):
     db_path = tmp_path / "api.db"
     monkeypatch.setattr(routes.settings, "db_path", db_path)
@@ -886,3 +934,9 @@ def test_scope_manifest_latest_endpoint_generates_and_persists_job(tmp_path, mon
     assert payload["job"]["job_type"] == "scope.manifest"
     assert payload["artifact_path"] == str(yaml_path)
     assert "run_id: 5" in payload["content"]
+    assert payload["job"]["artifact_summary"] == {
+        "artifact_count": 3,
+        "artifact_keys": ["report_path", "scope_path", "yaml_path"],
+        "path_keys": ["report_path", "scope_path", "yaml_path"],
+        "has_artifacts": True,
+    }

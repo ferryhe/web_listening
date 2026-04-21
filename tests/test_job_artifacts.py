@@ -79,7 +79,6 @@ def test_load_latest_scope_report_artifact_or_raise_returns_envelope(tmp_path):
     assert isinstance(envelope, JobArtifactEnvelopeData)
     assert envelope.job.job_id == job.job_id
     assert envelope.artifact_path == str(report_path)
-    assert envelope.content.startswith("# Tracking Report")
     assert envelope.report_payload == {"next_action": "review_changes"}
 
 
@@ -126,7 +125,6 @@ def test_load_latest_scope_manifest_artifact_or_create_materializes_missing_job(
     )
 
     assert envelope.artifact_path == str(yaml_path)
-    assert envelope.content == "manifest: demo\n"
     assert envelope.report_payload is None
 
     storage = Storage(db_path)
@@ -136,6 +134,12 @@ def test_load_latest_scope_manifest_artifact_or_create_materializes_missing_job(
         storage.close()
     assert saved_job is not None
     assert saved_job.produced_artifacts["yaml_path"] == str(yaml_path)
+    assert saved_job.artifact_summary == {
+        "artifact_count": 3,
+        "artifact_keys": ["report_path", "scope_path", "yaml_path"],
+        "path_keys": ["report_path", "scope_path", "yaml_path"],
+        "has_artifacts": True,
+    }
 
 
 def test_load_job_or_raise_raises_lookup_error_for_missing_job(tmp_path):

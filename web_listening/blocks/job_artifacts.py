@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
+from web_listening.blocks.job_orchestration import _summarize_artifacts
 from web_listening.blocks.storage import Storage
 from web_listening.models import Job
 
@@ -13,15 +14,7 @@ from web_listening.models import Job
 class JobArtifactEnvelopeData:
     job: Job
     artifact_path: str
-    content: str
     report_payload: Optional[dict[str, object]] = None
-
-
-def _read_text_if_present(path_value: str) -> str:
-    candidate = Path(path_value)
-    if not path_value or not candidate.exists() or not candidate.is_file():
-        return ""
-    return candidate.read_text(encoding="utf-8")
 
 
 def load_job_or_raise(*, db_path: str | Path, job_id: int) -> Job:
@@ -56,7 +49,6 @@ def load_latest_scope_report_artifact_or_raise(*, db_path: str | Path, scope_id:
     return JobArtifactEnvelopeData(
         job=job,
         artifact_path=artifact_path,
-        content=_read_text_if_present(artifact_path),
         report_payload=report_payload,
     )
 
@@ -92,6 +84,13 @@ def load_latest_scope_manifest_artifact_or_create(
                         "yaml_path": str(artifacts.yaml_path),
                         "report_path": str(artifacts.report_path),
                     },
+                    artifact_summary=_summarize_artifacts(
+                        {
+                            "scope_path": str(scope_path),
+                            "yaml_path": str(artifacts.yaml_path),
+                            "report_path": str(artifacts.report_path),
+                        }
+                    ),
                     accepted_at=started,
                     started_at=started,
                     finished_at=datetime.now(timezone.utc),
@@ -105,6 +104,5 @@ def load_latest_scope_manifest_artifact_or_create(
     return JobArtifactEnvelopeData(
         job=job,
         artifact_path=artifact_path,
-        content=_read_text_if_present(artifact_path),
         report_payload=None,
     )

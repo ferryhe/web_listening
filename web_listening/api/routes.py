@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 
-from web_listening.blocks.job_orchestration import execute_job, persist_job_result, resolve_scope_plan_path
+from web_listening.blocks.job_orchestration import execute_job, persist_job_result
 from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
 from web_listening.blocks.rescue import run_site_rescue
 from web_listening.blocks.job_artifacts import (
@@ -374,8 +374,6 @@ def deactivate_site(site_id: int):
 
 @router.post("/monitor-tasks", response_model=Job, status_code=201)
 def create_monitor_task(body: CreateMonitorTaskRequest):
-    from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
-
     _validate_url(body.site_url)
     started = datetime.now(timezone.utc)
     task = build_monitor_task(
@@ -624,7 +622,7 @@ def get_latest_scope_report(scope_id: int):
     return ArtifactEnvelope(
         job=envelope.job,
         artifact_path=envelope.artifact_path,
-        content=envelope.content,
+        content=_read_text_if_present(envelope.artifact_path),
         report_payload=envelope.report_payload,
     )
 
@@ -645,7 +643,7 @@ def get_latest_scope_manifest(scope_id: int):
     return ArtifactEnvelope(
         job=envelope.job,
         artifact_path=envelope.artifact_path,
-        content=envelope.content,
+        content=_read_text_if_present(envelope.artifact_path),
         report_payload=envelope.report_payload,
     )
 

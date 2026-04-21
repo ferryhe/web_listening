@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from web_listening.blocks.job_orchestration import resolve_scope_plan_path
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, compute_scope_fingerprint
 from web_listening.blocks.storage import Storage
-from web_listening.models import CrawlScope, Site
+from web_listening.models import CrawlScope, Site, SiteSnapshot
+
+
+@dataclass(frozen=True)
+class SiteContext:
+    site: Site
+    latest_snapshot: SiteSnapshot | None
 
 
 def _scope_fingerprint(scope: CrawlScope) -> str:
@@ -33,6 +40,13 @@ def require_scope_or_raise(storage: Storage, scope_id: int) -> CrawlScope:
     if scope is None:
         raise LookupError("Monitor scope not found")
     return scope
+
+
+def load_site_context_or_none(storage: Storage, site_id: int) -> SiteContext | None:
+    site = storage.get_site(site_id)
+    if site is None:
+        return None
+    return SiteContext(site=site, latest_snapshot=storage.get_latest_snapshot(site_id))
 
 
 def resolve_scope_path_or_raise(storage: Storage, scope_id: int, *, data_dir: str | Path) -> Path:

@@ -17,7 +17,7 @@ from web_listening.blocks.job_artifacts import (
     load_latest_scope_manifest_artifact_or_create,
     load_latest_scope_report_artifact_or_raise,
 )
-from web_listening.blocks.scope_lookup import require_site_or_raise, resolve_scope_path_or_raise
+from web_listening.blocks.scope_lookup import load_site_context_or_none, require_site_or_raise, resolve_scope_path_or_raise
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
 from web_listening.models import AnalysisReport, Change, Document, Job, Site, SiteSnapshot
@@ -670,15 +670,16 @@ def _do_check(site_id: int):
     from web_listening.models import Change
 
     storage = get_storage()
-    site = storage.get_site(site_id)
-    if not site:
+    context = load_site_context_or_none(storage, site_id)
+    if context is None:
         storage.close()
         return
+    site = context.site
 
     try:
         with Crawler() as crawler:
             new_snap = crawler.snapshot(site)
-            old_snap = storage.get_latest_snapshot(site.id)
+            old_snap = context.latest_snapshot
 
             if old_snap:
                 has_changed, diff_snippet = compute_diff(
@@ -793,16 +794,17 @@ def _do_download(site_id: int, institution: str, url: Optional[str]):
     from web_listening.blocks.diff import find_document_links
 
     storage = get_storage()
-    site = storage.get_site(site_id)
-    if not site:
+    context = load_site_context_or_none(storage, site_id)
+    if context is None:
         storage.close()
         return
+    site = context.site
 
     urls_to_download = []
     if url:
         urls_to_download = [url]
     else:
-        snap = storage.get_latest_snapshot(site_id)
+        snap = context.latest_snapshot
         if snap:
             urls_to_download = find_document_links(snap.links)
 

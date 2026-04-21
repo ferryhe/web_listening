@@ -3,14 +3,17 @@ from pathlib import Path
 import pytest
 
 from web_listening.blocks.job_orchestration import resolve_scope_plan_path
+from datetime import datetime, timezone
+
 from web_listening.blocks.scope_lookup import (
     find_scope_for_plan,
+    load_site_context_or_none,
     require_scope_or_raise,
     require_site_or_raise,
     resolve_scope_path_or_raise,
 )
 from web_listening.blocks.storage import Storage
-from web_listening.models import CrawlScope, Site
+from web_listening.models import CrawlScope, Site, SiteSnapshot
 
 
 def test_require_site_or_raise_returns_site(tmp_path):
@@ -93,5 +96,46 @@ def test_resolve_scope_path_or_raise_wraps_missing_plan_as_lookup_error(tmp_path
 
     with pytest.raises(LookupError, match="monitor scope plan"):
         resolve_scope_path_or_raise(storage, scope.id, data_dir=tmp_path)
+
+    storage.close()
+
+
+def test_load_site_context_or_none_returns_none_for_missing_site(tmp_path):
+    db_path = tmp_path / "scope-lookup.db"
+    storage = Storage(db_path)
+
+    assert load_site_context_or_none(storage, 999) is None
+
+    storage.close()
+
+
+
+def test_load_site_context_or_none_returns_site_and_latest_snapshot(tmp_path):
+    db_path = tmp_path / "scope-lookup.db"
+    storage = Storage(db_path)
+    site = storage.add_site(Site(url="https://example.com/", name="Example"))
+    snapshot = storage.add_snapshot(
+        SiteSnapshot(
+            site_id=site.id,
+            captured_at=datetime.now(timezone.utc),
+            content_hash="hash123",
+            raw_html="<html><body><h1>Example</h1></body></html>",
+            cleaned_html="<body><h1>Example</h1></body>",
+            content_text="Example",
+            markdown="# Example",
+            fit_markdown="# Example",
+            metadata_json={"word_count": 1},
+            fetch_mode="http",
+            final_url="https://example.com",
+            status_code=200,
+            links=["https://example.com/doc.pdf"],
+        )
+    )
+
+    context = load_site_context_or_none(storage, site.id)
+
+    assert context is not None
+    assert context.site == site
+    assert context.latest_snapshot == snapshot
 
     storage.close()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Protocol
 from urllib.parse import urlparse
 
 import typer
@@ -33,15 +33,20 @@ def _get_storage():
     return Storage(settings.db_path)
 
 
-def _print_job_result(job: object, *, human_text: object) -> None:
+class _DeliveryPayloadJob(Protocol):
+    def to_delivery_payload(self) -> dict[str, object]:
+        ...
+
+
+def _print_job_result(*, human_text: object) -> None:
     console.print(human_text)
 
 
-def _emit_job(job: object, *, json_output: bool, human_text: object) -> None:
+def _emit_job(job: _DeliveryPayloadJob, *, json_output: bool, human_text: object) -> None:
     if json_output:
         typer.echo(json.dumps(job.to_delivery_payload(), ensure_ascii=False, indent=2))
     else:
-        _print_job_result(job, human_text=human_text)
+        _print_job_result(human_text=human_text)
 
 
 @app.command("add-site")

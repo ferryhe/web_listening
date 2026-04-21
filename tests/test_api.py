@@ -567,9 +567,14 @@ selected_sections:
     payload_response = client.get(f"/api/v1/jobs/{payload['job_id']}/payload")
     assert payload_response.status_code == 200
     delivery_payload = payload_response.json()
+    assert delivery_payload["contract_version"] == "job_delivery.v1"
     assert delivery_payload["job"]["job_id"] == payload["job_id"]
     assert delivery_payload["job"]["stage"] == "completed"
     assert delivery_payload["artifacts"]["produced"]["output_path"] == str(report_path)
+    assert delivery_payload["artifact_contract"]["contract_version"] == "artifact_contract.v1"
+    assert delivery_payload["artifact_contract"]["primary_kind"] == "tracking_report"
+    assert delivery_payload["artifact_contract"]["primary_path"] == str(report_path)
+    assert delivery_payload["artifact_contract"]["path_map"]["output_path"] == str(report_path)
     assert delivery_payload["next_action"] == "read_job_artifacts"
 
     latest = client.get(f"/api/v1/monitor-scopes/{scope.id}/reports/latest")

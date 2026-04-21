@@ -210,8 +210,42 @@ class Job(BaseModel):
             return "read_job_artifacts"
         return "inspect_job_record"
 
+    def artifact_contract(self) -> dict[str, object]:
+        path_map = {
+            key: value
+            for key, value in self.produced_artifacts.items()
+            if key.endswith("_path") and isinstance(value, str) and value.strip()
+        }
+        primary_candidates = [
+            ("output_path", "tracking_report"),
+            ("yaml_path", "yaml_artifact"),
+            ("report_path", "workflow_report"),
+            ("summary_path", "workflow_summary"),
+            ("task_path", "monitor_task"),
+            ("scope_path", "monitor_scope"),
+        ]
+        primary_key = ""
+        primary_kind = ""
+        primary_path = ""
+        for candidate_key, candidate_kind in primary_candidates:
+            candidate_path = path_map.get(candidate_key)
+            if candidate_path:
+                primary_key = candidate_key
+                primary_kind = candidate_kind
+                primary_path = candidate_path
+                break
+        return {
+            "contract_version": "artifact_contract.v1",
+            "primary_key": primary_key,
+            "primary_kind": primary_kind,
+            "primary_path": primary_path,
+            "path_keys": sorted(path_map.keys()),
+            "path_map": path_map,
+        }
+
     def to_delivery_payload(self) -> dict[str, object]:
         return {
+            "contract_version": "job_delivery.v1",
             "job": {
                 "job_id": self.job_id,
                 "job_type": self.job_type,
@@ -235,6 +269,7 @@ class Job(BaseModel):
                 "produced": self.produced_artifacts,
                 "summary": self.artifact_summary,
             },
+            "artifact_contract": self.artifact_contract(),
             "next_action": self.next_recommended_action(),
         }
 

@@ -213,9 +213,11 @@ class ArtifactEnvelope(BaseModel):
 
 
 class JobDeliveryPayload(BaseModel):
+    contract_version: str
     job: dict[str, object]
     error: dict[str, object]
     artifacts: dict[str, object]
+    artifact_contract: dict[str, object]
     next_action: str
 
 

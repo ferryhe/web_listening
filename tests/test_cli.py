@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -185,6 +186,29 @@ def test_create_monitor_task_writes_yaml_artifact(tmp_path: Path, monkeypatch):
     assert len(written) == 1
     assert "task_name: demo-watch" in written[0].read_text(encoding="utf-8")
 
+    json_result = runner.invoke(
+        app,
+        [
+            "create-monitor-task",
+            "--task-name",
+            "demo-watch-json",
+            "--site-url",
+            "https://example.com/",
+            "--task-description",
+            "Track research updates.",
+            "--goal",
+            "Find new pages and files.",
+            "--json",
+        ],
+    )
+
+    assert json_result.exit_code == 0
+    json_payload = json.loads(json_result.output)
+    assert json_payload["contract_version"] == "job_delivery.v1"
+    assert json_payload["job"]["job_type"] == "monitor_task.create"
+    assert json_payload["artifact_contract"]["primary_kind"] == "monitor_task"
+    assert json_payload["artifact_contract"]["primary_key"] == "task_path"
+
 
 def test_create_monitor_task_honors_explicit_output_path(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
@@ -269,6 +293,16 @@ def test_list_jobs_and_get_job_commands_render_persisted_job(tmp_path: Path, mon
     assert "stage=completed" in get_result.output
     assert "next_action=read_job_artifacts" in get_result.output
     assert "output_path" in get_result.output
+
+    json_result = runner.invoke(app, ["get-job", str(job.job_id), "--json"])
+    assert json_result.exit_code == 0
+    json_payload = json.loads(json_result.output)
+    assert json_payload["contract_version"] == "job_delivery.v1"
+    assert json_payload["job"]["job_id"] == job.job_id
+    assert json_payload["artifact_contract"]["contract_version"] == "artifact_contract.v1"
+    assert json_payload["artifact_contract"]["primary_kind"] == "tracking_report"
+    assert json_payload["artifact_contract"]["primary_path"] == str(tmp_path / "report.md")
+    assert json_payload["artifact_contract"]["path_map"]["output_path"] == str(tmp_path / "report.md")
 
 
 def test_export_tracking_report_writes_markdown_artifact(tmp_path: Path, monkeypatch):
@@ -508,6 +542,78 @@ def test_report_scope_rejects_invalid_format(tmp_path: Path):
     assert "--format must be one of: md, yaml" in result.output
 
 
+def test_report_scope_command_supports_json_delivery_output(tmp_path: Path, monkeypatch):
+    report_path = tmp_path / "reports" / "tracking_report_demo.md"
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(
+        """
+scope_fingerprint: demo
+site_key: demo
+display_name: Demo
+catalog: dev
+generated_at: 2026-04-14T00:00:00+00:00
+selection_review_status: approved
+selection_mode: manual
+business_goal: Track research.
+seed_url: https://example.com/
+homepage_url: https://example.com/
+fetch_mode: http
+fetch_config_json: {}
+tree_strategy: selected_scope
+tree_budget_profile: selected_scope_default
+file_scope_mode: site_root
+allowed_page_prefixes:
+  - /research
+allowed_file_prefixes:
+  - /
+scope_id: 12
+selected_focus_prefixes:
+  - /research
+excluded_page_prefixes: []
+deferred_page_prefixes: []
+excluded_categories: []
+max_depth: 3
+max_pages: 25
+max_files: 10
+based_on: {}
+selection_summary: {}
+notes: []
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_report_scope(**kwargs):
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("# Scope Report\n", encoding="utf-8")
+        return SimpleNamespace(
+            output_path=report_path,
+            output_format="md",
+            report=SimpleNamespace(run_id=34),
+        )
+
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.report_scope", fake_report_scope)
+
+    json_result = runner.invoke(
+        app,
+        [
+            "report-scope",
+            "--scope-path",
+            str(scope_path),
+            "--output",
+            str(report_path),
+            "--json",
+        ],
+    )
+
+    assert json_result.exit_code == 0
+    json_payload = json.loads(json_result.output)
+    assert json_payload["contract_version"] == "job_delivery.v1"
+    assert json_payload["job"]["job_type"] == "scope.report"
+    assert json_payload["artifact_contract"]["primary_kind"] == "tracking_report"
+    assert json_payload["artifact_contract"]["primary_path"] == str(report_path)
+
+
 def test_bootstrap_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
     report_path = tmp_path / "reports" / "bootstrap.md"
     summary_path = tmp_path / "reports" / "bootstrap-summary.md"
@@ -584,6 +690,28 @@ notes: []
     assert "scope_id=7" in result.output
     assert "run_id=11" in result.output
 
+    json_result = runner.invoke(
+        app,
+        [
+            "bootstrap-scope",
+            "--scope-path",
+            str(scope_path),
+            "--report-path",
+            str(report_path),
+            "--summary-path",
+            str(summary_path),
+            "--include-summary",
+            "--json",
+        ],
+    )
+
+    assert json_result.exit_code == 0
+    json_payload = json.loads(json_result.output)
+    assert json_payload["contract_version"] == "job_delivery.v1"
+    assert json_payload["job"]["job_type"] == "scope.bootstrap"
+    assert json_payload["artifact_contract"]["primary_path"] == str(report_path)
+    assert json_payload["artifact_contract"]["path_map"]["summary_path"] == str(summary_path)
+
 
 
 def test_run_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
@@ -653,6 +781,25 @@ notes: []
     assert report_path.name in result.output
     assert "scope_id=5" in result.output
     assert "run_id=9" in result.output
+
+    json_result = runner.invoke(
+        app,
+        [
+            "run-scope",
+            "--scope-path",
+            str(scope_path),
+            "--report-path",
+            str(report_path),
+            "--json",
+        ],
+    )
+
+    assert json_result.exit_code == 0
+    json_payload = json.loads(json_result.output)
+    assert json_payload["contract_version"] == "job_delivery.v1"
+    assert json_payload["job"]["job_type"] == "scope.run"
+    assert json_payload["artifact_contract"]["primary_path"] == str(report_path)
+    assert json_payload["artifact_contract"]["path_map"]["report_path"] == str(report_path)
 
 
 
@@ -759,3 +906,22 @@ selected_sections:
     assert len(written_md) == 1
     assert "Research Report" in written_yaml[0].read_text(encoding="utf-8")
     assert "Scope Document Manifest" in written_md[0].read_text(encoding="utf-8")
+
+    json_result = runner.invoke(
+        app,
+        [
+            "export-manifest",
+            "--scope-path",
+            str(scope_path),
+            "--run-id",
+            str(run.id),
+            "--json",
+        ],
+    )
+
+    assert json_result.exit_code == 0
+    json_payload = json.loads(json_result.output)
+    assert json_payload["contract_version"] == "job_delivery.v1"
+    assert json_payload["job"]["job_type"] == "scope.manifest"
+    assert json_payload["artifact_contract"]["primary_kind"] == "yaml_artifact"
+    assert json_payload["artifact_contract"]["path_map"]["yaml_path"].endswith(".yaml")

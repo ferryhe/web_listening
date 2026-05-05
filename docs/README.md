@@ -23,6 +23,10 @@ These are the long-lived docs that describe the current system:
   - [OPENCLAW_SKILL_USAGE.md](C:/Project/web_listening/docs/skills/OPENCLAW_SKILL_USAGE.md)
 - validation guide:
   - [validation/README.md](C:/Project/web_listening/docs/validation/README.md)
+- contracts:
+  - [web-listening-manifest-v1.md](contracts/web-listening-manifest-v1.md)
+- testing fixtures:
+  - [web-listening-contract-smoke.md](testing/web-listening-contract-smoke.md)
 
 ## Current Entry Points
 

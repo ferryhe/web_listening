@@ -1,0 +1,252 @@
+{
+  "schema_version": "web-listening-manifest.v1",
+  "manifest_id": "manifest-soa-research-20260407",
+  "generated_at": "2026-04-07T15:30:00Z",
+  "producer": {
+    "name": "web-listening",
+    "version": null,
+    "command": "web-listening export-manifest --scope-path data/plans/monitor_scope_soa_2026-04-07.yaml",
+    "contract_version": "web-listening-manifest.v1"
+  },
+  "artifact_root": ".",
+  "run": {
+    "run_id": "run-soa-20260407T153000Z",
+    "run_type": "composite",
+    "started_at": "2026-04-07T15:00:00Z",
+    "completed_at": "2026-04-07T15:29:30Z",
+    "input_paths": [
+      "data/plans/section_selection_soa_2026-04-07.yaml",
+      "data/plans/monitor_scope_soa_2026-04-07.yaml"
+    ],
+    "output_paths": [
+      "data/reports/tracking_report_soa_2026-04-07.md",
+      "data/reports/tracking_report_soa_2026-04-07.yaml",
+      "data/plans/document_manifest_soa_2026-04-07.yaml",
+      "data/reports/document_manifest_soa_2026-04-07.md"
+    ],
+    "idempotency_key": "soa|section_documents|2026-04-07",
+    "parent_run_id": null,
+    "scope_path": "data/plans/monitor_scope_soa_2026-04-07.yaml",
+    "selection_path": "data/plans/section_selection_soa_2026-04-07.yaml",
+    "parameters": {
+      "download_files": true,
+      "include_summary": true,
+      "tree_strategy": "bounded_section_tree"
+    }
+  },
+  "job": {
+    "job_id": "job-42",
+    "job_type": "scope_report.export",
+    "status": "completed",
+    "created_at": "2026-04-07T15:00:00Z",
+    "updated_at": "2026-04-07T15:29:30Z"
+  },
+  "source": {
+    "source_id": "soa",
+    "site_url": "https://www.soa.org/",
+    "site_name": "Society of Actuaries",
+    "scope_profile": "section_documents",
+    "tree_seed_url": "https://www.soa.org/research/",
+    "tree_page_prefixes": [
+      "https://www.soa.org/research/"
+    ],
+    "tree_file_prefixes": [
+      "https://www.soa.org/resources/research-reports/"
+    ],
+    "catalog_key": "soa"
+  },
+  "status": {
+    "state": "completed",
+    "stage": "export_manifest",
+    "counts": {
+      "discovered_items": 2,
+      "downloaded_assets": 1,
+      "changed_items": 1,
+      "warnings": 0,
+      "errors": 0
+    },
+    "message": "Manifest exported for downstream document conversion."
+  },
+  "artifacts": {
+    "reports": [
+      {
+        "artifact_id": "tracking-report-md",
+        "kind": "tracking_report_md",
+        "path": "data/reports/tracking_report_soa_2026-04-07.md",
+        "media_type": "text/markdown",
+        "sha256": null,
+        "created_at": "2026-04-07T15:29:00Z",
+        "provenance": {
+          "source_id": "soa",
+          "run_id": "run-soa-20260407T153000Z",
+          "input_artifacts": [
+            "data/plans/monitor_scope_soa_2026-04-07.yaml"
+          ],
+          "parent_item_id": null,
+          "observed_at": "2026-04-07T15:20:00Z",
+          "extraction_method": "tree_crawler"
+        }
+      }
+    ],
+    "structured_exports": [
+      {
+        "artifact_id": "tracking-report-yaml",
+        "kind": "tracking_report_yaml",
+        "path": "data/reports/tracking_report_soa_2026-04-07.yaml",
+        "media_type": "application/x-yaml",
+        "sha256": null,
+        "created_at": "2026-04-07T15:29:10Z",
+        "provenance": {
+          "source_id": "soa",
+          "run_id": "run-soa-20260407T153000Z",
+          "input_artifacts": [
+            "data/plans/monitor_scope_soa_2026-04-07.yaml"
+          ],
+          "parent_item_id": null,
+          "observed_at": "2026-04-07T15:20:00Z",
+          "extraction_method": "tree_crawler"
+        }
+      }
+    ],
+    "compatibility_exports": [
+      {
+        "artifact_id": "document-manifest-yaml",
+        "kind": "document_manifest_yaml",
+        "path": "data/plans/document_manifest_soa_2026-04-07.yaml",
+        "media_type": "application/x-yaml",
+        "sha256": null,
+        "created_at": "2026-04-07T15:29:20Z",
+        "provenance": {
+          "source_id": "soa",
+          "run_id": "run-soa-20260407T153000Z",
+          "input_artifacts": [
+            "data/plans/monitor_scope_soa_2026-04-07.yaml"
+          ],
+          "parent_item_id": null,
+          "observed_at": "2026-04-07T15:20:00Z",
+          "extraction_method": "export_scope_document_manifest"
+        }
+      },
+      {
+        "artifact_id": "document-manifest-md",
+        "kind": "document_manifest_md",
+        "path": "data/reports/document_manifest_soa_2026-04-07.md",
+        "media_type": "text/markdown",
+        "sha256": null,
+        "created_at": "2026-04-07T15:29:20Z",
+        "provenance": {
+          "source_id": "soa",
+          "run_id": "run-soa-20260407T153000Z",
+          "input_artifacts": [
+            "data/plans/monitor_scope_soa_2026-04-07.yaml"
+          ],
+          "parent_item_id": null,
+          "observed_at": "2026-04-07T15:20:00Z",
+          "extraction_method": "export_scope_document_manifest"
+        }
+      }
+    ]
+  },
+  "discovered_items": [
+    {
+      "item_id": "item-soa-research-page",
+      "item_type": "page",
+      "url": "https://www.soa.org/research/",
+      "title": "Research Institute",
+      "status": "unchanged",
+      "observed_at": "2026-04-07T15:12:00Z",
+      "parent_item_id": null,
+      "content_type": "text/html",
+      "http_status": 200,
+      "checksum": null,
+      "provenance": {
+        "source_id": "soa",
+        "run_id": "run-soa-20260407T153000Z",
+        "input_artifacts": [
+          "data/plans/monitor_scope_soa_2026-04-07.yaml"
+        ],
+        "parent_item_id": null,
+        "observed_at": "2026-04-07T15:12:00Z",
+        "extraction_method": "http"
+      },
+      "metadata": {
+        "depth": 0
+      }
+    },
+    {
+      "item_id": "item-soa-sample-report-pdf",
+      "item_type": "file_link",
+      "url": "https://www.soa.org/resources/research-reports/2026/sample-report.pdf",
+      "title": "Sample Research Report",
+      "status": "new",
+      "observed_at": "2026-04-07T15:14:00Z",
+      "parent_item_id": "item-soa-research-page",
+      "content_type": "application/pdf",
+      "http_status": 200,
+      "checksum": {
+        "algorithm": "sha256",
+        "value": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
+      "provenance": {
+        "source_id": "soa",
+        "run_id": "run-soa-20260407T153000Z",
+        "input_artifacts": [
+          "data/plans/monitor_scope_soa_2026-04-07.yaml"
+        ],
+        "parent_item_id": "item-soa-research-page",
+        "observed_at": "2026-04-07T15:14:00Z",
+        "extraction_method": "tree_crawler"
+      },
+      "metadata": {
+        "link_text": "Sample Research Report"
+      }
+    }
+  ],
+  "downloaded_assets": [
+    {
+      "asset_id": "asset-0123456789abcdef",
+      "source_item_id": "item-soa-sample-report-pdf",
+      "url": "https://www.soa.org/resources/research-reports/2026/sample-report.pdf",
+      "local_path": "data/downloads/_tracked/soa/research-reports/2026/sample-report.pdf",
+      "canonical_blob_path": "data/downloads/_blobs/01/23/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.pdf",
+      "tracked_path": "data/downloads/_tracked/soa/research-reports/2026/sample-report.pdf",
+      "filename": "sample-report.pdf",
+      "media_type": "application/pdf",
+      "bytes": 123456,
+      "checksum": {
+        "algorithm": "sha256",
+        "value": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
+      "status": "downloaded",
+      "provenance": {
+        "source_id": "soa",
+        "run_id": "run-soa-20260407T153000Z",
+        "input_artifacts": [
+          "data/plans/monitor_scope_soa_2026-04-07.yaml"
+        ],
+        "parent_item_id": "item-soa-sample-report-pdf",
+        "observed_at": "2026-04-07T15:14:00Z",
+        "extraction_method": "http_download"
+      }
+    }
+  ],
+  "provenance": {
+    "source_id": "soa",
+    "run_id": "run-soa-20260407T153000Z",
+    "input_artifacts": [
+      "data/plans/monitor_scope_soa_2026-04-07.yaml"
+    ],
+    "parent_item_id": null,
+    "observed_at": "2026-04-07T15:20:00Z",
+    "extraction_method": "staged_workflow"
+  },
+  "errors": [],
+  "deprecated": {
+    "document_manifest_yaml": "data/plans/document_manifest_soa_2026-04-07.yaml",
+    "document_manifest_md": "data/reports/document_manifest_soa_2026-04-07.md"
+  },
+  "metadata": {
+    "review_status": "sample_fixture_only"
+  },
+  "extensions": {}
+}

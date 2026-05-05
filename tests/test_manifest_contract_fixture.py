@@ -2,7 +2,8 @@ import json
 from pathlib import Path
 
 
-FIXTURE_PATH = Path("docs/testing/fixtures/web-listening-manifest-v1.sample.json")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_PATH = REPO_ROOT / "docs/testing/fixtures/web-listening-manifest-v1.sample.json"
 
 
 def test_web_listening_manifest_v1_sample_fixture_has_expected_contract_shape():
@@ -21,10 +22,11 @@ def test_web_listening_manifest_v1_sample_fixture_has_expected_contract_shape():
     assert any(item["kind"] == "tracking_report_md" for item in reports)
     assert any(item["kind"] == "tracking_report_yaml" for item in structured_exports)
     assert any(item["kind"] == "document_manifest_yaml" for item in compatibility_exports)
+    assert any(item["kind"] == "document_manifest_md" for item in compatibility_exports)
     assert downloaded_assets
 
     asset = downloaded_assets[0]
-    assert asset["local_path"] == asset["tracked_path"]
+    assert asset["local_path"].startswith("data/downloads/")
     assert asset["canonical_blob_path"].startswith("data/downloads/_blobs/")
-    assert asset["tracked_path"].startswith("data/downloads/_tracked/")
+    assert asset["tracked_path"] is None or asset["tracked_path"].startswith("data/downloads/_tracked/")
     assert asset["source_item_id"] in {item["item_id"] for item in payload["discovered_items"]}

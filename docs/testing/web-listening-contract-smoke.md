@@ -21,7 +21,7 @@ Important boundary:
 
 - The sample fixture represents the planned `web-listening-manifest.v1` artifact body.
 - The current CLI command `web-listening export-manifest --json` still emits `job_delivery.v1` about the existing YAML/Markdown outputs.
-- Runtime export work should keep those two layers distinct unless and until the CLI contract is explicitly changed.
+- Runtime export work should keep those two layers distinct. A follow-up may add a JSON file output, a new flag, or another response mode for this v1 artifact body without changing the current `--json` wrapper contract.
 
 ## Minimal local check
 
@@ -30,7 +30,7 @@ python -m json.tool docs/testing/fixtures/web-listening-manifest-v1.sample.json 
 python -m pytest tests/test_manifest_contract_fixture.py -q
 ```
 
-This verifies only that the fixture is parseable JSON. Runtime export support will need focused CLI tests once `web-listening export-manifest --json` emits this v1 envelope.
+Together these checks verify that the fixture is parseable JSON and that it preserves the expected contract shape: schema version, artifact kinds, downloaded asset handoff fields, and blob/tracked path conventions. Runtime export support will need focused CLI tests once a command or output mode emits this v1 artifact body.
 
 ## PR-ready validation note
 

@@ -21,7 +21,8 @@
     "output_paths": [
       "data/reports/tracking_report_soa_2026-04-07.md",
       "data/reports/tracking_report_soa_2026-04-07.yaml",
-      "data/reports/document_manifest_soa_2026-04-07.yaml"
+      "data/plans/document_manifest_soa_2026-04-07.yaml",
+      "data/reports/document_manifest_soa_2026-04-07.md"
     ],
     "idempotency_key": "soa|section_documents|2026-04-07",
     "parent_run_id": null,
@@ -111,8 +112,26 @@
       {
         "artifact_id": "document-manifest-yaml",
         "kind": "document_manifest_yaml",
-        "path": "data/reports/document_manifest_soa_2026-04-07.yaml",
+        "path": "data/plans/document_manifest_soa_2026-04-07.yaml",
         "media_type": "application/x-yaml",
+        "sha256": null,
+        "created_at": "2026-04-07T15:29:20Z",
+        "provenance": {
+          "source_id": "soa",
+          "run_id": "run-soa-20260407T153000Z",
+          "input_artifacts": [
+            "data/plans/monitor_scope_soa_2026-04-07.yaml"
+          ],
+          "parent_item_id": null,
+          "observed_at": "2026-04-07T15:20:00Z",
+          "extraction_method": "export_scope_document_manifest"
+        }
+      },
+      {
+        "artifact_id": "document-manifest-md",
+        "kind": "document_manifest_md",
+        "path": "data/reports/document_manifest_soa_2026-04-07.md",
+        "media_type": "text/markdown",
         "sha256": null,
         "created_at": "2026-04-07T15:29:20Z",
         "provenance": {
@@ -223,7 +242,8 @@
   },
   "errors": [],
   "deprecated": {
-    "document_manifest_yaml": "data/reports/document_manifest_soa_2026-04-07.yaml"
+    "document_manifest_yaml": "data/plans/document_manifest_soa_2026-04-07.yaml",
+    "document_manifest_md": "data/reports/document_manifest_soa_2026-04-07.md"
   },
   "metadata": {
     "review_status": "sample_fixture_only"

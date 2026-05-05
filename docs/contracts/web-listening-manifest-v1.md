@@ -33,7 +33,8 @@ The current staged workflow already produces several operator and agent artifact
 | bootstrap-scope | `bootstrap_scope_summary_<site>_<date>.md` | Markdown | quality summary |
 | run-scope/report-scope | `tracking_report_<site>_<date>.md` | Markdown | human-readable tracking report |
 | run-scope/report-scope | `tracking_report_<site>_<date>.yaml` | YAML | structured tracking report |
-| export-manifest | `document_manifest_<site>_<date>.yaml` | YAML | current document list export |
+| export-manifest | `document_manifest_<site>_<date>.yaml` | YAML | current structured document list export |
+| export-manifest | `document_manifest_<site>_<date>.md` | Markdown | current human-readable document manifest report |
 
 `web-listening-manifest.v1` does not remove these files. It provides a stable JSON envelope that points to them and to downloaded assets with explicit provenance.
 

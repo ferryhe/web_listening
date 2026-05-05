@@ -227,6 +227,9 @@ Typical artifacts from the staged workflow:
 - `tracking_report_<site>_<date>.md`
 - `tracking_report_<site>_<date>.yaml`
 - `document_manifest_<site>_<date>.yaml`
+- contract-only handoff docs:
+  - `docs/contracts/web-listening-manifest-v1.md`
+  - `docs/testing/fixtures/web-listening-manifest-v1.sample.json`
 
 ## Legacy Interfaces
 

@@ -47,7 +47,27 @@ Implemented REST endpoints still focus on the site-level monitoring layer:
 
 ## Packaged CLI
 
-The packaged `web-listening` CLI still focuses mostly on the older site-level flow, but it now also exposes stable artifact commands for the staged workflow:
+The packaged `web-listening` CLI is the canonical entrypoint for the staged agent-facing workflow and still preserves older site-level commands for compatibility.
+
+Canonical staged workflow commands:
+
+- `discover`
+- `classify`
+- `select`
+- `plan-scope`
+- `bootstrap-scope`
+- `run-scope`
+- `report-scope`
+- `export-manifest`
+
+Additional staged artifact helpers:
+
+- `create-monitor-task`
+- `export-tracking-report`
+- `list-jobs`
+- `get-job`
+
+Legacy site-level commands:
 
 - `add-site`
 - `list-sites`
@@ -57,12 +77,10 @@ The packaged `web-listening` CLI still focuses mostly on the older site-level fl
 - `list-docs`
 - `analyze`
 - `serve`
-- `create-monitor-task`
-- `export-tracking-report`
 
-## Tool-Driven Tree Workflow
+## Lower-Level Compatibility Tools
 
-The staged tree workflow is implemented through dedicated tools:
+The older staged `tools/*.py` scripts remain available as compatibility and developer-oriented wrappers around the same package blocks:
 
 - `tools/discover_site_sections.py`
 - `tools/classify_site_sections.py`
@@ -75,8 +93,8 @@ The staged tree workflow is implemented through dedicated tools:
 
 This means:
 
-- tree monitoring is implemented and usable
-- but it is not yet exposed as first-class REST or packaged CLI commands
+- tree monitoring is implemented, usable, and exposed through first-class packaged CLI commands
+- REST still focuses on the older site-level monitoring layer
 
 ## Current Agent-Readable Outputs
 

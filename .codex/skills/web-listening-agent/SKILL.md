@@ -27,18 +27,19 @@ Treat the repo as a monitoring platform with three layers:
 
 ## Current Recommended Workflow
 
-For new site-tree monitoring work, prefer the staged tool flow:
+For new site-tree monitoring work, use the packaged `web-listening` CLI as the canonical agent and operator entrypoint:
 
-1. `tools/discover_site_sections.py`
-2. `tools/classify_site_sections.py`
+1. `web-listening discover --catalog ...`
+2. `web-listening classify --catalog ...`
 3. reviewed `section_selection.yaml`
-4. `tools/plan_monitor_scope.py`
-5. `tools/bootstrap_site_tree.py --scope-path ...`
-6. `tools/summarize_scope_bootstrap.py`
-7. `tools/export_scope_document_manifest.py`
-8. `tools/run_site_tree.py`
+4. `web-listening select --selection-path ...`
+5. `web-listening plan-scope --selection-path ...`
+6. `web-listening bootstrap-scope --scope-path ...`
+7. `web-listening run-scope --scope-path ...`
+8. `web-listening report-scope --scope-path ...`
+9. `web-listening export-manifest --scope-path ...`
 
-Use the packaged CLI and REST API mainly for the older site-level monitoring layer.
+The older `tools/*.py` scripts still exist, but they are lower-level compatibility and developer-oriented wrappers around the same staged workflow blocks. REST currently remains focused on the older site-level monitoring surface.
 
 ## Guardrails
 

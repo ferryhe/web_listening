@@ -151,4 +151,4 @@ This document defines how to decide what to monitor.
 
 The crawler-side rules for actually bootstrapping and rerunning a selected scope live in:
 
-- [TREE_MONITORING_DESIGN.md](C:/Project/web_listening/docs/design/TREE_MONITORING_DESIGN.md)
+- [TREE_MONITORING_DESIGN.md](TREE_MONITORING_DESIGN.md)

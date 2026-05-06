@@ -29,6 +29,19 @@ That means the agent can resume work from files on disk instead of relying on pr
 ## Recommended Commands
 
 ```powershell
+.venv\Scripts\python -m web_listening.cli discover --catalog dev
+.venv\Scripts\python -m web_listening.cli classify --catalog dev
+.venv\Scripts\python -m web_listening.cli plan-scope --selection-path data\plans\section_selection_soa_2026-04-07.yaml
+.venv\Scripts\python -m web_listening.cli bootstrap-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files
+.venv\Scripts\python -m web_listening.cli report-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
+.venv\Scripts\python -m web_listening.cli export-manifest --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
+```
+
+## Compatibility Commands
+
+Lower-level wrappers remain available when direct tool entry is needed:
+
+```powershell
 .venv\Scripts\python tools\discover_site_sections.py --catalog dev
 .venv\Scripts\python tools\classify_site_sections.py --catalog dev
 .venv\Scripts\python tools\plan_monitor_scope.py --selection-path data\plans\section_selection_soa_2026-04-07.yaml
@@ -39,6 +52,5 @@ That means the agent can resume work from files on disk instead of relying on pr
 
 ## Current Caveat
 
-The staged tree workflow is skill-and-tool driven today.
-
-It is not yet exposed as a first-class REST or packaged CLI workflow.
+The staged tree workflow is now exposed as a first-class packaged CLI workflow.
+REST still focuses on the older site-level monitoring surface.

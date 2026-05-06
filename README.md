@@ -17,7 +17,7 @@ Instead of monitoring a whole site blindly from the homepage, the repo now suppo
 - SHA-256 file dedupe with source-oriented tracked paths
 - YAML artifacts for agent handoff plus Markdown reports for human review
 
-Documentation index: [docs/README.md](C:/Project/web_listening/docs/README.md)
+Documentation index: [docs/README.md](docs/README.md)
 
 ## Current Status
 
@@ -96,8 +96,8 @@ Main settings:
 
 ## Recommended Workflow
 
-The packaged `web-listening` CLI is now the primary entrypoint for the staged tree workflow.
-The older `tools/*.py` scripts still exist, but they should be treated as lower-level compatibility entrypoints.
+The packaged `web-listening` CLI is the canonical agent and operator entrypoint for the staged tree workflow.
+The older `tools/*.py` scripts still exist, but they should be treated as lower-level compatibility entrypoints and developer-oriented wrappers.
 
 ### First-time initialization rule
 
@@ -233,15 +233,37 @@ Typical artifacts from the staged workflow:
   - `docs/contracts/web-listening-manifest-v1.md`
   - `docs/testing/fixtures/web-listening-manifest-v1.sample.json`
 
-## Legacy Interfaces
+## Interface Authority Map
 
 The packaged CLI and REST API still exist and are useful for site-level monitoring.
-The packaged CLI now also exposes stable local artifact commands for agent workflows:
+For the staged agent workflow, use the packaged `web-listening` CLI as the canonical authority path:
+
+- `web-listening discover`
+- `web-listening classify`
+- `web-listening select`
+- `web-listening plan-scope`
+- `web-listening bootstrap-scope`
+- `web-listening run-scope`
+- `web-listening report-scope`
+- `web-listening export-manifest`
+
+Additional staged artifact helpers exposed by the packaged CLI:
 
 - `web-listening create-monitor-task`
 - `web-listening export-tracking-report`
 
-Legacy site-level commands remain:
+Compatibility and lower-level entrypoints remain available:
+
+- `tools/discover_site_sections.py`
+- `tools/classify_site_sections.py`
+- `tools/plan_monitor_scope.py`
+- `tools/bootstrap_site_tree.py`
+- `tools/summarize_scope_bootstrap.py`
+- `tools/export_scope_document_manifest.py`
+- `tools/explain_tree_bootstrap.py`
+- `tools/run_site_tree.py`
+
+Legacy site-level packaged commands also remain:
 
 - `web-listening add-site`
 - `web-listening check`
@@ -251,7 +273,7 @@ Legacy site-level commands remain:
 
 Current status:
 
-- the packaged `web-listening` CLI now exposes the staged discover/classify/select/plan/bootstrap/run/report/manifest flow directly
+- the packaged `web-listening` CLI is the current canonical entrypoint for the staged discover/classify/select/plan/bootstrap/run/report/manifest flow
 - the lower-level `tools/*.py` scripts still exist as compatibility entrypoints and developer-oriented wrappers around the same workflow
 
 ## Validation
@@ -267,15 +289,15 @@ Use the live validation commands instead of relying on committed point-in-time s
 .venv\Scripts\python tools\run_agent_rescue_validation.py
 ```
 
-Validation guide: [docs/validation/README.md](C:/Project/web_listening/docs/validation/README.md)
+Validation guide: [docs/validation/README.md](docs/validation/README.md)
 
 ## Active Docs
 
 Start with:
 
-- [AGENT_SCOPE_PLANNING_DESIGN.md](C:/Project/web_listening/docs/design/AGENT_SCOPE_PLANNING_DESIGN.md)
-- [TREE_MONITORING_DESIGN.md](C:/Project/web_listening/docs/design/TREE_MONITORING_DESIGN.md)
-- [AGENT_SITE_MONITORING_MASTER_PLAN.md](C:/Project/web_listening/docs/roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md)
-- [SMOKE_SITE_MANAGEMENT.md](C:/Project/web_listening/docs/operations/SMOKE_SITE_MANAGEMENT.md)
-- [TREE_BUDGET_RULES.md](C:/Project/web_listening/docs/operations/TREE_BUDGET_RULES.md)
-- [OPENCLAW_SKILL_USAGE.md](C:/Project/web_listening/docs/skills/OPENCLAW_SKILL_USAGE.md)
+- [AGENT_SCOPE_PLANNING_DESIGN.md](docs/design/AGENT_SCOPE_PLANNING_DESIGN.md)
+- [TREE_MONITORING_DESIGN.md](docs/design/TREE_MONITORING_DESIGN.md)
+- [AGENT_SITE_MONITORING_MASTER_PLAN.md](docs/roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md)
+- [SMOKE_SITE_MANAGEMENT.md](docs/operations/SMOKE_SITE_MANAGEMENT.md)
+- [TREE_BUDGET_RULES.md](docs/operations/TREE_BUDGET_RULES.md)
+- [OPENCLAW_SKILL_USAGE.md](docs/skills/OPENCLAW_SKILL_USAGE.md)

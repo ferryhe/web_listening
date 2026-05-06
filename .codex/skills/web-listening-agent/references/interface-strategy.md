@@ -2,34 +2,37 @@
 
 ## Decision
 
-Keep two layers clear:
+Keep three layers clear:
 
-- packaged REST and CLI for the older site-level monitoring contract
-- tool-driven YAML workflows for the newer staged tree-monitoring contract
+- packaged `web-listening` CLI as the canonical staged agent workflow entrypoint
+- packaged REST for the older site-level monitoring contract
+- `tools/*.py` as lower-level compatibility and developer-oriented wrappers around package blocks
 
 ## Current Reality
 
-Today the staged tree workflow is real, but it is implemented through `tools/*.py`.
+Today the staged tree workflow is real and exposed through first-class packaged CLI commands:
 
-That is acceptable for now because:
+```text
+web-listening discover -> classify -> select -> plan-scope -> bootstrap-scope -> run-scope -> report-scope -> export-manifest
+```
 
-- the artifact contracts are stabilizing
-- the planning layer is file-based
-- the crawler and storage layers are already reusable
+The `tools/*.py` scripts still exist for compatibility and direct developer access to lower-level blocks, but new agent/operator handoffs should start from the packaged CLI.
 
 ## Near-Term Rule
 
 When extending the staged tree workflow:
 
-- prefer stable local artifact contracts first
-- do not rush REST or MCP wrappers before the YAML and storage outputs settle
+- make the packaged CLI the primary user-visible surface
+- keep stable local artifact contracts first
+- do not rush REST or MCP wrappers before the YAML, JSON, and storage outputs settle
+- do not create separate business logic paths for CLI, tools, REST, or future MCP wrappers
 
 ## Long-Term Direction
 
-Later, the staged workflow can be exposed through REST, packaged CLI, or MCP.
+Later, the staged workflow can also be exposed through REST or MCP.
 
 When that happens:
 
 - keep evidence pointers intact
-- do not invent separate business logic paths for each interface
 - wrap the same underlying planning and crawl blocks
+- preserve the packaged CLI contract as the local automation baseline

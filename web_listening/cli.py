@@ -636,6 +636,7 @@ def export_manifest(
     run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run."),
     yaml_path: str = typer.Option("", "--yaml-path", help="Optional manifest YAML output path."),
     report_path: str = typer.Option("", "--report-path", help="Optional manifest Markdown report path."),
+    manifest_json_path: str = typer.Option("", "--manifest-json-path", help="Optional web-listening-manifest.v1 JSON output path."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
 ):
     """Export scope document manifest artifacts."""
@@ -650,6 +651,7 @@ def export_manifest(
         run_id=run_id,
         yaml_path=yaml_path or None,
         report_path=report_path or None,
+        manifest_json_path=manifest_json_path or None,
     )
     job = persist_job_result(
         job_type="scope.manifest",
@@ -657,6 +659,7 @@ def export_manifest(
         run_id=artifacts.manifest.run_id,
         produced_artifacts={
             "scope_path": str(scope_path),
+            "manifest_json_path": str(artifacts.manifest_json_path),
             "yaml_path": str(artifacts.yaml_path),
             "report_path": str(artifacts.report_path),
         },
@@ -670,6 +673,7 @@ def export_manifest(
         human_text=Panel(
             f"[green]Saved scope manifest[/green]\n"
             f"Job ID: {job.job_id}\n"
+            f"Manifest JSON: {artifacts.manifest_json_path}\n"
             f"YAML: {artifacts.yaml_path}\n"
             f"Report: {artifacts.report_path}"
         ),

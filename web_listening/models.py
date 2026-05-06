@@ -217,6 +217,7 @@ class Job(BaseModel):
             if key.endswith("_path") and isinstance(value, str) and value.strip()
         }
         primary_candidates = [
+            ("manifest_json_path", "web_listening_manifest"),
             ("output_path", "tracking_report"),
             ("yaml_path", "yaml_artifact"),
             ("report_path", "workflow_report"),

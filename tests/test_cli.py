@@ -803,7 +803,7 @@ notes: []
 
 
 
-def test_export_manifest_writes_yaml_and_markdown_artifacts(tmp_path: Path, monkeypatch):
+def test_export_manifest_writes_json_yaml_and_markdown_artifacts(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(settings, "db_path", tmp_path / "manifest.db")
 
@@ -881,7 +881,7 @@ selected_sections:
                 document_id=document.id,
                 discovered_url=tracked_file.canonical_url,
                 download_url=tracked_file.canonical_url,
-                tracked_local_path=document.tracked_local_path,
+                tracked_local_path="data/downloads/_tracked/example.com/research/page-a/report--abc12345.pdf",
             )
         )
     finally:
@@ -900,10 +900,15 @@ selected_sections:
 
     assert result.exit_code == 0
     assert "Saved scope manifest" in result.output
+    written_json = list((tmp_path / "manifests").glob("web_listening_manifest_demo_*.json"))
     written_yaml = list((tmp_path / "plans").glob("document_manifest_demo_*.yaml"))
     written_md = list((tmp_path / "reports").glob("document_manifest_demo_*.md"))
+    assert len(written_json) == 1
     assert len(written_yaml) == 1
     assert len(written_md) == 1
+    manifest_payload = json.loads(written_json[0].read_text(encoding="utf-8"))
+    assert manifest_payload["schema_version"] == "web-listening-manifest.v1"
+    assert manifest_payload["downloaded_assets"][0]["tracked_path"].endswith("report--abc12345.pdf")
     assert "Research Report" in written_yaml[0].read_text(encoding="utf-8")
     assert "Scope Document Manifest" in written_md[0].read_text(encoding="utf-8")
 
@@ -923,5 +928,6 @@ selected_sections:
     json_payload = json.loads(json_result.output)
     assert json_payload["contract_version"] == "job_delivery.v1"
     assert json_payload["job"]["job_type"] == "scope.manifest"
-    assert json_payload["artifact_contract"]["primary_kind"] == "yaml_artifact"
+    assert json_payload["artifact_contract"]["primary_kind"] == "web_listening_manifest"
+    assert json_payload["artifact_contract"]["path_map"]["manifest_json_path"].endswith(".json")
     assert json_payload["artifact_contract"]["path_map"]["yaml_path"].endswith(".yaml")

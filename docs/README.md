@@ -65,6 +65,10 @@ These are the long-lived docs that describe the current system:
 - explanation plane:
   - `tracking_report_<site>_<date>.md`
   - `tracking_report_<site>_<date>.yaml`
+- handoff plane:
+  - `web_listening_manifest_<site>_<date>.json`
+  - `document_manifest_<site>_<date>.yaml`
+  - `document_manifest_<site>_<date>.md`
 
 ## Initialization Rule For New Site Lists
 

@@ -7,7 +7,9 @@ from typing import Any
 
 from web_listening.blocks.bootstrap_summary import render_markdown as render_bootstrap_summary_markdown
 from web_listening.blocks.bootstrap_summary import summarize_monitor_scope_bootstrap
-from web_listening.blocks.document_manifest import build_scope_document_manifest, render_markdown as render_manifest_markdown
+from web_listening.blocks.document_manifest import build_scope_document_manifest, build_web_listening_manifest_v1
+from web_listening.blocks.document_manifest import render_markdown as render_manifest_markdown
+from web_listening.blocks.document_manifest import render_web_listening_manifest_json
 from web_listening.blocks.document_manifest import render_yaml_text as render_manifest_yaml
 from web_listening.blocks.document import DocumentProcessor
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, load_monitor_scope_plan, load_section_selection
@@ -92,6 +94,10 @@ def build_default_manifest_yaml_path(site_key: str, now: datetime | None = None)
 
 def build_default_manifest_report_path(site_key: str, now: datetime | None = None) -> Path:
     return _dated_output_path(folder="reports", stem=f"document_manifest_{_safe_key(site_key)}", suffix="md", now=now)
+
+
+def build_default_manifest_json_path(site_key: str, now: datetime | None = None) -> Path:
+    return _dated_output_path(folder="manifests", stem=f"web_listening_manifest_{_safe_key(site_key)}", suffix="json", now=now)
 
 
 def build_section_inventory(
@@ -212,6 +218,8 @@ class ManifestArtifacts:
     manifest: Any
     yaml_path: Path
     report_path: Path
+    manifest_json: dict
+    manifest_json_path: Path
 
 
 def discover_sections(
@@ -477,6 +485,7 @@ def export_manifest(
     run_id: int | None = None,
     yaml_path: str | Path | None = None,
     report_path: str | Path | None = None,
+    manifest_json_path: str | Path | None = None,
 ) -> ManifestArtifacts:
     plan = load_monitor_scope_plan(scope_path)
     storage = Storage(settings.db_path)
@@ -486,8 +495,30 @@ def export_manifest(
         storage.close()
     resolved_yaml_path = Path(yaml_path) if yaml_path else build_default_manifest_yaml_path(plan.site_key)
     resolved_report_path = Path(report_path) if report_path else build_default_manifest_report_path(plan.site_key)
+    resolved_json_path = Path(manifest_json_path) if manifest_json_path else build_default_manifest_json_path(plan.site_key)
     resolved_yaml_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_report_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_json_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_yaml_path.write_text(render_manifest_yaml(manifest), encoding="utf-8")
     resolved_report_path.write_text(render_manifest_markdown(manifest), encoding="utf-8")
-    return ManifestArtifacts(manifest=manifest, yaml_path=resolved_yaml_path, report_path=resolved_report_path)
+
+    storage = Storage(settings.db_path)
+    try:
+        manifest_json = build_web_listening_manifest_v1(
+            scope_path,
+            storage=storage,
+            run_id=run_id,
+            yaml_path=resolved_yaml_path,
+            report_path=resolved_report_path,
+            manifest_json_path=resolved_json_path,
+        )
+    finally:
+        storage.close()
+    resolved_json_path.write_text(render_web_listening_manifest_json(manifest_json), encoding="utf-8")
+    return ManifestArtifacts(
+        manifest=manifest,
+        yaml_path=resolved_yaml_path,
+        report_path=resolved_report_path,
+        manifest_json=manifest_json,
+        manifest_json_path=resolved_json_path,
+    )

@@ -1,7 +1,9 @@
 from pathlib import Path
 from datetime import datetime, timezone
+import json
 
-from web_listening.blocks.document_manifest import build_scope_document_manifest, render_markdown
+from web_listening.blocks.document_manifest import build_scope_document_manifest, build_web_listening_manifest_v1
+from web_listening.blocks.document_manifest import render_markdown, render_web_listening_manifest_json
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text
 from web_listening.blocks.storage import Storage
 from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, PageSnapshot, Site
@@ -156,6 +158,15 @@ selected_sections:
 
         manifest = build_scope_document_manifest(scope_path, storage=storage)
         markdown = render_markdown(manifest)
+        handoff = build_web_listening_manifest_v1(
+            scope_path,
+            storage=storage,
+            yaml_path=tmp_path / "document_manifest_demo.yaml",
+            report_path=tmp_path / "document_manifest_demo.md",
+            manifest_json_path=tmp_path / "web_listening_manifest_demo.json",
+            generated_at=datetime(2026, 4, 7, 15, 30, 0, tzinfo=timezone.utc),
+        )
+        handoff_json = render_web_listening_manifest_json(handoff)
     finally:
         storage.close()
 
@@ -168,6 +179,16 @@ selected_sections:
     assert manifest.documents[0]["downloaded_at"] == "2026-04-07T13:00:00+00:00"
     assert "preferred_display_path" in markdown
     assert "Downloaded at" in markdown
+    assert json.loads(handoff_json)["schema_version"] == "web-listening-manifest.v1"
+    assert handoff["run"]["idempotency_key"].endswith("|1")
+    assert handoff["source"]["source_id"] == "demo"
+    assert handoff["status"]["counts"]["downloaded_assets"] == 1
+    assert handoff["artifacts"]["structured_exports"][0]["kind"] == "web_listening_manifest_json"
+    assert handoff["artifacts"]["compatibility_exports"][0]["kind"] == "document_manifest_yaml"
+    assert handoff["downloaded_assets"][0]["local_path"] == "data/downloads/_tracked/example.com/research/topics/page-a/demo--abcdef12.pdf"
+    assert handoff["downloaded_assets"][0]["canonical_blob_path"] == "data/downloads/_blobs/ab/abcdef.pdf"
+    assert handoff["downloaded_assets"][0]["tracked_path"].endswith("demo--abcdef12.pdf")
+    assert not Path(handoff["run"]["input_paths"][0]).is_absolute()
 
 
 def test_list_scope_documents_falls_back_to_tracked_file_latest_document_for_legacy_rows(tmp_path: Path):

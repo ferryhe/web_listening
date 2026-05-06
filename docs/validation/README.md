@@ -27,7 +27,7 @@ Commands:
 .venv\Scripts\python tools\run_dev_regression.py
 ```
 
-See [DEV_TEST_TARGETS.md](C:/Project/web_listening/docs/operations/DEV_TEST_TARGETS.md) for the current expectations.
+See [DEV_TEST_TARGETS.md](../operations/DEV_TEST_TARGETS.md) for the current expectations.
 
 ### Smoke catalog validation
 

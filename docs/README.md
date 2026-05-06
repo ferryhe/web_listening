@@ -2,27 +2,27 @@
 
 ## Start Here
 
-- [AGENT_SCOPE_PLANNING_DESIGN.md](C:/Project/web_listening/docs/design/AGENT_SCOPE_PLANNING_DESIGN.md)
-- [TREE_MONITORING_DESIGN.md](C:/Project/web_listening/docs/design/TREE_MONITORING_DESIGN.md)
-- [AGENT_SITE_MONITORING_MASTER_PLAN.md](C:/Project/web_listening/docs/roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md)
+- [AGENT_SCOPE_PLANNING_DESIGN.md](design/AGENT_SCOPE_PLANNING_DESIGN.md)
+- [TREE_MONITORING_DESIGN.md](design/TREE_MONITORING_DESIGN.md)
+- [AGENT_SITE_MONITORING_MASTER_PLAN.md](roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md)
 
 ## What Is Active
 
 These are the long-lived docs that describe the current system:
 
 - design:
-  - [AGENT_SCOPE_PLANNING_DESIGN.md](C:/Project/web_listening/docs/design/AGENT_SCOPE_PLANNING_DESIGN.md)
-  - [TREE_MONITORING_DESIGN.md](C:/Project/web_listening/docs/design/TREE_MONITORING_DESIGN.md)
+  - [AGENT_SCOPE_PLANNING_DESIGN.md](design/AGENT_SCOPE_PLANNING_DESIGN.md)
+  - [TREE_MONITORING_DESIGN.md](design/TREE_MONITORING_DESIGN.md)
 - operations:
-  - [DEV_TEST_TARGETS.md](C:/Project/web_listening/docs/operations/DEV_TEST_TARGETS.md)
-  - [SMOKE_SITE_MANAGEMENT.md](C:/Project/web_listening/docs/operations/SMOKE_SITE_MANAGEMENT.md)
-  - [TREE_BUDGET_RULES.md](C:/Project/web_listening/docs/operations/TREE_BUDGET_RULES.md)
+  - [DEV_TEST_TARGETS.md](operations/DEV_TEST_TARGETS.md)
+  - [SMOKE_SITE_MANAGEMENT.md](operations/SMOKE_SITE_MANAGEMENT.md)
+  - [TREE_BUDGET_RULES.md](operations/TREE_BUDGET_RULES.md)
 - roadmap:
-  - [AGENT_SITE_MONITORING_MASTER_PLAN.md](C:/Project/web_listening/docs/roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md)
+  - [AGENT_SITE_MONITORING_MASTER_PLAN.md](roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md)
 - skills:
-  - [OPENCLAW_SKILL_USAGE.md](C:/Project/web_listening/docs/skills/OPENCLAW_SKILL_USAGE.md)
+  - [OPENCLAW_SKILL_USAGE.md](skills/OPENCLAW_SKILL_USAGE.md)
 - validation guide:
-  - [validation/README.md](C:/Project/web_listening/docs/validation/README.md)
+  - [validation/README.md](validation/README.md)
 - contracts:
   - [web-listening-manifest-v1.md](contracts/web-listening-manifest-v1.md)
 - testing fixtures:
@@ -32,6 +32,7 @@ These are the long-lived docs that describe the current system:
 
 ### Primary staged workflow
 
+- canonical entrypoint for agents and operators:
 - `web-listening discover`
 - `web-listening classify`
 - `web-listening select`
@@ -47,6 +48,7 @@ These are the long-lived docs that describe the current system:
 
 ### Lower-level compatibility entrypoints
 
+- compatibility and developer-oriented wrappers:
 - `tools/discover_site_sections.py`
 - `tools/classify_site_sections.py`
 - `tools/plan_monitor_scope.py`
@@ -90,8 +92,8 @@ Draft scope artifacts are review-stage outputs, not automatically approved produ
 - `web-listening analyze`
 - `web-listening serve`
 
-These legacy commands still work for site-level monitoring, while the staged tree workflow now lives in the packaged `web-listening` CLI and package-internal workflow modules. The `tools/*.py` scripts remain compatibility wrappers around that same authority path.
+These legacy commands still work for site-level monitoring, while the staged tree workflow now lives in the packaged `web-listening` CLI and package-internal workflow modules. The `tools/*.py` scripts remain lower-level compatibility wrappers around that same authority path.
 
 ## Archive
 
-- [2026-04-roadmap-history/README.md](C:/Project/web_listening/docs/archive/2026-04-roadmap-history/README.md)
+- [2026-04-roadmap-history/README.md](archive/2026-04-roadmap-history/README.md)

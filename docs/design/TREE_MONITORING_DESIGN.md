@@ -16,7 +16,7 @@ This layer is responsible for:
 
 For the planning layer that chooses what should be monitored, read:
 
-- [AGENT_SCOPE_PLANNING_DESIGN.md](C:/Project/web_listening/docs/design/AGENT_SCOPE_PLANNING_DESIGN.md)
+- [AGENT_SCOPE_PLANNING_DESIGN.md](AGENT_SCOPE_PLANNING_DESIGN.md)
 
 ## Core Boundary Rule
 

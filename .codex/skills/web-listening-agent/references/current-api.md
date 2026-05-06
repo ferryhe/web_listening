@@ -115,7 +115,8 @@ This means:
 
 ## Current Limitations
 
-- no REST or packaged CLI entry point for the full staged planning/bootstrap orchestration
+- no REST entry point for the staged planning/bootstrap workflow
+- packaged CLI exposes the staged workflow as explicit commands, but there is no single all-in-one orchestration command for the full plan/bootstrap/report chain
 - no stable rerun change-bundle export beyond the new tracking report artifact
 - no persistent job model for long tree runs
 - no MCP server yet

@@ -29,13 +29,18 @@ That means the agent can resume work from files on disk instead of relying on pr
 ## Recommended Commands
 
 ```powershell
-.venv\Scripts\python -m web_listening.cli discover --catalog dev
-.venv\Scripts\python -m web_listening.cli classify --catalog dev
-.venv\Scripts\python -m web_listening.cli plan-scope --selection-path data\plans\section_selection_soa_2026-04-07.yaml
-.venv\Scripts\python -m web_listening.cli bootstrap-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files
-.venv\Scripts\python -m web_listening.cli report-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
-.venv\Scripts\python -m web_listening.cli export-manifest --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
+web-listening discover --catalog dev
+web-listening classify --catalog dev
+web-listening select --selection-path data\plans\section_selection_soa_2026-04-07.yaml
+web-listening plan-scope --selection-path data\plans\section_selection_soa_2026-04-07.yaml
+web-listening bootstrap-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files
+web-listening run-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files
+web-listening report-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
+web-listening export-manifest --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
 ```
+
+If the console script is unavailable in a local checkout, use
+`.venv\Scripts\python -m web_listening.cli ...` as the equivalent fallback.
 
 ## Compatibility Commands
 

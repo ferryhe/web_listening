@@ -908,6 +908,9 @@ selected_sections:
     assert len(written_md) == 1
     manifest_payload = json.loads(written_json[0].read_text(encoding="utf-8"))
     assert manifest_payload["schema_version"] == "web-listening-manifest.v1"
+    assert manifest_payload["artifact_root"] == ".."
+    assert manifest_payload["run"]["output_paths"][0].startswith("manifests/")
+    assert manifest_payload["run"]["output_paths"][1].startswith("plans/")
     assert manifest_payload["downloaded_assets"][0]["tracked_path"].endswith("report--abc12345.pdf")
     assert "Research Report" in written_yaml[0].read_text(encoding="utf-8")
     assert "Scope Document Manifest" in written_md[0].read_text(encoding="utf-8")

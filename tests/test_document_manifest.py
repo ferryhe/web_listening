@@ -155,6 +155,21 @@ selected_sections:
                 tracked_local_path="data/downloads/_tracked/example.com/research/topics/page-a/demo--abcdef12.pdf",
             )
         )
+        remote_only_file = storage.upsert_tracked_file(
+            scope_id=scope.id,
+            canonical_url="https://example.com/files/remote-only.pdf",
+            run_id=run.id,
+        )
+        storage.add_file_observation(
+            FileObservation(
+                scope_id=scope.id,
+                run_id=run.id,
+                page_id=page.id,
+                file_id=remote_only_file.id,
+                discovered_url=remote_only_file.canonical_url,
+                download_url=remote_only_file.canonical_url,
+            )
+        )
 
         manifest = build_scope_document_manifest(scope_path, storage=storage)
         markdown = render_markdown(manifest)
@@ -183,8 +198,14 @@ selected_sections:
     assert handoff["run"]["idempotency_key"].endswith("|1")
     assert handoff["source"]["source_id"] == "demo"
     assert handoff["status"]["counts"]["downloaded_assets"] == 1
+    assert handoff["status"]["counts"]["discovered_items"] == 2
     assert handoff["artifacts"]["structured_exports"][0]["kind"] == "web_listening_manifest_json"
+    assert handoff["artifacts"]["structured_exports"][0]["sha256"] is None
     assert handoff["artifacts"]["compatibility_exports"][0]["kind"] == "document_manifest_yaml"
+    assert handoff["artifact_root"] == "."
+    assert handoff["discovered_items"][0]["url"] == "https://example.com/files/demo.pdf"
+    assert handoff["discovered_items"][1]["url"] == "https://example.com/files/remote-only.pdf"
+    assert handoff["downloaded_assets"][0]["source_item_id"] == handoff["discovered_items"][0]["item_id"]
     assert handoff["downloaded_assets"][0]["local_path"] == "data/downloads/_tracked/example.com/research/topics/page-a/demo--abcdef12.pdf"
     assert handoff["downloaded_assets"][0]["canonical_blob_path"] == "data/downloads/_blobs/ab/abcdef.pdf"
     assert handoff["downloaded_assets"][0]["tracked_path"].endswith("demo--abcdef12.pdf")

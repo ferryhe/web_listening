@@ -10,14 +10,15 @@ This contract is intentionally narrower than the current internal database and w
 
 ## Current implementation boundary
 
-Today, `web-listening export-manifest` writes:
+`web-listening export-manifest` writes:
 
+- `web_listening_manifest_<site>_<date>.json`
 - `document_manifest_<site>_<date>.yaml`
 - `document_manifest_<site>_<date>.md`
 
-Today, `web-listening export-manifest --json` returns the existing CLI/API delivery envelope `job_delivery.v1`, which points at those YAML/Markdown artifacts through `artifact_contract.v1`.
+`web-listening export-manifest --json` still returns the existing CLI/API delivery envelope `job_delivery.v1`, and that envelope points at the JSON/YAML/Markdown artifacts through `artifact_contract.v1`.
 
-This document defines the next export artifact payload, not a rename of `job_delivery.v1`. Future runtime work may add a JSON file output, a new flag, or a different response mode, but downstream readers should treat `web-listening-manifest.v1` as the target manifest content.
+This document defines the export artifact payload, not a rename of `job_delivery.v1`. Downstream readers should consume the `web-listening-manifest.v1` JSON file as the stable handoff content while old YAML/Markdown outputs remain compatibility artifacts.
 
 ## Current output inventory
 
@@ -33,7 +34,8 @@ The current staged workflow already produces several operator and agent artifact
 | bootstrap-scope | `bootstrap_scope_summary_<site>_<date>.md` | Markdown | quality summary |
 | run-scope/report-scope | `tracking_report_<site>_<date>.md` | Markdown | human-readable tracking report |
 | run-scope/report-scope | `tracking_report_<site>_<date>.yaml` | YAML | structured tracking report |
-| export-manifest | `document_manifest_<site>_<date>.yaml` | YAML | current structured document list export |
+| export-manifest | `web_listening_manifest_<site>_<date>.json` | JSON | stable downstream handoff manifest |
+| export-manifest | `document_manifest_<site>_<date>.yaml` | YAML | compatibility structured document list export |
 | export-manifest | `document_manifest_<site>_<date>.md` | Markdown | current human-readable document manifest report |
 
 `web-listening-manifest.v1` does not remove these files. It provides a stable JSON envelope that points to them and to downloaded assets with explicit provenance.
@@ -361,7 +363,7 @@ Inline abbreviated example:
 
 - v1 consumers must ignore unknown keys under `metadata`, `extensions`, and `deprecated`.
 - `job_delivery.v1` and `artifact_contract.v1` remain the current machine-readable CLI/API wrapper contracts for persisted jobs and artifact paths.
-- Existing YAML exports such as `document_manifest_<site>_<date>.yaml` remain valid compatibility artifacts while runtime export support migrates to this JSON envelope.
+- Existing YAML exports such as `document_manifest_<site>_<date>.yaml` remain valid compatibility artifacts while `web_listening_manifest_<site>_<date>.json` is the preferred runtime handoff file.
 - Legacy field names may appear under `deprecated`, but new consumers should read the normalized v1 fields first.
 - Breaking field removals require a new `schema_version` such as `web-listening-manifest.v2`.
 

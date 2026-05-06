@@ -226,8 +226,10 @@ Typical artifacts from the staged workflow:
 - `bootstrap_scope_summary_<site>_<date>.md`
 - `tracking_report_<site>_<date>.md`
 - `tracking_report_<site>_<date>.yaml`
+- `web_listening_manifest_<site>_<date>.json`
 - `document_manifest_<site>_<date>.yaml`
-- contract-only handoff docs:
+- `document_manifest_<site>_<date>.md`
+- handoff contract docs:
   - `docs/contracts/web-listening-manifest-v1.md`
   - `docs/testing/fixtures/web-listening-manifest-v1.sample.json`
 

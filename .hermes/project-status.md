@@ -2,11 +2,11 @@
 
 - Date: 2026-05-12
 - Project: web_listening
-- Branch: codex/pr1-acquisition-contracts
-- Run type: PR1 scoped implementation plus remote review fixes
-- Scope: acquisition profile and capture attempt contract only; no crawler, staged workflow, manifest/report integration, or CloakBrowser dependency.
-- Code changes: added `web_listening/blocks/acquisition_profile.py` with Pydantic models, YAML load/render helpers, default profile builder, adapter recommendation helper, safety validation for `cloakbrowser`, explicit stealth authorization handling, disabled-adapter skipping, strict top-level field validation, clean non-mapping YAML root errors, and typed next-adapter recommendations.
-- Tests/docs: added focused unit tests, contract documentation, sample YAML fixture, light README/docs index mentions, and review-fix regressions for authorization, disabled adapters, unknown fields, invalid YAML roots, invalid recommended next adapters, and allowed-domain error wording.
-- Verification: `.venv\Scripts\python -m pytest tests\test_acquisition_profile.py -q` passed with 14 tests; `.venv\Scripts\python -m pytest tests -q` passed with 203 tests; `git diff --check` exited 0 with only line-ending warnings on touched PR1 files.
-- Current conclusion: the fixed workflow remains unchanged; acquisition variability is now represented as a standalone control artifact.
-- Next recommended action: after PR1 review, implement the next PR that consumes these contracts from the acquisition/capture layer without changing staged workflow outputs.
+- Branch: codex/pr2-acquisition-adapters
+- Run type: PR2 scoped implementation plus code-quality review fixes
+- Scope: standalone acquisition adapter/capture evaluation layer over PR1 contracts; no CLI/API/staged workflow integration, no crawler behavior changes, and no CloakBrowser dependency.
+- Code changes: added `web_listening/blocks/acquisition_capture.py` with `CaptureEvaluation`, fetch-result and capture-attempt quality evaluation, HTTP/browser acquisition adapter protocols and wrappers, built-in adapter construction for `web_http` and `browser_rendered`, exception-safe `run_capture_attempt`, PR1 next-adapter recommendations, adapter-level HTTP status response capture, blocked/error preservation during re-evaluation, and 2xx-only status OK semantics.
+- Tests/docs: added network-free unit tests for passing captures, status failures, redirect status failures, word/link/document-link gates, blocked-marker detection, blocked/error re-evaluation preservation, HTTP adapter non-OK response capture, exception capture with recommendation, disabled-adapter skipping, and built-in adapter exposure; updated the acquisition profile contract with PR2 evaluation helper semantics, metadata-based link-count limitation, and 2xx status wording.
+- Verification: `.venv\Scripts\python -m pytest tests\test_acquisition_capture.py -q` passed with 13 tests after review fixes; `.venv\Scripts\python -m pytest tests\test_acquisition_capture.py tests\test_acquisition_profile.py -q` passed with 27 tests; `git diff --check` exited 0 with line-ending warnings on edited markdown/status files only.
+- Current conclusion: acquisition capture evaluation is available as a standalone helper layer while the fixed staged workflow remains unchanged; review findings have focused regressions.
+- Next recommended action: complete final review/validation gates, then automatically commit, push, create PR, inspect remote feedback, and merge when gates pass.

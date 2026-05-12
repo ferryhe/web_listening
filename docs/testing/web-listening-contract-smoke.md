@@ -2,6 +2,15 @@
 
 This smoke fixture documents the handoff from `web_listening` to downstream modules.
 
+## Acquisition picker contract
+
+- Contract: [`docs/contracts/acquisition-tools-v1.md`](../contracts/acquisition-tools-v1.md)
+- Sample catalog: [`docs/testing/fixtures/acquisition-tools-v1.sample.json`](fixtures/acquisition-tools-v1.sample.json)
+- Runtime API: `GET /api/v1/acquisition/tools`
+- Runtime CLI: `web-listening list-acquisition-tools --json`
+
+Delivery UIs and agents should treat the API/CLI catalog as the acquisition tool picker contract. The contract maps ordinary public HTML to `web_http`, dynamic JavaScript pages to `browser_rendered`, authorized stealth-browser/CDP-like contexts to `cloakbrowser`, bulk structured/site-specific scrape jobs to reserved `batch_python`, and discovery/feed cases to reserved `sitemap` or `rss`. The catalog is planning/probing metadata and does not change `bootstrap-scope` or `run-scope` execution.
+
 ## Fixture and runtime artifact
 
 - Contract: [`docs/contracts/web-listening-manifest-v1.md`](../contracts/web-listening-manifest-v1.md)
@@ -27,11 +36,12 @@ Important boundary:
 ## Minimal local check
 
 ```bash
+python -m json.tool docs/testing/fixtures/acquisition-tools-v1.sample.json >/tmp/acquisition-tools-v1.sample.pretty.json
 python -m json.tool docs/testing/fixtures/web-listening-manifest-v1.sample.json >/tmp/web-listening-manifest-v1.sample.pretty.json
-python -m pytest tests/test_manifest_contract_fixture.py tests/test_document_manifest.py tests/test_cli.py -q
+python -m pytest tests/test_acquisition_tools_contract_fixture.py tests/test_manifest_contract_fixture.py tests/test_document_manifest.py tests/test_cli.py -q
 ```
 
-Together these checks verify that the fixture is parseable JSON, that runtime manifest generation preserves the expected contract shape, and that the CLI continues to expose `job_delivery.v1` while pointing at the v1 JSON artifact.
+Together these checks verify that the fixtures are parseable JSON, that the runtime acquisition catalog matches the stable picker surface, that runtime manifest generation preserves the expected contract shape, and that the CLI continues to expose `job_delivery.v1` while pointing at the v1 JSON artifact.
 
 ## PR-ready validation note
 

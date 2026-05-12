@@ -60,10 +60,15 @@ def test_acquisition_tools_endpoint_returns_catalog():
     tools = {tool["adapter"]: tool for tool in payload["tools"]}
     assert tools["web_http"]["probe_capable"] is True
     assert tools["browser_rendered"]["probe_capable"] is True
+    assert tools["browser_rendered"]["recommended_when"][0] == "dynamic JavaScript-rendered public pages"
+    assert tools["browser_rendered"]["runtime_status"] == "optional_runtime"
+    assert tools["browser_rendered"]["optional_runtime"]["extra"] == "browser"
     assert tools["cloakbrowser"]["built_in_now"] is True
     assert tools["cloakbrowser"]["probe_capable"] is True
     assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is True
     assert tools["cloakbrowser"]["optional_runtime"]["extra"] == "cloakbrowser"
+    assert tools["cloakbrowser"]["frontend_control"]["selectable"] is True
+    assert tools["sitemap"]["runtime_status"] == "reserved"
 
 
 def test_acquisition_default_profile_endpoint_returns_profile():

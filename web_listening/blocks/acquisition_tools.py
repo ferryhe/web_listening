@@ -25,11 +25,65 @@ class AcquisitionToolError(ValueError):
 
 
 def acquisition_tools_catalog() -> dict[str, Any]:
+    unchanged_execution = "tool selection does not change bootstrap-scope or run-scope execution in this build"
     tools = [
         {
             "adapter": "web_http",
             "category": "http",
             "purpose": "Fetch public HTML with the built-in HTTP crawler.",
+            "recommended_when": [
+                "ordinary public HTML",
+                "low-cost public pages where server-rendered text and links are visible in the response",
+            ],
+            "not_for": [
+                "pages whose primary content appears only after client-side JavaScript rendering",
+                "authenticated or authorization-gated browsing contexts",
+                "site-specific bulk extraction jobs",
+            ],
+            "operator_inputs": [
+                {
+                    "name": "url",
+                    "type": "http_url",
+                    "required": True,
+                    "description": "Public http/https URL to probe.",
+                },
+                {
+                    "name": "site_key",
+                    "type": "string",
+                    "required": False,
+                    "required_when": "profile_path is not provided",
+                    "description": "Stable site identifier when building an inline acquisition profile; not needed when profile_path is provided.",
+                },
+                {
+                    "name": "profile_path",
+                    "type": "path",
+                    "required": False,
+                    "description": "Optional reviewed acquisition profile to use instead of inline profile fields.",
+                },
+                {
+                    "name": "allowed_domains",
+                    "type": "string_list",
+                    "required": False,
+                    "description": "Optional profile allowlist; defaults to the probe URL host.",
+                },
+            ],
+            "requires_profile_safety": {
+                "allow_stealth_browser": False,
+                "require_authorized_access": False,
+            },
+            "output_contract": {
+                "profile": "acquisition-profile.v1",
+                "probe": "acquisition-probe.v1",
+                "execution": unchanged_execution,
+            },
+            "runtime_status": "available",
+            "frontend_control": {
+                "label": "Public HTML",
+                "picker_group": "General acquisition",
+                "control_kind": "radio_option",
+                "selectable": True,
+                "sort_order": 10,
+            },
             "built_in_now": True,
             "implemented_for_pr3_probing": True,
             "probe_capable": True,
@@ -42,6 +96,57 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             "adapter": "browser_rendered",
             "category": "browser",
             "purpose": "Fetch public pages that need client-side rendering.",
+            "recommended_when": [
+                "dynamic JavaScript-rendered public pages",
+                "public pages where the HTTP response is thin but browser-rendered DOM contains useful text or links",
+            ],
+            "not_for": [
+                "stealth, authenticated, or authorization-gated browser contexts",
+                "bulk structured extraction where a reviewed script is a better fit",
+            ],
+            "operator_inputs": [
+                {
+                    "name": "url",
+                    "type": "http_url",
+                    "required": True,
+                    "description": "Public http/https URL to render and probe.",
+                },
+                {
+                    "name": "site_key",
+                    "type": "string",
+                    "required": False,
+                    "required_when": "profile_path is not provided",
+                    "description": "Stable site identifier when building an inline acquisition profile; not needed when profile_path is provided.",
+                },
+                {
+                    "name": "profile_path",
+                    "type": "path",
+                    "required": False,
+                    "description": "Optional reviewed acquisition profile to use instead of inline profile fields.",
+                },
+            ],
+            "requires_profile_safety": {
+                "allow_stealth_browser": False,
+                "require_authorized_access": False,
+            },
+            "output_contract": {
+                "profile": "acquisition-profile.v1",
+                "probe": "acquisition-probe.v1",
+                "execution": unchanged_execution,
+            },
+            "runtime_status": "optional_runtime",
+            "optional_runtime": {
+                "extra": "browser",
+                "package": "playwright>=1.52.0",
+                "install_note": "Install with `pip install -e .[browser]` and run `playwright install chromium`.",
+            },
+            "frontend_control": {
+                "label": "Rendered Browser",
+                "picker_group": "General acquisition",
+                "control_kind": "radio_option",
+                "selectable": True,
+                "sort_order": 20,
+            },
             "built_in_now": True,
             "implemented_for_pr3_probing": True,
             "probe_capable": True,
@@ -54,6 +159,39 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             "adapter": "sitemap",
             "category": "discovery",
             "purpose": "Reserved contract for sitemap-based acquisition planning.",
+            "recommended_when": [
+                "sitemap discovery or feed-like URL inventory",
+                "sites where XML sitemaps are the clearest source of crawl seeds",
+            ],
+            "not_for": [
+                "direct page capture in this build",
+                "JavaScript rendering or stealth-browser contexts",
+            ],
+            "operator_inputs": [
+                {
+                    "name": "sitemap_url",
+                    "type": "http_url",
+                    "required": False,
+                    "description": "Optional sitemap URL for future discovery/feed selection.",
+                }
+            ],
+            "requires_profile_safety": {
+                "allow_stealth_browser": False,
+                "require_authorized_access": False,
+            },
+            "output_contract": {
+                "profile": "acquisition-profile.v1",
+                "probe": None,
+                "execution": unchanged_execution,
+            },
+            "runtime_status": "reserved",
+            "frontend_control": {
+                "label": "Sitemap",
+                "picker_group": "Reserved discovery/feed",
+                "control_kind": "radio_option",
+                "selectable": False,
+                "sort_order": 40,
+            },
             "built_in_now": False,
             "implemented_for_pr3_probing": False,
             "probe_capable": False,
@@ -65,6 +203,39 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             "adapter": "rss",
             "category": "feed",
             "purpose": "Reserved contract for RSS/feed acquisition planning.",
+            "recommended_when": [
+                "RSS or Atom feed discovery",
+                "sites where feed entries are the intended source of new page candidates",
+            ],
+            "not_for": [
+                "direct page capture in this build",
+                "JavaScript rendering or stealth-browser contexts",
+            ],
+            "operator_inputs": [
+                {
+                    "name": "feed_url",
+                    "type": "http_url",
+                    "required": False,
+                    "description": "Optional RSS or Atom feed URL for future discovery/feed selection.",
+                }
+            ],
+            "requires_profile_safety": {
+                "allow_stealth_browser": False,
+                "require_authorized_access": False,
+            },
+            "output_contract": {
+                "profile": "acquisition-profile.v1",
+                "probe": None,
+                "execution": unchanged_execution,
+            },
+            "runtime_status": "reserved",
+            "frontend_control": {
+                "label": "RSS / Atom",
+                "picker_group": "Reserved discovery/feed",
+                "control_kind": "radio_option",
+                "selectable": False,
+                "sort_order": 50,
+            },
             "built_in_now": False,
             "implemented_for_pr3_probing": False,
             "probe_capable": False,
@@ -76,6 +247,67 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             "adapter": "cloakbrowser",
             "category": "authorized_browser",
             "purpose": "Probe authorized pages with optional CloakBrowser stealth-browser runtime.",
+            "recommended_when": [
+                "authorized stealth browser or CDP-like contexts",
+                "approved access contexts where ordinary public HTTP or rendered browser probes are insufficient",
+            ],
+            "not_for": [
+                "ordinary public HTML",
+                "unauthorized targets or contexts without explicit operator approval",
+                "fixed staged bootstrap/run crawling",
+            ],
+            "operator_inputs": [
+                {
+                    "name": "url",
+                    "type": "http_url",
+                    "required": True,
+                    "description": "Authorized http/https URL to probe.",
+                },
+                {
+                    "name": "site_key",
+                    "type": "string",
+                    "required": False,
+                    "required_when": "profile_path is not provided",
+                    "description": "Stable site identifier when building an inline authorized acquisition profile; not needed when profile_path is provided.",
+                },
+                {
+                    "name": "profile_path",
+                    "type": "path",
+                    "required": False,
+                    "description": "Reviewed profile with both CloakBrowser safety gates enabled.",
+                },
+                {
+                    "name": "allow_stealth_browser",
+                    "type": "boolean",
+                    "required": False,
+                    "required_when": "profile_path is not provided",
+                    "description": "Inline profile approval for stealth-browser probing; use the profile value when profile_path is provided.",
+                },
+                {
+                    "name": "require_authorized_access",
+                    "type": "boolean",
+                    "required": False,
+                    "required_when": "profile_path is not provided",
+                    "description": "Inline profile confirmation that the access context is authorized; use the profile value when profile_path is provided.",
+                },
+            ],
+            "requires_profile_safety": {
+                "allow_stealth_browser": True,
+                "require_authorized_access": True,
+            },
+            "output_contract": {
+                "profile": "acquisition-profile.v1",
+                "probe": "acquisition-probe.v1",
+                "execution": unchanged_execution,
+            },
+            "runtime_status": "optional_runtime",
+            "frontend_control": {
+                "label": "Authorized CloakBrowser",
+                "picker_group": "Authorized acquisition",
+                "control_kind": "radio_option",
+                "selectable": True,
+                "sort_order": 30,
+            },
             "built_in_now": True,
             "implemented_for_pr3_probing": True,
             "probe_capable": True,
@@ -94,6 +326,45 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             "adapter": "batch_python",
             "category": "site_specific_batch",
             "purpose": "Reserved contract for reviewed site-specific batch acquisition scripts.",
+            "recommended_when": [
+                "bulk structured or site-specific scrape jobs",
+                "reviewed extraction tasks that need custom parsing, pagination, or API-like behavior",
+            ],
+            "not_for": [
+                "ad hoc page probing in this build",
+                "unreviewed scripts or scripts with secrets embedded in configuration",
+            ],
+            "operator_inputs": [
+                {
+                    "name": "job_id",
+                    "type": "string",
+                    "required": False,
+                    "description": "Future reviewed batch acquisition job identifier.",
+                },
+                {
+                    "name": "script_reference",
+                    "type": "string",
+                    "required": False,
+                    "description": "Future reviewed script reference; must not contain credentials.",
+                },
+            ],
+            "requires_profile_safety": {
+                "allow_stealth_browser": False,
+                "require_authorized_access": False,
+            },
+            "output_contract": {
+                "profile": "acquisition-profile.v1",
+                "probe": None,
+                "execution": unchanged_execution,
+            },
+            "runtime_status": "reserved",
+            "frontend_control": {
+                "label": "Batch / Site-Specific",
+                "picker_group": "Reserved structured acquisition",
+                "control_kind": "radio_option",
+                "selectable": False,
+                "sort_order": 60,
+            },
             "built_in_now": False,
             "implemented_for_pr3_probing": False,
             "probe_capable": False,
@@ -105,7 +376,39 @@ def acquisition_tools_catalog() -> dict[str, Any]:
     ]
     return {
         "contract_version": CATALOG_CONTRACT_VERSION,
-        "catalog_version": "pr5-2026-05-12",
+        "catalog_version": "pr6-2026-05-12",
+        "tool_selection_rules": [
+            {
+                "input_signal": "ordinary public HTML",
+                "tool": "web_http",
+                "rationale": "Start with the lowest-cost public HTTP capture when useful text and links are server-rendered.",
+            },
+            {
+                "input_signal": "dynamic JS",
+                "tool": "browser_rendered",
+                "rationale": "Use a rendered public browser probe when JavaScript is needed to expose content.",
+            },
+            {
+                "input_signal": "authorized stealth browser/CDP-like context",
+                "tool": "cloakbrowser",
+                "rationale": "Use only with explicit authorization and required profile safety gates.",
+            },
+            {
+                "input_signal": "bulk structured/site-specific scrape",
+                "tool": "batch_python",
+                "rationale": "Reserved for reviewed custom extraction jobs rather than generic crawl probes.",
+            },
+            {
+                "input_signal": "sitemap discovery",
+                "tool": "sitemap",
+                "rationale": "Reserved discovery/feed choice for sitemap-driven URL inventory.",
+            },
+            {
+                "input_signal": "RSS/feed discovery",
+                "tool": "rss",
+                "rationale": "Reserved discovery/feed choice for RSS or Atom source updates.",
+            },
+        ],
         "tools": tools,
     }
 

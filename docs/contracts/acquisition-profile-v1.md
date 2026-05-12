@@ -14,6 +14,8 @@ That sequence is intentionally stable. Site-to-site variation belongs in the acq
 
 PR1 defines the profile and capture-attempt contracts only. It does not integrate these contracts into crawler execution, staged workflow commands, reports, manifests, or CloakBrowser dependencies.
 
+PR2 adds standalone capture evaluation helpers and built-in adapter wrappers for the existing HTTP and rendered-browser crawlers. These helpers evaluate `FetchResult` objects into `capture-attempt.v1` records, but they still do not alter crawler behavior or wire acquisition into CLI/API/staged workflow execution.
+
 ## File Format
 
 - Encoding: UTF-8.
@@ -79,7 +81,7 @@ Defaulted fields:
 | `min_words` | integer | Minimum extracted word count for a successful page capture. |
 | `min_links` | integer | Minimum link count when link discovery is expected. |
 | `min_document_links` | integer | Minimum document/file link count when document discovery is expected. |
-| `require_status_ok` | boolean | Whether HTTP status must be in the successful range. |
+| `require_status_ok` | boolean | Whether HTTP status must be a 2xx success response. |
 | `blocked_markers` | array | Text markers that indicate blocked, gated, or unusable content. |
 
 ### `AcquisitionSafetyPolicy`
@@ -113,6 +115,19 @@ Safety rule:
 | `failure_reason` | string | Human-readable failure reason. |
 | `recommended_next_adapter` | string | Optional next adapter recommendation captured at attempt time. Must be an allowed adapter ID or an empty string. |
 | `metadata` | object | Non-secret adapter-specific result metadata. |
+
+## Capture Evaluation Helpers
+
+`web_listening.blocks.acquisition_capture` provides PR2 helper APIs for evaluating capture quality before future workflow integration:
+
+- `evaluate_fetch_result(adapter, url, result, quality_gates)` converts a crawler `FetchResult` into a `CaptureAttempt`.
+- `evaluate_capture_attempt(attempt, quality_gates)` re-evaluates count/status/metadata gates while preserving existing blocked or error evidence that cannot be reconstructed from a stored attempt alone.
+- `run_capture_attempt(url, adapter, profile, prior_attempts=None)` executes one adapter, catches adapter exceptions as `status: error`, and records the next adapter recommended by `recommend_next_adapter`.
+- `build_builtin_adapters()` exposes only `web_http` and `browser_rendered` wrappers around the existing crawler classes.
+
+Evaluation passes only when required HTTP status is a 2xx response, extracted word count meets `min_words`, metadata link counts meet `min_links`, metadata document-link counts meet `min_document_links`, and no blocked marker is found case-insensitively in captured text or metadata.
+
+Current limitation: `FetchResult` does not expose extracted link objects directly. PR2 therefore reads `metadata.link_count` and `metadata.document_link_count`, defaulting missing values to `0`, until crawler integration provides richer link and document evidence.
 
 ## Recommendation Semantics
 

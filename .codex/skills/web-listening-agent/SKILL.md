@@ -41,6 +41,24 @@ For new site-tree monitoring work, use the packaged `web-listening` CLI as the c
 
 The older `tools/*.py` scripts still exist, but they are lower-level compatibility and developer-oriented wrappers around the same staged workflow blocks. REST currently remains focused on the older site-level monitoring surface.
 
+## Acquisition Tool Selection
+
+When a task asks how an agent or frontend should decide between HTTP, rendered browser, CloakBrowser, feed, sitemap, or batch extraction, load the `acquisition-tools.v1` picker contract first:
+
+```powershell
+web-listening list-acquisition-tools --json
+```
+
+or use:
+
+```text
+GET /api/v1/acquisition/tools
+```
+
+Use `tool_selection_rules` to map observed site signals to an adapter, then check each selected tool's `runtime_status`, `probe_capable`, `operator_inputs`, `requires_profile_safety`, `optional_runtime`, and `safety_notes` before probing. Build or supply an `acquisition-profile.v1`, run `probe-acquisition` or `POST /api/v1/acquisition/probe`, and keep the returned acquisition evidence for review and report/manifest surfaces.
+
+Do not treat picker/probe selection as changing the fixed staged execution path. In this build, `bootstrap-scope` and `run-scope` remain the production crawl execution path, while acquisition profiles and probes are planning and evidence-gathering surfaces.
+
 ## Guardrails
 
 - keep crawling, storage, document handling, and analysis composable

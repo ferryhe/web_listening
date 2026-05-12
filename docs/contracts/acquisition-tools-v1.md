@@ -40,6 +40,20 @@ In this build, only `web_http`, `browser_rendered`, and `cloakbrowser` are probe
 
 `sitemap` and `rss` are reserved discovery/feed choices. `batch_python` is reserved for reviewed structured or site-specific acquisition jobs.
 
+## Agent Usage
+
+Agents should use this catalog as a decision and probe-planning contract:
+
+1. Load the catalog from the API, CLI, or Python helper.
+2. Compare observed site signals with `tool_selection_rules`.
+3. Select a candidate tool only when `runtime_status`, `probe_capable`, `optional_runtime`, and `requires_profile_safety` allow it.
+4. Collect the tool's `operator_inputs`, using either a reviewed `profile_path` or inline profile fields such as `url` and conditional `site_key`.
+5. Build or provide an `acquisition-profile.v1`.
+6. Run `probe-acquisition` or `POST /api/v1/acquisition/probe`.
+7. Store the probe result as acquisition evidence for operator review, reports, and manifests.
+
+Picker/probe selection is not execution routing for the staged crawler. `bootstrap-scope` and `run-scope` remain the fixed production crawl path in this build.
+
 ## Tool Entry Fields
 
 Existing fields remain backward-compatible:

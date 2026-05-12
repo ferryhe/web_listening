@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -16,6 +17,7 @@ AdapterId = Literal[
     "cloakbrowser",
     "batch_python",
 ]
+AdapterRecommendation = AdapterId | Literal[""]
 
 ALLOWED_ADAPTER_IDS: tuple[str, ...] = (
     "web_http",
@@ -25,6 +27,7 @@ ALLOWED_ADAPTER_IDS: tuple[str, ...] = (
     "cloakbrowser",
     "batch_python",
 )
+ALLOWED_DOMAINS_ERROR = "allowed_domains must be a list of non-empty strings or a single string"
 
 
 class AcquisitionAdapterConfig(BaseModel):
@@ -72,17 +75,17 @@ class AcquisitionSafetyPolicy(BaseModel):
         elif isinstance(value, list):
             values = value
         else:
-            raise ValueError("allowed_domains must be a list of non-empty strings")
+            raise ValueError(ALLOWED_DOMAINS_ERROR)
         domains = [str(item).strip() for item in values]
         if any(not domain for domain in domains):
-            raise ValueError("allowed_domains must contain only non-empty strings")
+            raise ValueError(ALLOWED_DOMAINS_ERROR)
         return domains
 
     @field_validator("allowed_domains")
     @classmethod
     def validate_allowed_domains(cls, value: list[str]) -> list[str]:
         if any(not str(domain).strip() for domain in value):
-            raise ValueError("allowed_domains must contain only non-empty strings")
+            raise ValueError(ALLOWED_DOMAINS_ERROR)
         return value
 
     @property
@@ -138,7 +141,7 @@ class CaptureAttempt(BaseModel):
     link_count: int = 0
     document_link_count: int = 0
     failure_reason: str = ""
-    recommended_next_adapter: str = ""
+    recommended_next_adapter: AdapterRecommendation = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -209,7 +212,11 @@ def build_default_acquisition_profile(
 
 
 def load_acquisition_profile(path: str | Path) -> AcquisitionProfile:
-    payload: dict[str, Any] = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, Mapping):
+        raise ValueError("acquisition profile YAML root must be a mapping/object")
     return AcquisitionProfile(**payload)
 
 
@@ -222,7 +229,7 @@ def render_acquisition_profile_yaml(profile: AcquisitionProfile) -> str:
     )
 
 
-def recommend_next_adapter(profile: AcquisitionProfile, attempts: list[CaptureAttempt]) -> str:
+def recommend_next_adapter(profile: AcquisitionProfile, attempts: list[CaptureAttempt]) -> AdapterRecommendation:
     if any(attempt.status == "passed" for attempt in attempts):
         return ""
     attempted = {attempt.adapter for attempt in attempts}

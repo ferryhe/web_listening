@@ -132,6 +132,25 @@ def test_yaml_fixture_loads_and_round_trips_to_valid_profile(tmp_path: Path):
     assert round_tripped == profile
 
 
+@pytest.mark.parametrize(
+    ("yaml_text", "root_kind"),
+    [
+        ("- web_http\n- browser_rendered\n", "list"),
+        ("web_http\n", "scalar"),
+    ],
+)
+def test_load_acquisition_profile_rejects_non_mapping_yaml_roots(
+    tmp_path: Path,
+    yaml_text: str,
+    root_kind: str,
+):
+    profile_path = tmp_path / f"{root_kind}-profile.yaml"
+    profile_path.write_text(yaml_text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="YAML root must be a mapping"):
+        load_acquisition_profile(profile_path)
+
+
 def test_recommend_next_adapter_walks_fallback_order_and_stops_after_passed_attempt():
     profile = build_default_acquisition_profile(
         "example-site",
@@ -216,3 +235,21 @@ def test_contract_models_reject_unknown_top_level_fields():
             url="https://example.com/",
             unexpected="field",
         )
+
+
+def test_capture_attempt_rejects_unsupported_recommended_next_adapter():
+    with pytest.raises(ValidationError, match="recommended_next_adapter"):
+        CaptureAttempt(
+            adapter="web_http",
+            status="failed_quality_gate",
+            url="https://example.com/",
+            recommended_next_adapter="unsupported_adapter",
+        )
+
+
+def test_allowed_domains_error_message_mentions_single_string_or_list():
+    with pytest.raises(
+        ValidationError,
+        match="list of non-empty strings or a single string",
+    ):
+        AcquisitionSafetyPolicy(allowed_domains={"example.com": True})

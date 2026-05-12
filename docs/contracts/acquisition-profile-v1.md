@@ -111,7 +111,7 @@ Safety rule:
 | `link_count` | integer | Extracted link count. |
 | `document_link_count` | integer | Extracted document/file link count. |
 | `failure_reason` | string | Human-readable failure reason. |
-| `recommended_next_adapter` | string | Optional next adapter recommendation captured at attempt time. |
+| `recommended_next_adapter` | string | Optional next adapter recommendation captured at attempt time. Must be an allowed adapter ID or an empty string. |
 | `metadata` | object | Non-secret adapter-specific result metadata. |
 
 ## Recommendation Semantics

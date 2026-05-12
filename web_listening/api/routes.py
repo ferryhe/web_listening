@@ -8,6 +8,12 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 
+from web_listening.blocks.acquisition_tools import (
+    AcquisitionToolError,
+    acquisition_tools_catalog,
+    build_default_acquisition_profile_payload,
+    probe_acquisition_url,
+)
 from web_listening.blocks.job_orchestration import execute_job, persist_job_result
 from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
 from web_listening.blocks.rescue import run_site_rescue
@@ -116,6 +122,23 @@ class AnalyzeRequest(BaseModel):
 class DownloadDocsRequest(BaseModel):
     institution: str
     url: Optional[str] = None
+
+
+class AcquisitionDefaultProfileRequest(BaseModel):
+    site_key: str
+    allowed_domains: List[str] = Field(default_factory=list)
+    allow_stealth_browser: bool = False
+    require_authorized_access: bool = False
+
+
+class AcquisitionProbeRequest(BaseModel):
+    url: str
+    site_key: Optional[str] = None
+    adapter: str = "web_http"
+    profile_path: Optional[str] = None
+    allowed_domains: List[str] = Field(default_factory=list)
+    allow_stealth_browser: bool = False
+    require_authorized_access: bool = False
 
 
 class UpdateDocumentContentRequest(BaseModel):
@@ -246,6 +269,45 @@ def _serialize_report_payload(report: object) -> Optional[dict[str, object]]:
     if isinstance(report, dict):
         return report
     return None
+
+
+# ── Acquisition ─────────────────────────────────────────────────────────────
+
+@router.get("/acquisition/tools")
+def get_acquisition_tools():
+    return acquisition_tools_catalog()
+
+
+@router.post("/acquisition/profiles/default")
+def build_default_acquisition_profile_endpoint(body: AcquisitionDefaultProfileRequest):
+    try:
+        return build_default_acquisition_profile_payload(
+            site_key=body.site_key,
+            allowed_domains=body.allowed_domains,
+            allow_stealth_browser=body.allow_stealth_browser,
+            require_authorized_access=body.require_authorized_access,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/acquisition/probe")
+def probe_acquisition_endpoint(body: AcquisitionProbeRequest):
+    resolved_profile_path = str(_safe_input_path(body.profile_path)) if body.profile_path else None
+    try:
+        return probe_acquisition_url(
+            url=body.url,
+            site_key=body.site_key,
+            adapter_id=body.adapter,
+            profile_path=resolved_profile_path,
+            allowed_domains=body.allowed_domains or None,
+            allow_stealth_browser=body.allow_stealth_browser,
+            require_authorized_access=body.require_authorized_access,
+        )
+    except AcquisitionToolError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # ── Sites ───────────────────────────────────────────────────────────────────

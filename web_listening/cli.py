@@ -345,6 +345,110 @@ def analyze(
     ))
 
 
+@app.command("list-acquisition-tools")
+def list_acquisition_tools(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON catalog."),
+):
+    """List acquisition tool contracts and PR3 probe capabilities."""
+    from web_listening.blocks.acquisition_tools import acquisition_tools_catalog
+
+    payload = acquisition_tools_catalog()
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    table = Table(title="Acquisition Tools")
+    table.add_column("Adapter", style="cyan")
+    table.add_column("Category")
+    table.add_column("Built In")
+    table.add_column("Probe")
+    table.add_column("Purpose")
+    for tool in payload["tools"]:
+        table.add_row(
+            tool["adapter"],
+            tool["category"],
+            "yes" if tool["built_in_now"] else "no",
+            "yes" if tool["probe_capable"] else "no",
+            tool["purpose"],
+        )
+    console.print(table)
+
+
+@app.command("build-acquisition-profile")
+def build_acquisition_profile_command(
+    site_key: str = typer.Option(..., "--site-key", help="Stable site key for the acquisition profile."),
+    allowed_domain: list[str] | None = typer.Option(None, "--allowed-domain", help="Allowed domain; repeat for multiple domains."),
+    allow_stealth_browser: bool = typer.Option(False, "--allow-stealth-browser", help="Permit future authorized stealth-browser use."),
+    require_authorized_access: bool = typer.Option(False, "--require-authorized-access", help="Require explicit authorization for protected access."),
+    output: str = typer.Option("", "--output", help="Optional YAML output path."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON payload."),
+):
+    """Build a default acquisition profile control artifact."""
+    from web_listening.blocks.acquisition_profile import AcquisitionProfile, render_acquisition_profile_yaml
+    from web_listening.blocks.acquisition_tools import build_default_acquisition_profile_payload
+
+    output_path = Path(output) if output else None
+    payload = build_default_acquisition_profile_payload(
+        site_key=site_key,
+        allowed_domains=allowed_domain or [],
+        allow_stealth_browser=allow_stealth_browser,
+        require_authorized_access=require_authorized_access,
+        output_path=str(output_path) if output_path else "",
+    )
+    profile = AcquisitionProfile(**payload["profile"])
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    if output_path is not None:
+        console.print(Panel(f"[green]Saved acquisition profile:[/green] {output_path}"))
+    else:
+        console.print(Panel(f"Built acquisition profile for {profile.site_key}\nNo output path provided."))
+
+
+@app.command("probe-acquisition")
+def probe_acquisition_command(
+    url: str = typer.Option(..., "--url", help="One http/https URL to probe."),
+    site_key: str = typer.Option("", "--site-key", help="Stable site key for a generated probe profile."),
+    profile_path: str = typer.Option("", "--profile-path", help="Optional acquisition profile YAML path."),
+    adapter: str = typer.Option("web_http", "--adapter", help="Probe adapter id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON probe payload."),
+):
+    """Probe one URL with a selected acquisition adapter without changing staged workflow execution."""
+    from web_listening.blocks.acquisition_tools import (
+        AcquisitionToolError,
+        probe_acquisition_url,
+        validate_probe_adapter,
+    )
+
+    try:
+        validate_probe_adapter(adapter)
+        payload = probe_acquisition_url(
+            url=url,
+            site_key=site_key or None,
+            adapter_id=adapter,
+            profile_path=profile_path or None,
+        )
+    except (AcquisitionToolError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    attempt = payload["attempt"]
+    console.print(
+        f"Probe {attempt['status']}\n"
+        f"adapter={attempt['adapter']} status_code={attempt['status_code']} "
+        f"words={attempt['word_count']} links={attempt['link_count']}\n"
+        f"next_action={payload['next_action']}"
+    )
+
+
 @app.command("serve")
 def serve(
     host: str = typer.Option("127.0.0.1", "--host"),

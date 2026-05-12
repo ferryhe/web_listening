@@ -462,13 +462,22 @@ def report_scope(
     run_id: int | None = None,
     output_path: str | Path | None = None,
     output_format: str = "md",
+    acquisition_profile_path: str | Path | None = None,
+    capture_attempt_path: str | Path | None = None,
 ) -> ScopeReportArtifacts:
     normalized_format = (output_format or "md").strip().lower()
     if normalized_format not in {"md", "yaml"}:
         raise ValueError("output_format must be one of: md, yaml")
     storage = Storage(settings.db_path)
     try:
-        report = build_tracking_report(scope_path, storage=storage, run_id=run_id, task_path=task_path)
+        report = build_tracking_report(
+            scope_path,
+            storage=storage,
+            run_id=run_id,
+            task_path=task_path,
+            acquisition_profile_path=acquisition_profile_path,
+            capture_attempt_path=capture_attempt_path,
+        )
     finally:
         storage.close()
     resolved_output_path = Path(output_path) if output_path else build_tracking_report_path(report.site_key, format=normalized_format, data_dir=settings.data_dir)
@@ -486,11 +495,19 @@ def export_manifest(
     yaml_path: str | Path | None = None,
     report_path: str | Path | None = None,
     manifest_json_path: str | Path | None = None,
+    acquisition_profile_path: str | Path | None = None,
+    capture_attempt_path: str | Path | None = None,
 ) -> ManifestArtifacts:
     plan = load_monitor_scope_plan(scope_path)
     storage = Storage(settings.db_path)
     try:
-        manifest = build_scope_document_manifest(scope_path, storage=storage, run_id=run_id)
+        manifest = build_scope_document_manifest(
+            scope_path,
+            storage=storage,
+            run_id=run_id,
+            acquisition_profile_path=acquisition_profile_path,
+            capture_attempt_path=capture_attempt_path,
+        )
     finally:
         storage.close()
     resolved_yaml_path = Path(yaml_path) if yaml_path else build_default_manifest_yaml_path(plan.site_key)
@@ -511,6 +528,9 @@ def export_manifest(
             yaml_path=resolved_yaml_path,
             report_path=resolved_report_path,
             manifest_json_path=resolved_json_path,
+            acquisition_profile_path=acquisition_profile_path,
+            capture_attempt_path=capture_attempt_path,
+            precomputed_acquisition_evidence=manifest.acquisition_evidence,
         )
     finally:
         storage.close()

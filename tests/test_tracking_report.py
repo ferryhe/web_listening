@@ -1,6 +1,10 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
+from web_listening.blocks.acquisition_evidence import AcquisitionEvidenceError, acquisition_artifact_rows, load_acquisition_evidence
+from web_listening.blocks.acquisition_profile import build_default_acquisition_profile, render_acquisition_profile_yaml
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text as render_scope_yaml_text
 from web_listening.blocks.monitor_task import build_monitor_task, render_yaml_text as render_task_yaml_text
 from web_listening.blocks.storage import Storage
@@ -41,6 +45,67 @@ selected_sections:
         encoding="utf-8",
     )
     return classification_path, selection_path
+
+
+def test_load_acquisition_evidence_combines_profile_and_probe_payload(tmp_path: Path):
+    profile_path = tmp_path / "acquisition_profile_demo.yaml"
+    profile = build_default_acquisition_profile("demo", allowed_domains=["example.com"])
+    profile_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
+
+    probe_path = tmp_path / "probe.json"
+    probe_path.write_text(
+        """
+{
+  "contract_version": "acquisition-probe.v1",
+  "profile": {"site_key": "demo", "default_adapter": "web_http"},
+  "attempt": {
+    "schema_version": "capture-attempt.v1",
+    "adapter": "web_http",
+    "status": "failed_quality_gate",
+    "url": "https://example.com/",
+    "final_url": "https://example.com/",
+    "status_code": 200,
+    "word_count": 12,
+    "link_count": 1,
+    "document_link_count": 0,
+    "failure_reason": "word_count 12 < min_words 120",
+    "recommended_next_adapter": "browser_rendered",
+    "metadata": {}
+  },
+  "next_action": "try_adapter:browser_rendered"
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = load_acquisition_evidence(profile_path=profile_path, probe_path=probe_path)
+
+    assert evidence is not None
+    assert evidence["schema_version"] == "acquisition-evidence.v1"
+    assert evidence["input_paths"]["profile_path"] == str(profile_path)
+    assert evidence["input_paths"]["probe_path"] == str(probe_path)
+    assert evidence["profile"]["site_key"] == "demo"
+    assert len(evidence["attempts"]) == 1
+    assert evidence["latest_attempt"]["adapter"] == "web_http"
+    assert evidence["recommended_next_adapter"] == "browser_rendered"
+    assert evidence["next_action"] == "try_adapter:browser_rendered"
+
+    rows = acquisition_artifact_rows(profile_path=profile_path, probe_path=probe_path)
+    assert rows[0]["kind"] == "acquisition_profile"
+    assert rows[1]["kind"] == "acquisition_probe"
+
+
+def test_load_acquisition_evidence_rejects_large_artifacts(tmp_path: Path):
+    capture_attempt_path = tmp_path / "huge_capture_attempt.json"
+    capture_attempt_path.write_text(" " * (512 * 1024 + 1), encoding="utf-8")
+
+    try:
+        load_acquisition_evidence(capture_attempt_path=capture_attempt_path)
+    except AcquisitionEvidenceError as exc:
+        assert "too large to inline" in str(exc)
+    else:
+        raise AssertionError("expected AcquisitionEvidenceError for oversized acquisition evidence")
 
 
 def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_and_scope_identity(tmp_path: Path):
@@ -439,6 +504,77 @@ def test_build_tracking_report_without_task_uses_scope_context_only(tmp_path: Pa
     assert report.high_priority_count == 0
     assert "Task Context" not in markdown
     assert "Scope Context" in markdown
+
+
+def test_build_tracking_report_includes_acquisition_evidence_when_paths_are_passed(tmp_path: Path):
+    classification_path, selection_path = _write_scope_inputs(tmp_path)
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+    profile_path = tmp_path / "acquisition_profile_demo.yaml"
+    profile_path.write_text(render_acquisition_profile_yaml(build_default_acquisition_profile("demo")), encoding="utf-8")
+    capture_attempt_path = tmp_path / "capture_attempt_demo.yaml"
+    capture_attempt_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "capture-attempt.v1",
+                "adapter": "web_http",
+                "status": "failed_quality_gate",
+                "url": "https://example.com/",
+                "final_url": "https://example.com/",
+                "status_code": 200,
+                "word_count": 10,
+                "link_count": 1,
+                "document_link_count": 0,
+                "failure_reason": "too thin",
+                "recommended_next_adapter": "browser_rendered",
+                "metadata": {},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    storage = Storage(tmp_path / "tracking-acquisition.db")
+    try:
+        site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+        scope = storage.add_crawl_scope(
+            CrawlScope(
+                site_id=site.id,
+                seed_url="https://example.com/",
+                allowed_origin="https://example.com",
+                allowed_page_prefixes=["/research", "/news"],
+                allowed_file_prefixes=["/"],
+                fetch_mode="http",
+                is_initialized=True,
+            )
+        )
+        run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed", pages_seen=1))
+        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": run.id, "is_initialized": True}))
+
+        report = build_tracking_report(
+            scope_path,
+            storage=storage,
+            run_id=run.id,
+            acquisition_profile_path=profile_path,
+            capture_attempt_path=capture_attempt_path,
+        )
+        markdown = render_markdown(report)
+        yaml_text = render_yaml_text(report)
+        no_evidence_report = build_tracking_report(scope_path, storage=storage, run_id=run.id)
+    finally:
+        storage.close()
+
+    assert report.acquisition_evidence is not None
+    assert report.acquisition_evidence["latest_attempt"]["adapter"] == "web_http"
+    assert report.acquisition_evidence["recommended_next_adapter"] == "browser_rendered"
+    assert any(item["kind"] == "acquisition_profile" and item["path"] == str(profile_path) for item in report.artifact_index)
+    assert any(item["kind"] == "capture_attempt" and item["path"] == str(capture_attempt_path) for item in report.artifact_index)
+    assert "## Acquisition Evidence" in markdown
+    assert "try_adapter:browser_rendered" in markdown
+    assert "acquisition_evidence:" in yaml_text
+    assert no_evidence_report.acquisition_evidence is None
+    assert not any(item["kind"].startswith("acquisition") or item["kind"] == "capture_attempt" for item in no_evidence_report.artifact_index)
 
 
 def test_build_tracking_report_rejects_run_from_different_scope(tmp_path: Path):

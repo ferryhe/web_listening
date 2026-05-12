@@ -686,6 +686,8 @@ def report_scope(
     run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run."),
     output: str = typer.Option("", "--output", help="Optional explicit output path."),
     output_format: str = typer.Option("md", "--format", help="Output format: md or yaml."),
+    acquisition_profile_path: str = typer.Option("", "--acquisition-profile-path", help="Optional acquisition profile YAML evidence path."),
+    capture_attempt_path: str = typer.Option("", "--capture-attempt-path", help="Optional capture attempt or probe evidence path."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
 ):
     """Export a tracking report for one monitor scope."""
@@ -705,7 +707,13 @@ def report_scope(
         run_id=run_id,
         output_path=output or None,
         output_format=normalized_format,
+        acquisition_profile_path=acquisition_profile_path or None,
+        capture_attempt_path=capture_attempt_path or None,
     )
+    acquisition_artifacts = {
+        **({"acquisition_profile_path": str(acquisition_profile_path)} if acquisition_profile_path else {}),
+        **({"capture_attempt_path": str(capture_attempt_path)} if capture_attempt_path else {}),
+    }
     job = persist_job_result(
         job_type="scope.report",
         scope_id=plan.scope_id,
@@ -715,6 +723,7 @@ def report_scope(
             "task_path": str(task_path) if task_path else "",
             "output_path": str(artifacts.output_path),
             "output_format": artifacts.output_format,
+            **acquisition_artifacts,
         },
         accepted_at=started,
         started_at=started,
@@ -741,6 +750,8 @@ def export_manifest(
     yaml_path: str = typer.Option("", "--yaml-path", help="Optional manifest YAML output path."),
     report_path: str = typer.Option("", "--report-path", help="Optional manifest Markdown report path."),
     manifest_json_path: str = typer.Option("", "--manifest-json-path", help="Optional web-listening-manifest.v1 JSON output path."),
+    acquisition_profile_path: str = typer.Option("", "--acquisition-profile-path", help="Optional acquisition profile YAML evidence path."),
+    capture_attempt_path: str = typer.Option("", "--capture-attempt-path", help="Optional capture attempt or probe evidence path."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
 ):
     """Export scope document manifest artifacts."""
@@ -756,7 +767,13 @@ def export_manifest(
         yaml_path=yaml_path or None,
         report_path=report_path or None,
         manifest_json_path=manifest_json_path or None,
+        acquisition_profile_path=acquisition_profile_path or None,
+        capture_attempt_path=capture_attempt_path or None,
     )
+    acquisition_artifacts = {
+        **({"acquisition_profile_path": str(acquisition_profile_path)} if acquisition_profile_path else {}),
+        **({"capture_attempt_path": str(capture_attempt_path)} if capture_attempt_path else {}),
+    }
     job = persist_job_result(
         job_type="scope.manifest",
         scope_id=plan.scope_id,
@@ -766,6 +783,7 @@ def export_manifest(
             "manifest_json_path": str(artifacts.manifest_json_path),
             "yaml_path": str(artifacts.yaml_path),
             "report_path": str(artifacts.report_path),
+            **acquisition_artifacts,
         },
         accepted_at=started,
         started_at=started,

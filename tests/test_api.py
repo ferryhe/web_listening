@@ -759,6 +759,172 @@ selected_sections:
     assert report_artifact["recommended_reader"] == "markdown"
 
 
+def test_scope_report_endpoint_guards_and_passes_acquisition_paths(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+
+    storage = Storage(db_path)
+    site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+    scope = storage.add_crawl_scope(
+        CrawlScope(
+            site_id=site.id,
+            seed_url="https://example.com/",
+            allowed_origin="https://example.com",
+            allowed_page_prefixes=["/research"],
+            allowed_file_prefixes=["/"],
+            fetch_mode="http",
+            is_initialized=True,
+        )
+    )
+    run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="incremental", status="completed", pages_seen=1))
+    storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": run.id, "is_initialized": True}))
+    storage.close()
+
+    classification_path = tmp_path / "classification.yaml"
+    classification_path.write_text(
+        """
+catalog: "dev"
+sites:
+  - site_key: "demo"
+    display_name: "Demo"
+    seed_url: "https://example.com/"
+    homepage_url: "https://example.com/"
+    fetch_mode: "http"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    selection_path = tmp_path / "selection.yaml"
+    selection_path.write_text(
+        """
+site_key: "demo"
+generated_at: "2026-04-07T01:20:54-04:00"
+selection_mode: "manual_with_agent_assist"
+review_status: "recommended_draft"
+business_goal: "Keep research."
+selected_sections:
+  - path: "/research"
+    selection_reason: "Keep research."
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_plan.scope_id = scope.id
+    scope_path = tmp_path / "plans" / "monitor_scope_demo.yaml"
+    scope_path.parent.mkdir(parents=True, exist_ok=True)
+    scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
+
+    profile_path = tmp_path / "profiles" / "acquisition_profile_demo.yaml"
+    capture_attempt_path = tmp_path / "attempts" / "capture_attempt_demo.json"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    capture_attempt_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text("schema_version: acquisition-profile.v1\n", encoding="utf-8")
+    capture_attempt_path.write_text('{"schema_version":"capture-attempt.v1"}\n', encoding="utf-8")
+    report_path = tmp_path / "reports" / "tracking_report_demo.md"
+
+    def fake_report_scope(**kwargs):
+        assert kwargs["acquisition_profile_path"] == str(profile_path.resolve())
+        assert kwargs["capture_attempt_path"] == str(capture_attempt_path.resolve())
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("# Demo report\n", encoding="utf-8")
+        return SimpleNamespace(report=SimpleNamespace(run_id=run.id), output_path=report_path, output_format="md")
+
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.report_scope", fake_report_scope)
+
+    client = TestClient(create_app())
+    response = client.post(
+        f"/api/v1/monitor-scopes/{scope.id}/report",
+        json={
+            "acquisition_profile_path": "profiles/acquisition_profile_demo.yaml",
+            "capture_attempt_path": "attempts/capture_attempt_demo.json",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["produced_artifacts"]["acquisition_profile_path"] == str(profile_path.resolve())
+    assert payload["produced_artifacts"]["capture_attempt_path"] == str(capture_attempt_path.resolve())
+
+
+def test_scope_report_endpoint_rejects_acquisition_path_outside_data_dir(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+
+    storage = Storage(db_path)
+    site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+    scope = storage.add_crawl_scope(
+        CrawlScope(
+            site_id=site.id,
+            seed_url="https://example.com/",
+            allowed_origin="https://example.com",
+            allowed_page_prefixes=["/research"],
+            allowed_file_prefixes=["/"],
+            fetch_mode="http",
+            is_initialized=True,
+        )
+    )
+    storage.close()
+
+    scope_path = tmp_path / "plans" / "monitor_scope_demo.yaml"
+    scope_path.parent.mkdir(parents=True, exist_ok=True)
+    scope_path.write_text(
+        f"scope_fingerprint: demo\nsite_key: demo\ndisplay_name: Demo\ncatalog: dev\ngenerated_at: 2026-04-14T00:00:00+00:00\nselection_review_status: approved\nselection_mode: manual\nbusiness_goal: Track research.\nseed_url: https://example.com/\nhomepage_url: https://example.com/\nfetch_mode: http\nfetch_config_json: {{}}\ntree_strategy: selected_scope\ntree_budget_profile: selected_scope_default\nfile_scope_mode: site_root\nallowed_page_prefixes:\n  - /research\nallowed_file_prefixes:\n  - /\nscope_id: {scope.id}\nselected_focus_prefixes:\n  - /research\nexcluded_page_prefixes: []\ndeferred_page_prefixes: []\nexcluded_categories: []\nmax_depth: 3\nmax_pages: 25\nmax_files: 10\nbased_on: {{}}\nselection_summary: {{}}\nnotes: []\n",
+        encoding="utf-8",
+    )
+
+    client = TestClient(create_app())
+    response = client.post(
+        f"/api/v1/monitor-scopes/{scope.id}/report",
+        json={"acquisition_profile_path": "/tmp/not-allowed-profile.yaml"},
+    )
+
+    assert response.status_code == 422
+    assert "must stay under" in response.json()["detail"]
+
+
+def test_scope_report_endpoint_rejects_acquisition_directory_path(tmp_path, monkeypatch):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+
+    storage = Storage(db_path)
+    site = storage.add_site(Site(url="https://example.com/", name="Demo Tree"))
+    scope = storage.add_crawl_scope(
+        CrawlScope(
+            site_id=site.id,
+            seed_url="https://example.com/",
+            allowed_origin="https://example.com",
+            allowed_page_prefixes=["/research"],
+            allowed_file_prefixes=["/"],
+            fetch_mode="http",
+            is_initialized=True,
+        )
+    )
+    storage.close()
+
+    scope_path = tmp_path / "plans" / "monitor_scope_demo.yaml"
+    scope_path.parent.mkdir(parents=True, exist_ok=True)
+    scope_path.write_text(
+        f"scope_fingerprint: demo\nsite_key: demo\ndisplay_name: Demo\ncatalog: dev\ngenerated_at: 2026-04-14T00:00:00+00:00\nselection_review_status: approved\nselection_mode: manual\nbusiness_goal: Track research.\nseed_url: https://example.com/\nhomepage_url: https://example.com/\nfetch_mode: http\nfetch_config_json: {{}}\ntree_strategy: selected_scope\ntree_budget_profile: selected_scope_default\nfile_scope_mode: site_root\nallowed_page_prefixes:\n  - /research\nallowed_file_prefixes:\n  - /\nscope_id: {scope.id}\nselected_focus_prefixes:\n  - /research\nexcluded_page_prefixes: []\ndeferred_page_prefixes: []\nexcluded_categories: []\nmax_depth: 3\nmax_pages: 25\nmax_files: 10\nbased_on: {{}}\nselection_summary: {{}}\nnotes: []\n",
+        encoding="utf-8",
+    )
+
+    profile_dir = tmp_path / "profiles"
+    profile_dir.mkdir()
+
+    client = TestClient(create_app())
+    response = client.post(
+        f"/api/v1/monitor-scopes/{scope.id}/report",
+        json={"acquisition_profile_path": "profiles"},
+    )
+
+    assert response.status_code == 422
+    assert "must be a file" in response.json()["detail"]
+
+
 def test_scope_report_endpoint_rejects_invalid_format(tmp_path, monkeypatch):
     db_path = tmp_path / "api.db"
     monkeypatch.setattr(routes.settings, "db_path", db_path)

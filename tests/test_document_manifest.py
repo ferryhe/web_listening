@@ -2,8 +2,12 @@ from pathlib import Path
 from datetime import datetime, timezone
 import json
 
+import yaml
+
+from web_listening.blocks.acquisition_profile import build_default_acquisition_profile, render_acquisition_profile_yaml
 from web_listening.blocks.document_manifest import build_scope_document_manifest, build_web_listening_manifest_v1
 from web_listening.blocks.document_manifest import render_markdown, render_web_listening_manifest_json
+from web_listening.blocks.document_manifest import render_yaml_text as render_manifest_yaml_text
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text
 from web_listening.blocks.storage import Storage
 from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, PageSnapshot, Site
@@ -68,6 +72,29 @@ selected_sections:
     plan = build_monitor_scope(selection_path, classification_path=classification_path)
     scope_path = tmp_path / "monitor_scope.yaml"
     scope_path.write_text(render_yaml_text(plan), encoding="utf-8")
+    profile_path = tmp_path / "acquisition_profile_demo.yaml"
+    profile_path.write_text(render_acquisition_profile_yaml(build_default_acquisition_profile("demo")), encoding="utf-8")
+    capture_attempt_path = tmp_path / "capture_attempt_demo.yaml"
+    capture_attempt_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "capture-attempt.v1",
+                "adapter": "web_http",
+                "status": "failed_quality_gate",
+                "url": "https://example.com/",
+                "final_url": "https://example.com/",
+                "status_code": 200,
+                "word_count": 10,
+                "link_count": 1,
+                "document_link_count": 0,
+                "failure_reason": "too thin",
+                "recommended_next_adapter": "browser_rendered",
+                "metadata": {},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
 
     storage = Storage(tmp_path / "manifest.db")
     try:
@@ -171,8 +198,14 @@ selected_sections:
             )
         )
 
-        manifest = build_scope_document_manifest(scope_path, storage=storage)
+        manifest = build_scope_document_manifest(
+            scope_path,
+            storage=storage,
+            acquisition_profile_path=profile_path,
+            capture_attempt_path=capture_attempt_path,
+        )
         markdown = render_markdown(manifest)
+        yaml_manifest = render_manifest_yaml_text(manifest)
         handoff = build_web_listening_manifest_v1(
             scope_path,
             storage=storage,
@@ -180,18 +213,26 @@ selected_sections:
             report_path=tmp_path / "document_manifest_demo.md",
             manifest_json_path=tmp_path / "web_listening_manifest_demo.json",
             generated_at=datetime(2026, 4, 7, 15, 30, 0, tzinfo=timezone.utc),
+            acquisition_profile_path=profile_path,
+            capture_attempt_path=capture_attempt_path,
         )
         handoff_json = render_web_listening_manifest_json(handoff)
     finally:
         storage.close()
 
     assert manifest.document_count == 1
+    assert manifest.acquisition_evidence is not None
+    assert manifest.acquisition_evidence["latest_attempt"]["adapter"] == "web_http"
+    assert manifest.acquisition_evidence["recommended_next_adapter"] == "browser_rendered"
     assert manifest.documents[0]["sha256"] == "abcdef123456"
     assert manifest.documents[0]["local_path"] == "data/downloads/_blobs/ab/abcdef.pdf"
     assert manifest.documents[0]["tracked_local_path"].endswith("demo--abcdef12.pdf")
     assert manifest.documents[0]["preferred_display_path"].endswith("demo--abcdef12.pdf")
     assert manifest.documents[0]["page_url"] == "https://example.com/research/topics/page-a"
     assert manifest.documents[0]["downloaded_at"] == "2026-04-07T13:00:00+00:00"
+    assert "Acquisition Evidence" in markdown
+    assert "try_adapter:browser_rendered" in markdown
+    assert "acquisition_evidence:" in yaml_manifest
     assert "preferred_display_path" in markdown
     assert "Downloaded at" in markdown
     assert json.loads(handoff_json)["schema_version"] == "web-listening-manifest.v1"
@@ -203,6 +244,13 @@ selected_sections:
     assert handoff["artifacts"]["structured_exports"][0]["sha256"] is None
     assert handoff["artifacts"]["compatibility_exports"][0]["kind"] == "document_manifest_yaml"
     assert handoff["artifact_root"] == "."
+    extension_profile_path = handoff["extensions"]["acquisition"]["input_paths"]["profile_path"]
+    assert Path(extension_profile_path).name == profile_path.name
+    assert not Path(extension_profile_path).is_absolute()
+    assert handoff["extensions"]["acquisition"]["latest_attempt"]["adapter"] == "web_http"
+    assert handoff["extensions"]["acquisition"]["recommended_next_adapter"] == "browser_rendered"
+    assert any(Path(path).name == profile_path.name for path in handoff["run"]["input_paths"])
+    assert any(Path(path).name == capture_attempt_path.name for path in handoff["run"]["input_paths"])
     assert handoff["discovered_items"][0]["url"] == "https://example.com/files/demo.pdf"
     assert handoff["discovered_items"][1]["url"] == "https://example.com/files/remote-only.pdf"
     assert handoff["downloaded_assets"][0]["source_item_id"] == handoff["discovered_items"][0]["item_id"]

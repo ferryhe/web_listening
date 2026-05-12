@@ -890,6 +890,87 @@ notes: []
     assert json_payload["artifact_contract"]["primary_path"] == str(report_path)
 
 
+def test_report_scope_command_passes_acquisition_paths_and_records_artifacts(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(settings, "db_path", tmp_path / "report-scope-acquisition.db")
+    report_path = tmp_path / "reports" / "tracking_report_demo.md"
+    scope_path = tmp_path / "monitor_scope.yaml"
+    profile_path = tmp_path / "acquisition_profile_demo.yaml"
+    capture_attempt_path = tmp_path / "capture_attempt_demo.json"
+    profile_path.write_text("schema_version: acquisition-profile.v1\n", encoding="utf-8")
+    capture_attempt_path.write_text('{"schema_version":"capture-attempt.v1"}\n', encoding="utf-8")
+    scope_path.write_text(
+        """
+scope_fingerprint: demo
+site_key: demo
+display_name: Demo
+catalog: dev
+generated_at: 2026-04-14T00:00:00+00:00
+selection_review_status: approved
+selection_mode: manual
+business_goal: Track research.
+seed_url: https://example.com/
+homepage_url: https://example.com/
+fetch_mode: http
+fetch_config_json: {}
+tree_strategy: selected_scope
+tree_budget_profile: selected_scope_default
+file_scope_mode: site_root
+allowed_page_prefixes:
+  - /research
+allowed_file_prefixes:
+  - /
+scope_id: 12
+selected_focus_prefixes:
+  - /research
+excluded_page_prefixes: []
+deferred_page_prefixes: []
+excluded_categories: []
+max_depth: 3
+max_pages: 25
+max_files: 10
+based_on: {}
+selection_summary: {}
+notes: []
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_report_scope(**kwargs):
+        assert kwargs["acquisition_profile_path"] == str(profile_path)
+        assert kwargs["capture_attempt_path"] == str(capture_attempt_path)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("# Scope Report\n", encoding="utf-8")
+        return SimpleNamespace(
+            output_path=report_path,
+            output_format="md",
+            report=SimpleNamespace(run_id=34),
+        )
+
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.report_scope", fake_report_scope)
+
+    result = runner.invoke(
+        app,
+        [
+            "report-scope",
+            "--scope-path",
+            str(scope_path),
+            "--output",
+            str(report_path),
+            "--acquisition-profile-path",
+            str(profile_path),
+            "--capture-attempt-path",
+            str(capture_attempt_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["artifacts"]["produced"]["acquisition_profile_path"] == str(profile_path)
+    assert payload["artifacts"]["produced"]["capture_attempt_path"] == str(capture_attempt_path)
+
+
 def test_bootstrap_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
     report_path = tmp_path / "reports" / "bootstrap.md"
     summary_path = tmp_path / "reports" / "bootstrap-summary.md"
@@ -1210,3 +1291,96 @@ selected_sections:
     assert json_payload["artifact_contract"]["primary_kind"] == "web_listening_manifest"
     assert json_payload["artifact_contract"]["path_map"]["manifest_json_path"].endswith(".json")
     assert json_payload["artifact_contract"]["path_map"]["yaml_path"].endswith(".yaml")
+
+
+def test_export_manifest_command_passes_acquisition_paths_and_records_artifacts(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(settings, "db_path", tmp_path / "export-manifest-acquisition.db")
+    scope_path = tmp_path / "monitor_scope.yaml"
+    profile_path = tmp_path / "acquisition_profile_demo.yaml"
+    capture_attempt_path = tmp_path / "capture_attempt_demo.json"
+    yaml_path = tmp_path / "plans" / "document_manifest_demo.yaml"
+    report_path = tmp_path / "reports" / "document_manifest_demo.md"
+    json_path = tmp_path / "manifests" / "web_listening_manifest_demo.json"
+    profile_path.write_text("schema_version: acquisition-profile.v1\n", encoding="utf-8")
+    capture_attempt_path.write_text('{"schema_version":"capture-attempt.v1"}\n', encoding="utf-8")
+    scope_path.write_text(
+        """
+scope_fingerprint: demo
+site_key: demo
+display_name: Demo
+catalog: dev
+generated_at: 2026-04-14T00:00:00+00:00
+selection_review_status: approved
+selection_mode: manual
+business_goal: Track research.
+seed_url: https://example.com/
+homepage_url: https://example.com/
+fetch_mode: http
+fetch_config_json: {}
+tree_strategy: selected_scope
+tree_budget_profile: selected_scope_default
+file_scope_mode: site_root
+allowed_page_prefixes:
+  - /research
+allowed_file_prefixes:
+  - /
+scope_id: 12
+selected_focus_prefixes:
+  - /research
+excluded_page_prefixes: []
+deferred_page_prefixes: []
+excluded_categories: []
+max_depth: 3
+max_pages: 25
+max_files: 10
+based_on: {}
+selection_summary: {}
+notes: []
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_export_manifest(**kwargs):
+        assert kwargs["acquisition_profile_path"] == str(profile_path)
+        assert kwargs["capture_attempt_path"] == str(capture_attempt_path)
+        yaml_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        yaml_path.write_text("site_key: demo\n", encoding="utf-8")
+        report_path.write_text("# Manifest\n", encoding="utf-8")
+        json_path.write_text("{}\n", encoding="utf-8")
+        return SimpleNamespace(
+            manifest=SimpleNamespace(run_id=34),
+            yaml_path=yaml_path,
+            report_path=report_path,
+            manifest_json={},
+            manifest_json_path=json_path,
+        )
+
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.export_manifest", fake_export_manifest)
+
+    result = runner.invoke(
+        app,
+        [
+            "export-manifest",
+            "--scope-path",
+            str(scope_path),
+            "--yaml-path",
+            str(yaml_path),
+            "--report-path",
+            str(report_path),
+            "--manifest-json-path",
+            str(json_path),
+            "--acquisition-profile-path",
+            str(profile_path),
+            "--capture-attempt-path",
+            str(capture_attempt_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["artifacts"]["produced"]["acquisition_profile_path"] == str(profile_path)
+    assert payload["artifacts"]["produced"]["capture_attempt_path"] == str(capture_attempt_path)

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from importlib import metadata
 
+from web_listening.blocks.acquisition_evidence import load_acquisition_evidence
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, load_monitor_scope_plan
 from web_listening.blocks.scope_lookup import find_scope_for_plan
 from web_listening.blocks.section_discovery import render_yaml
@@ -182,11 +183,15 @@ class ScopeDocumentManifest:
     run_status: str
     run_finished_at: str
     document_count: int = 0
+    acquisition_evidence: dict | None = None
     documents: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        payload = asdict(self)
+        if payload.get("acquisition_evidence") is None:
+            payload.pop("acquisition_evidence", None)
+        return payload
 
 
 def build_scope_document_manifest(
@@ -194,6 +199,8 @@ def build_scope_document_manifest(
     *,
     storage: Storage,
     run_id: int | None = None,
+    acquisition_profile_path: str | Path | None = None,
+    capture_attempt_path: str | Path | None = None,
 ) -> ScopeDocumentManifest:
     plan = load_monitor_scope_plan(scope_path)
     site, scope = find_scope_for_plan(storage, plan)
@@ -211,6 +218,10 @@ def build_scope_document_manifest(
         "preferred_display_path uses tracked_local_path when present and falls back to local_path otherwise.",
         "tracked_local_path is the source-oriented browsing path; local_path remains the canonical SHA256 blob path.",
     ]
+    acquisition_evidence = load_acquisition_evidence(
+        profile_path=acquisition_profile_path,
+        capture_attempt_path=capture_attempt_path,
+    )
 
     return ScopeDocumentManifest(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -222,6 +233,7 @@ def build_scope_document_manifest(
         run_status=run.status,
         run_finished_at=run.finished_at.isoformat() if run.finished_at else "",
         document_count=len(document_rows),
+        acquisition_evidence=acquisition_evidence,
         documents=document_rows,
         notes=notes,
     )
@@ -278,6 +290,21 @@ def render_markdown(manifest: ScopeDocumentManifest) -> str:
             f"| {row['sha256'] or '-'} | {row['downloaded_at'] or '-'} | {row['preferred_display_path'] or '-'} | {row['page_url'] or '-'} | {row['download_url'] or '-'} |"
         )
 
+    if manifest.acquisition_evidence:
+        latest_attempt = manifest.acquisition_evidence.get("latest_attempt") or {}
+        profile = manifest.acquisition_evidence.get("profile") or {}
+        lines.extend([
+            "",
+            "## Acquisition Evidence",
+            "",
+            f"- Profile: `{profile.get('site_key', '-') or '-'}`",
+            f"- Attempts: `{len(manifest.acquisition_evidence.get('attempts') or [])}`",
+            f"- Latest adapter: `{latest_attempt.get('adapter', '-') or '-'}`",
+            f"- Latest status: `{latest_attempt.get('status', '-') or '-'}`",
+            f"- Recommended next adapter: `{manifest.acquisition_evidence.get('recommended_next_adapter') or '-'}`",
+            f"- Next action: `{manifest.acquisition_evidence.get('next_action') or '-'}`",
+        ])
+
     if manifest.notes:
         lines.extend(["", "## Notes", ""])
         for note in manifest.notes:
@@ -296,6 +323,8 @@ def build_web_listening_manifest_v1(
     manifest_json_path: str | Path | None = None,
     generated_at: datetime | None = None,
     command: str | None = None,
+    acquisition_profile_path: str | Path | None = None,
+    capture_attempt_path: str | Path | None = None,
 ) -> dict:
     """Build the reviewed web-listening-manifest.v1 JSON payload.
 
@@ -318,14 +347,21 @@ def build_web_listening_manifest_v1(
     generated_text = _utc_iso(generated) or ""
     run_id_text = f"run-{resolved_run_id}"
     source_id = plan.site_key or f"scope-{scope.id or 0}"
-    artifact_base = _artifact_base(manifest_json_path, yaml_path, report_path, scope_path)
+    artifact_base = _artifact_base(
+        manifest_json_path,
+        yaml_path,
+        report_path,
+        scope_path,
+    )
     artifact_root = _relative_artifact_root(manifest_json_path, artifact_base)
     portable_scope_path = _portable_path(scope_path, artifact_base=artifact_base)
+    portable_acquisition_profile_path = _portable_path(acquisition_profile_path, artifact_base=artifact_base)
+    portable_capture_attempt_path = _portable_path(capture_attempt_path, artifact_base=artifact_base)
     portable_yaml_path = _portable_path(yaml_path, artifact_base=artifact_base)
     portable_report_path = _portable_path(report_path, artifact_base=artifact_base)
     portable_json_path = _portable_path(manifest_json_path, artifact_base=artifact_base)
     output_paths = [path for path in [portable_json_path, portable_yaml_path, portable_report_path] if path]
-    input_paths = [path for path in [portable_scope_path] if path]
+    input_paths = [path for path in [portable_scope_path, portable_acquisition_profile_path, portable_capture_attempt_path] if path]
     idempotency_key = f"{source_id}|{plan.scope_fingerprint}|{resolved_run_id}"
     extraction_method = scope.fetch_mode or plan.fetch_mode or None
 
@@ -420,7 +456,19 @@ def build_web_listening_manifest_v1(
             }
         )
 
-    return {
+    acquisition_evidence = load_acquisition_evidence(
+        profile_path=acquisition_profile_path,
+        capture_attempt_path=capture_attempt_path,
+    )
+    deprecated_manifest = build_scope_document_manifest(
+        scope_path,
+        storage=storage,
+        run_id=resolved_run_id,
+        acquisition_profile_path=acquisition_profile_path,
+        capture_attempt_path=capture_attempt_path,
+    ).to_dict()
+
+    payload = {
         "schema_version": SCHEMA_VERSION,
         "manifest_id": f"manifest-{source_id}-{resolved_run_id}",
         "generated_at": generated_text,
@@ -514,11 +562,14 @@ def build_web_listening_manifest_v1(
         if run.error_message
         else [],
         "deprecated": {
-            "scope_document_manifest": build_scope_document_manifest(scope_path, storage=storage, run_id=resolved_run_id).to_dict(),
+            "scope_document_manifest": deprecated_manifest,
         },
         "metadata": {},
         "extensions": {},
     }
+    if acquisition_evidence is not None:
+        payload["extensions"]["acquisition"] = acquisition_evidence
+    return payload
 
 
 def render_web_listening_manifest_json(payload: dict) -> str:

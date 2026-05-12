@@ -78,6 +78,8 @@ def _safe_input_path(raw_path: str | None) -> Path | None:
     resolved = _ensure_path_within_data_root(path)
     if not resolved.exists():
         raise HTTPException(status_code=404, detail=f"Path `{resolved}` not found")
+    if not resolved.is_file():
+        raise HTTPException(status_code=422, detail=f"Path `{resolved}` must be a file")
     return resolved
 
 
@@ -225,6 +227,8 @@ class ReportScopeRequest(BaseModel):
     run_id: Optional[int] = None
     output_path: Optional[str] = None
     output_format: str = "md"
+    acquisition_profile_path: Optional[str] = None
+    capture_attempt_path: Optional[str] = None
 
 
 class ArtifactEnvelope(BaseModel):
@@ -628,6 +632,8 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
         )
         scope_path = _resolve_scope_path(scope_id)
         resolved_task_path = str(_safe_input_path(body.task_path)) if body.task_path else None
+        resolved_acquisition_profile_path = str(_safe_input_path(body.acquisition_profile_path)) if body.acquisition_profile_path else None
+        resolved_capture_attempt_path = str(_safe_input_path(body.capture_attempt_path)) if body.capture_attempt_path else None
         resolved_output_path = (
             str(_safe_output_path(body.output_path, default_path=settings.data_dir / "reports" / f"tracking_report_scope_{scope_id}.{normalized_format}"))
             if body.output_path
@@ -645,6 +651,8 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
             run_id=body.run_id,
             output_path=resolved_output_path,
             output_format=normalized_format,
+            acquisition_profile_path=resolved_acquisition_profile_path,
+            capture_attempt_path=resolved_capture_attempt_path,
         )
         progress.update(
             stage="writing_artifacts",
@@ -663,6 +671,8 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
                 "task_path": resolved_task_path or "",
                 "output_path": str(artifacts.output_path),
                 "output_format": artifacts.output_format,
+                **({"acquisition_profile_path": resolved_acquisition_profile_path} if resolved_acquisition_profile_path else {}),
+                **({"capture_attempt_path": resolved_capture_attempt_path} if resolved_capture_attempt_path else {}),
                 "report_payload": serialized_report_payload,
             },
         }

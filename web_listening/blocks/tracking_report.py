@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import yaml
 
+from web_listening.blocks.acquisition_evidence import acquisition_artifact_rows, load_acquisition_evidence
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, load_monitor_scope_plan
 from web_listening.blocks.monitor_task import DEFAULT_CHANGE_SEVERITY_RULES, load_monitor_task
 from web_listening.blocks.scope_lookup import find_scope_for_plan
@@ -54,12 +55,16 @@ class TrackingReport:
     priority_summary: dict[str, Any] = field(default_factory=dict)
     review_queue: list[dict[str, Any]] = field(default_factory=list)
     artifact_index: list[dict[str, Any]] = field(default_factory=list)
+    acquisition_evidence: dict[str, Any] | None = None
     documents: list[dict[str, Any]] = field(default_factory=list)
     recommended_next_actions: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if payload.get("acquisition_evidence") is None:
+            payload.pop("acquisition_evidence", None)
+        return payload
 
 
 def _safe_key(value: str) -> str:
@@ -404,6 +409,8 @@ def _build_artifact_index(
     scope_path: str | Path,
     task_path: str | Path | None,
     report_path: str | Path | None,
+    acquisition_profile_path: str | Path | None = None,
+    capture_attempt_path: str | Path | None = None,
     run: CrawlRun,
     documents: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -440,6 +447,12 @@ def _build_artifact_index(
                 recommended_reader="yaml",
             )
         )
+    artifacts.extend(
+        acquisition_artifact_rows(
+            profile_path=acquisition_profile_path,
+            capture_attempt_path=capture_attempt_path,
+        )
+    )
     for document in documents:
         artifacts.append(
             _artifact_row(
@@ -491,6 +504,8 @@ def build_tracking_report(
     storage: Storage,
     run_id: int | None = None,
     task_path: str | Path | None = None,
+    acquisition_profile_path: str | Path | None = None,
+    capture_attempt_path: str | Path | None = None,
 ) -> TrackingReport:
     plan = load_monitor_scope_plan(scope_path)
     site, scope = _find_scope_for_plan(storage, plan)
@@ -550,6 +565,10 @@ def build_tracking_report(
     notes = list(plan.notes)
     if task is not None:
         notes.extend(task.notes)
+    acquisition_evidence = load_acquisition_evidence(
+        profile_path=acquisition_profile_path,
+        capture_attempt_path=capture_attempt_path,
+    )
 
     return TrackingReport(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -587,7 +606,16 @@ def build_tracking_report(
         missing_files=missing_files,
         priority_summary=priority_summary,
         review_queue=review_queue,
-        artifact_index=_build_artifact_index(scope_path=scope_path, task_path=task_path, report_path=None, run=run, documents=document_rows),
+        artifact_index=_build_artifact_index(
+            scope_path=scope_path,
+            task_path=task_path,
+            report_path=None,
+            acquisition_profile_path=acquisition_profile_path,
+            capture_attempt_path=capture_attempt_path,
+            run=run,
+            documents=document_rows,
+        ),
+        acquisition_evidence=acquisition_evidence,
         documents=document_rows,
         recommended_next_actions=_build_recommended_next_actions(
             run=run,
@@ -669,6 +697,21 @@ def render_markdown(report: TrackingReport) -> str:
             f"- Highest priority: `{report.priority_summary.get('highest_priority', 'none')}`",
             f"- Review items: `{report.priority_summary.get('review_item_count', 0)}`",
             f"- Severity counts: `{report.priority_summary.get('severity_counts', {})}`",
+        ])
+
+    if report.acquisition_evidence:
+        latest_attempt = report.acquisition_evidence.get("latest_attempt") or {}
+        profile = report.acquisition_evidence.get("profile") or {}
+        lines.extend([
+            "",
+            "## Acquisition Evidence",
+            "",
+            f"- Profile: `{profile.get('site_key', '-') or '-'}`",
+            f"- Attempts: `{len(report.acquisition_evidence.get('attempts') or [])}`",
+            f"- Latest adapter: `{latest_attempt.get('adapter', '-') or '-'}`",
+            f"- Latest status: `{latest_attempt.get('status', '-') or '-'}`",
+            f"- Recommended next adapter: `{report.acquisition_evidence.get('recommended_next_adapter') or '-'}`",
+            f"- Next action: `{report.acquisition_evidence.get('next_action') or '-'}`",
         ])
 
     _append_change_table(lines, "New Pages", report.new_pages)

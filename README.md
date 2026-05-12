@@ -259,7 +259,19 @@ The catalog maps ordinary public HTML to `web_http`, dynamic JavaScript pages to
 
 Agent usage sequence:
 
-1. Load the picker contract with `web-listening list-acquisition-tools --json` or `GET /api/v1/acquisition/tools`.
+1. Load the picker contract through one of these surfaces:
+
+   CLI:
+
+   ```powershell
+   web-listening list-acquisition-tools --json
+   ```
+
+   API:
+
+   ```text
+   GET /api/v1/acquisition/tools
+   ```
 2. Match page signals against `tool_selection_rules`, then choose a `tools[].adapter` whose `runtime_status`, `probe_capable`, and safety requirements are satisfied.
 3. Collect the listed `operator_inputs`; use either a reviewed `profile_path` or inline fields such as `url` and conditional `site_key`.
 4. Build or provide an `acquisition-profile.v1`, then probe with `web-listening probe-acquisition --adapter <adapter> ...` or `POST /api/v1/acquisition/probe`.

@@ -57,8 +57,15 @@
         {
           "name": "site_key",
           "type": "string",
-          "required": true,
-          "description": "Stable site identifier when building an inline acquisition profile."
+          "required": false,
+          "required_when": "profile_path is not provided",
+          "description": "Stable site identifier when building an inline acquisition profile; not needed when profile_path is provided."
+        },
+        {
+          "name": "profile_path",
+          "type": "path",
+          "required": false,
+          "description": "Optional reviewed acquisition profile to use instead of inline profile fields."
         },
         {
           "name": "allowed_domains",
@@ -114,8 +121,9 @@
         {
           "name": "site_key",
           "type": "string",
-          "required": true,
-          "description": "Stable site identifier when building an inline acquisition profile."
+          "required": false,
+          "required_when": "profile_path is not provided",
+          "description": "Stable site identifier when building an inline acquisition profile; not needed when profile_path is provided."
         },
         {
           "name": "profile_path",
@@ -133,7 +141,12 @@
         "probe": "acquisition-probe.v1",
         "execution": "tool selection does not change bootstrap-scope or run-scope execution in this build"
       },
-      "runtime_status": "available",
+      "runtime_status": "optional_runtime",
+      "optional_runtime": {
+        "extra": "browser",
+        "package": "playwright>=1.52.0",
+        "install_note": "Install with `pip install -e .[browser]` and run `playwright install chromium`."
+      },
       "frontend_control": {
         "label": "Rendered Browser",
         "picker_group": "General acquisition",
@@ -258,6 +271,13 @@
           "description": "Authorized http/https URL to probe."
         },
         {
+          "name": "site_key",
+          "type": "string",
+          "required": false,
+          "required_when": "profile_path is not provided",
+          "description": "Stable site identifier when building an inline authorized acquisition profile; not needed when profile_path is provided."
+        },
+        {
           "name": "profile_path",
           "type": "path",
           "required": false,
@@ -266,14 +286,16 @@
         {
           "name": "allow_stealth_browser",
           "type": "boolean",
-          "required": true,
-          "description": "Inline profile approval for stealth-browser probing."
+          "required": false,
+          "required_when": "profile_path is not provided",
+          "description": "Inline profile approval for stealth-browser probing; use the profile value when profile_path is provided."
         },
         {
           "name": "require_authorized_access",
           "type": "boolean",
-          "required": true,
-          "description": "Inline profile confirmation that the access context is authorized."
+          "required": false,
+          "required_when": "profile_path is not provided",
+          "description": "Inline profile confirmation that the access context is authorized; use the profile value when profile_path is provided."
         }
       ],
       "requires_profile_safety": {

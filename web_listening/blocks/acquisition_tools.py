@@ -50,8 +50,15 @@ def acquisition_tools_catalog() -> dict[str, Any]:
                 {
                     "name": "site_key",
                     "type": "string",
-                    "required": True,
-                    "description": "Stable site identifier when building an inline acquisition profile.",
+                    "required": False,
+                    "required_when": "profile_path is not provided",
+                    "description": "Stable site identifier when building an inline acquisition profile; not needed when profile_path is provided.",
+                },
+                {
+                    "name": "profile_path",
+                    "type": "path",
+                    "required": False,
+                    "description": "Optional reviewed acquisition profile to use instead of inline profile fields.",
                 },
                 {
                     "name": "allowed_domains",
@@ -107,8 +114,9 @@ def acquisition_tools_catalog() -> dict[str, Any]:
                 {
                     "name": "site_key",
                     "type": "string",
-                    "required": True,
-                    "description": "Stable site identifier when building an inline acquisition profile.",
+                    "required": False,
+                    "required_when": "profile_path is not provided",
+                    "description": "Stable site identifier when building an inline acquisition profile; not needed when profile_path is provided.",
                 },
                 {
                     "name": "profile_path",
@@ -126,7 +134,12 @@ def acquisition_tools_catalog() -> dict[str, Any]:
                 "probe": "acquisition-probe.v1",
                 "execution": unchanged_execution,
             },
-            "runtime_status": "available",
+            "runtime_status": "optional_runtime",
+            "optional_runtime": {
+                "extra": "browser",
+                "package": "playwright>=1.52.0",
+                "install_note": "Install with `pip install -e .[browser]` and run `playwright install chromium`.",
+            },
             "frontend_control": {
                 "label": "Rendered Browser",
                 "picker_group": "General acquisition",
@@ -251,6 +264,13 @@ def acquisition_tools_catalog() -> dict[str, Any]:
                     "description": "Authorized http/https URL to probe.",
                 },
                 {
+                    "name": "site_key",
+                    "type": "string",
+                    "required": False,
+                    "required_when": "profile_path is not provided",
+                    "description": "Stable site identifier when building an inline authorized acquisition profile; not needed when profile_path is provided.",
+                },
+                {
                     "name": "profile_path",
                     "type": "path",
                     "required": False,
@@ -259,14 +279,16 @@ def acquisition_tools_catalog() -> dict[str, Any]:
                 {
                     "name": "allow_stealth_browser",
                     "type": "boolean",
-                    "required": True,
-                    "description": "Inline profile approval for stealth-browser probing.",
+                    "required": False,
+                    "required_when": "profile_path is not provided",
+                    "description": "Inline profile approval for stealth-browser probing; use the profile value when profile_path is provided.",
                 },
                 {
                     "name": "require_authorized_access",
                     "type": "boolean",
-                    "required": True,
-                    "description": "Inline profile confirmation that the access context is authorized.",
+                    "required": False,
+                    "required_when": "profile_path is not provided",
+                    "description": "Inline profile confirmation that the access context is authorized; use the profile value when profile_path is provided.",
                 },
             ],
             "requires_profile_safety": {

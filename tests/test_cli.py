@@ -119,6 +119,8 @@ def test_list_acquisition_tools_json_lists_probe_capabilities():
     assert tools["web_http"]["probe_capable"] is True
     assert tools["browser_rendered"]["probe_capable"] is True
     assert tools["browser_rendered"]["recommended_when"][0] == "dynamic JavaScript-rendered public pages"
+    assert tools["browser_rendered"]["runtime_status"] == "optional_runtime"
+    assert tools["browser_rendered"]["optional_runtime"]["extra"] == "browser"
     assert tools["cloakbrowser"]["probe_capable"] is True
     assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is True
     assert tools["cloakbrowser"]["optional_runtime"]["extra"] == "cloakbrowser"

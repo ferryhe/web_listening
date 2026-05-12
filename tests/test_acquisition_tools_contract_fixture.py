@@ -54,12 +54,20 @@ def test_acquisition_tools_v1_sample_fixture_has_frontend_agent_contract_shape()
         assert {"label", "picker_group", "control_kind", "selectable"} <= set(tool["frontend_control"])
 
     assert tools["web_http"]["recommended_when"][0] == "ordinary public HTML"
+    web_http_inputs = {item["name"]: item for item in tools["web_http"]["operator_inputs"]}
+    assert web_http_inputs["site_key"]["required"] is False
+    assert web_http_inputs["site_key"]["required_when"] == "profile_path is not provided"
     assert tools["browser_rendered"]["recommended_when"][0] == "dynamic JavaScript-rendered public pages"
+    assert tools["browser_rendered"]["runtime_status"] == "optional_runtime"
+    assert tools["browser_rendered"]["optional_runtime"]["extra"] == "browser"
     assert tools["cloakbrowser"]["recommended_when"][0] == "authorized stealth browser or CDP-like contexts"
     assert tools["cloakbrowser"]["requires_profile_safety"] == {
         "allow_stealth_browser": True,
         "require_authorized_access": True,
     }
+    cloak_inputs = {item["name"]: item for item in tools["cloakbrowser"]["operator_inputs"]}
+    assert cloak_inputs["site_key"]["required_when"] == "profile_path is not provided"
+    assert cloak_inputs["allow_stealth_browser"]["required_when"] == "profile_path is not provided"
     assert tools["batch_python"]["recommended_when"][0] == "bulk structured or site-specific scrape jobs"
     assert tools["sitemap"]["runtime_status"] == "reserved"
     assert tools["rss"]["runtime_status"] == "reserved"

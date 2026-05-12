@@ -67,6 +67,16 @@ Frontend/agent-ready fields:
 | `runtime_status` | string | One of `available`, `optional_runtime`, or `reserved`. |
 | `frontend_control` | object | Picker label, grouping, control kind, selectability, and sort order. |
 
+Operator input entries use:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Request/body or CLI-equivalent input name. |
+| `type` | string | UI/input type hint such as `http_url`, `string`, `path`, `boolean`, or `string_list`. |
+| `required` | boolean | Whether the input is always required. |
+| `required_when` | string | Optional condition for inputs required only in inline-profile flows. |
+| `description` | string | Operator-facing input guidance. |
+
 ## Runtime Status Semantics
 
 - `available`: selectable and probe-capable with the installed core/runtime prerequisites for this build.

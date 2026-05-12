@@ -241,6 +241,32 @@ def test_probe_acquisition_allows_profile_path_without_site_key(tmp_path: Path, 
     assert payload["attempt"]["status"] == "passed"
 
 
+def test_probe_acquisition_rejects_profile_path_with_inline_overrides(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    profile = build_default_acquisition_profile("profile-site", allowed_domains=["example.com"])
+    profile_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "probe-acquisition",
+            "--url",
+            "https://example.com/",
+            "--profile-path",
+            str(profile_path),
+            "--allowed-domain",
+            "example.com",
+            "--allow-stealth-browser",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "override fields are not allowed with profile_path" in result.output
+    assert "allowed_domains" in result.output
+    assert "allow_stealth_browser" in result.output
+
+
 def test_probe_acquisition_rejects_cloakbrowser_without_explicit_profile_safety(monkeypatch):
     monkeypatch.setattr(
         acquisition_tools,

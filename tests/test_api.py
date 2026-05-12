@@ -161,6 +161,30 @@ def test_acquisition_probe_endpoint_loads_profile_path_without_site_key(tmp_path
     assert payload["attempt"]["status"] == "passed"
 
 
+def test_acquisition_probe_endpoint_rejects_profile_path_with_inline_overrides(tmp_path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+    profile_path = tmp_path / "profiles" / "profile.yaml"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile = build_default_acquisition_profile("profile-site", allowed_domains=["example.com"])
+    profile_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/acquisition/probe",
+        json={
+            "url": "https://example.com/",
+            "profile_path": "profiles/profile.yaml",
+            "allowed_domains": ["example.com"],
+            "allow_stealth_browser": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "inline override fields are not allowed with profile_path" in response.json()["detail"]
+    assert "allowed_domains" in response.json()["detail"]
+    assert "allow_stealth_browser" in response.json()["detail"]
+
+
 def test_acquisition_probe_endpoint_rejects_cloakbrowser_without_authorization(monkeypatch):
     monkeypatch.setattr(
         "web_listening.blocks.acquisition_tools.build_builtin_adapters",

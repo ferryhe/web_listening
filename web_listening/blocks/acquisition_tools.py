@@ -153,6 +153,12 @@ def probe_acquisition_url(
 ) -> dict[str, Any]:
     normalized_url = validate_http_url(url)
     adapter = validate_probe_adapter(adapter_id)
+    _reject_profile_path_overrides(
+        profile_path=profile_path,
+        allowed_domains=allowed_domains,
+        allow_stealth_browser=allow_stealth_browser,
+        require_authorized_access=require_authorized_access,
+    )
     profile = _load_or_build_profile(
         site_key=site_key,
         profile_path=profile_path,
@@ -213,6 +219,29 @@ def _load_or_build_profile(
         allow_stealth_browser=allow_stealth_browser,
         require_authorized_access=require_authorized_access,
     )
+
+
+def _reject_profile_path_overrides(
+    *,
+    profile_path: str | Path | None,
+    allowed_domains: list[str] | None,
+    allow_stealth_browser: bool,
+    require_authorized_access: bool,
+) -> None:
+    if not profile_path:
+        return
+    override_fields = []
+    if allowed_domains:
+        override_fields.append("allowed_domains")
+    if allow_stealth_browser:
+        override_fields.append("allow_stealth_browser")
+    if require_authorized_access:
+        override_fields.append("require_authorized_access")
+    if override_fields:
+        joined = ", ".join(override_fields)
+        raise AcquisitionToolError(
+            f"profile_path loads a complete acquisition profile; inline override fields are not allowed with profile_path: {joined}."
+        )
 
 
 def _catalog_tool(adapter_id: str) -> dict[str, Any]:

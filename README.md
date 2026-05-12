@@ -48,7 +48,7 @@ What is production-usable now:
 
 What still remains future-facing:
 
-- acquisition profiles as a control artifact for choosing HTTP, rendered browser, sitemap/feed, authorized stealth-browser, or batch acquisition before the fixed staged workflow
+- acquisition profile execution inside the fixed staged bootstrap/run workflow
 - persistent jobs and webhooks for longer-running or external delivery workflows
 - richer incremental change bundles and conversion routing
 - REST/API expansion beyond the current staged workflow and compatibility surfaces
@@ -239,10 +239,23 @@ Typical artifacts from the staged workflow:
 - `document_manifest_<site>_<date>.yaml`
 - `document_manifest_<site>_<date>.md`
 - handoff contract docs:
+  - `docs/contracts/acquisition-tools-v1.md`
+  - `docs/testing/fixtures/acquisition-tools-v1.sample.json`
   - `docs/contracts/acquisition-profile-v1.md`
   - `docs/testing/fixtures/acquisition-profile-v1.sample.yaml`
   - `docs/contracts/web-listening-manifest-v1.md`
   - `docs/testing/fixtures/web-listening-manifest-v1.sample.json`
+
+## Acquisition Tool Picker Contract
+
+Delivery UIs and agents should use `acquisition-tools.v1` as the stable picker contract for acquisition tool selection:
+
+```powershell
+web-listening list-acquisition-tools --json
+GET /api/v1/acquisition/tools
+```
+
+The catalog maps ordinary public HTML to `web_http`, dynamic JavaScript pages to `browser_rendered`, authorized stealth-browser/CDP-like contexts to `cloakbrowser`, bulk structured or site-specific scrape jobs to reserved `batch_python`, and discovery/feed cases to reserved `sitemap` or `rss`. This picker contract is planning/probing metadata only; it does not change `bootstrap-scope` or `run-scope` crawl execution.
 
 ## Interface Authority Map
 

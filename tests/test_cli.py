@@ -118,9 +118,12 @@ def test_list_acquisition_tools_json_lists_probe_capabilities():
     tools = {tool["adapter"]: tool for tool in payload["tools"]}
     assert tools["web_http"]["probe_capable"] is True
     assert tools["browser_rendered"]["probe_capable"] is True
+    assert tools["browser_rendered"]["recommended_when"][0] == "dynamic JavaScript-rendered public pages"
     assert tools["cloakbrowser"]["probe_capable"] is True
     assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is True
     assert tools["cloakbrowser"]["optional_runtime"]["extra"] == "cloakbrowser"
+    assert tools["cloakbrowser"]["requires_profile_safety"]["allow_stealth_browser"] is True
+    assert tools["batch_python"]["runtime_status"] == "reserved"
 
 
 def test_build_acquisition_profile_json_writes_yaml(tmp_path: Path):

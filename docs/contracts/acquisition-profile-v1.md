@@ -118,16 +118,16 @@ Safety rule:
 
 ## Capture Evaluation Helpers
 
-`web_listening.blocks.acquisition_capture` provides PR2 helper APIs for evaluating capture quality before future workflow integration:
+`web_listening.blocks.acquisition_capture` provides helper APIs for evaluating capture quality before fixed staged workflow integration:
 
 - `evaluate_fetch_result(adapter, url, result, quality_gates)` converts a crawler `FetchResult` into a `CaptureAttempt`.
 - `evaluate_capture_attempt(attempt, quality_gates)` re-evaluates count/status/metadata gates while preserving existing blocked or error evidence that cannot be reconstructed from a stored attempt alone.
 - `run_capture_attempt(url, adapter, profile, prior_attempts=None)` executes one adapter, catches adapter exceptions as `status: error`, and records the next adapter recommended by `recommend_next_adapter`.
-- `build_builtin_adapters()` exposes only `web_http` and `browser_rendered` wrappers around the existing crawler classes.
+- `build_builtin_adapters()` exposes `web_http`, `browser_rendered`, and optional safety-gated `cloakbrowser` probe adapters. `cloakbrowser` remains limited to explicit authorized acquisition probing and is not used by `bootstrap-scope` or `run-scope`.
 
 Evaluation passes only when required HTTP status is a 2xx response, extracted word count meets `min_words`, metadata link counts meet `min_links`, metadata document-link counts meet `min_document_links`, and no blocked marker is found case-insensitively in captured text or metadata.
 
-Current limitation: `FetchResult` does not expose extracted link objects directly. PR2 therefore reads `metadata.link_count` and `metadata.document_link_count`, defaulting missing values to `0`, until crawler integration provides richer link and document evidence.
+Current limitation: `FetchResult` does not expose extracted link objects directly. The helpers therefore read `metadata.link_count` and `metadata.document_link_count`, defaulting missing values to `0`, until crawler integration provides richer link and document evidence.
 
 ## Recommendation Semantics
 
@@ -142,9 +142,8 @@ Current limitation: `FetchResult` does not expose extracted link objects directl
 
 Later PRs may:
 
-- wire profiles into probe/bootstrap/run commands
+- wire profiles into bootstrap/run commands
 - persist capture attempts in reports or manifests
-- add CLI/API helpers for creating or evaluating profiles
-- add optional CloakBrowser support behind the explicit safety rule above
+- add more acquisition tool runtimes behind explicit contracts and safety rules
 
 Those changes must preserve the fixed staged workflow and keep site-specific acquisition variation in this profile layer.

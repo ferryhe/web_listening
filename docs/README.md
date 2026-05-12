@@ -24,13 +24,20 @@ These are the long-lived docs that describe the current system:
 - validation guide:
   - [validation/README.md](validation/README.md)
 - contracts:
+  - [acquisition-tools-v1.md](contracts/acquisition-tools-v1.md)
   - [acquisition-profile-v1.md](contracts/acquisition-profile-v1.md)
   - [web-listening-manifest-v1.md](contracts/web-listening-manifest-v1.md)
 - testing fixtures:
+  - [acquisition-tools-v1.sample.json](testing/fixtures/acquisition-tools-v1.sample.json)
   - [acquisition-profile-v1.sample.yaml](testing/fixtures/acquisition-profile-v1.sample.yaml)
   - [web-listening-contract-smoke.md](testing/web-listening-contract-smoke.md)
 
 ## Current Entry Points
+
+### Acquisition tool picker
+
+- stable delivery picker API: `GET /api/v1/acquisition/tools`
+- stable delivery picker CLI: `web-listening list-acquisition-tools --json`
 
 ### Primary staged workflow
 

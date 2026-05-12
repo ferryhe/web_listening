@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import import_module
 import json
 import re
 from typing import Any, Protocol
@@ -19,6 +20,7 @@ from web_listening.blocks.crawler import (
     FetchResult,
     HttpCrawler,
     resolve_request_headers,
+    resolve_user_agent,
 )
 from web_listening.blocks.normalizer import normalize_html
 from web_listening.config import settings
@@ -66,10 +68,65 @@ class BrowserAcquisitionAdapter:
         return self.crawler.fetch_page(url, fetch_config_json=config)
 
 
+class CloakBrowserAcquisitionAdapter:
+    adapter_id: AdapterId = "cloakbrowser"
+
+    def capture(self, url: str, *, config: dict[str, Any] | None = None) -> FetchResult:
+        try:
+            launch = import_module("cloakbrowser").launch
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError(
+                "CloakBrowser acquisition probing requires the optional cloakbrowser runtime. "
+                "Install it with `pip install -e .[cloakbrowser]`. First launch may download "
+                "a browser binary."
+            ) from exc
+
+        config = config or {}
+        timeout_ms = int(config.get("timeout_ms", settings.request_timeout * 1000))
+        wait_until = config.get("wait_until", "load")
+        wait_for_selector = config.get("wait_for")
+        extra_wait_ms = int(config.get("extra_wait_ms", 0))
+        launch_kwargs = _cloakbrowser_launch_kwargs(config)
+        request_user_agent = resolve_user_agent(config)
+
+        browser = launch(**launch_kwargs)
+        try:
+            page = browser.new_page(user_agent=request_user_agent)
+            response = page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+            if wait_for_selector:
+                page.wait_for_selector(wait_for_selector, timeout=timeout_ms)
+            if extra_wait_ms > 0:
+                page.wait_for_timeout(extra_wait_ms)
+            html = page.content()
+            final_url = page.url
+            status_code = response.status if response else None
+        finally:
+            browser.close()
+
+        normalized = normalize_html(html, base_url=final_url or url)
+        metadata = dict(normalized.metadata)
+        metadata["driver"] = "cloakbrowser"
+        metadata["request_user_agent"] = request_user_agent
+        metadata["wait_until"] = wait_until
+        metadata["wait_for"] = wait_for_selector or ""
+        metadata["humanize"] = bool(config.get("humanize", False))
+        return FetchResult(
+            raw_html=normalized.raw_html,
+            cleaned_html=normalized.cleaned_html,
+            content_text=normalized.content_text,
+            markdown=normalized.markdown,
+            fit_markdown=normalized.fit_markdown,
+            metadata_json=metadata,
+            final_url=final_url or url,
+            status_code=status_code,
+        )
+
+
 def build_builtin_adapters() -> dict[AdapterId, AcquisitionAdapter]:
     return {
         "web_http": HttpAcquisitionAdapter(),
         "browser_rendered": BrowserAcquisitionAdapter(),
+        "cloakbrowser": CloakBrowserAcquisitionAdapter(),
     }
 
 
@@ -137,6 +194,7 @@ def run_capture_attempt(
 ) -> CaptureAttempt:
     attempts = list(prior_attempts or [])
     adapter_id = adapter.adapter_id
+    _validate_capture_safety(adapter_id, profile)
     config = _adapter_config(profile, adapter_id)
     try:
         result = adapter.capture(url, config=config)
@@ -219,6 +277,29 @@ def _adapter_config(profile: AcquisitionProfile, adapter_id: AdapterId) -> dict[
         if adapter.adapter == adapter_id:
             return dict(adapter.config)
     return None
+
+
+def _cloakbrowser_launch_kwargs(config: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = (
+        "headless",
+        "proxy",
+        "timezone",
+        "locale",
+        "geoip",
+        "humanize",
+        "human_preset",
+    )
+    return {key: config[key] for key in allowed_keys if key in config}
+
+
+def _validate_capture_safety(adapter_id: AdapterId, profile: AcquisitionProfile) -> None:
+    if adapter_id != "cloakbrowser":
+        return
+    if not profile.safety.permits_cloakbrowser:
+        raise PermissionError(
+            "CloakBrowser capture requires safety.allow_stealth_browser=true "
+            "and safety.require_authorized_access=true in the active acquisition profile."
+        )
 
 
 def _fetch_result_from_http_status_error(

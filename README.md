@@ -68,6 +68,14 @@ pip install -e .[browser]
 playwright install chromium
 ```
 
+Optional CloakBrowser acquisition probing support:
+
+```powershell
+pip install -e .[cloakbrowser]
+```
+
+`probe-acquisition --adapter cloakbrowser` is only for explicitly authorized access contexts. The active acquisition profile must set both `safety.allow_stealth_browser=true` and `safety.require_authorized_access=true`; this adapter is not used by `bootstrap-scope` or `run-scope`. CloakBrowser may download a browser binary on first launch.
+
 ## Configuration
 
 Copy the template:

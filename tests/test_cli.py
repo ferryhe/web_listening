@@ -39,6 +39,26 @@ class FakeProbeAdapter:
         )
 
 
+class FakeCloakProbeAdapter(FakeProbeAdapter):
+    adapter_id = "cloakbrowser"
+
+    def capture(self, url: str, *, config=None) -> FetchResult:
+        result = super().capture(url, config=config)
+        metadata = dict(result.metadata_json)
+        metadata["driver"] = "cloakbrowser"
+        metadata["request_user_agent"] = (config or {}).get("user_agent", "")
+        return FetchResult(
+            raw_html=result.raw_html,
+            cleaned_html=result.cleaned_html,
+            content_text=result.content_text,
+            markdown=result.markdown,
+            fit_markdown=result.fit_markdown,
+            metadata_json=metadata,
+            final_url=result.final_url,
+            status_code=result.status_code,
+        )
+
+
 class CloseRecordingAdapter(FakeProbeAdapter):
     def __init__(self):
         self.closed = False
@@ -98,8 +118,9 @@ def test_list_acquisition_tools_json_lists_probe_capabilities():
     tools = {tool["adapter"]: tool for tool in payload["tools"]}
     assert tools["web_http"]["probe_capable"] is True
     assert tools["browser_rendered"]["probe_capable"] is True
-    assert tools["cloakbrowser"]["probe_capable"] is False
-    assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is False
+    assert tools["cloakbrowser"]["probe_capable"] is True
+    assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is True
+    assert tools["cloakbrowser"]["optional_runtime"]["extra"] == "cloakbrowser"
 
 
 def test_build_acquisition_profile_json_writes_yaml(tmp_path: Path):
@@ -134,11 +155,15 @@ def test_build_acquisition_profile_json_writes_yaml(tmp_path: Path):
     assert "cloakbrowser" in written["fallback_order"]
 
 
-def test_probe_acquisition_json_uses_helper_and_rejects_list_only_adapter(monkeypatch):
+def test_probe_acquisition_json_uses_helper(monkeypatch):
     def fake_probe_acquisition_url(**kwargs):
         assert kwargs["url"] == "https://example.com/"
         assert kwargs["site_key"] == "demo"
         assert kwargs["adapter_id"] == "web_http"
+        assert kwargs["profile_path"] is None
+        assert kwargs["allowed_domains"] == ["example.com"]
+        assert kwargs["allow_stealth_browser"] is True
+        assert kwargs["require_authorized_access"] is True
         return {
             "contract_version": "acquisition-probe.v1",
             "profile": {"site_key": "demo", "default_adapter": "web_http"},
@@ -173,6 +198,10 @@ def test_probe_acquisition_json_uses_helper_and_rejects_list_only_adapter(monkey
             "https://example.com/",
             "--site-key",
             "demo",
+            "--allowed-domain",
+            "example.com",
+            "--allow-stealth-browser",
+            "--require-authorized-access",
             "--json",
         ],
     )
@@ -181,23 +210,6 @@ def test_probe_acquisition_json_uses_helper_and_rejects_list_only_adapter(monkey
     payload = json.loads(result.output)
     assert payload["attempt"]["status"] == "passed"
     assert payload["attempt"]["status_code"] == 200
-
-    rejected = runner.invoke(
-        app,
-        [
-            "probe-acquisition",
-            "--url",
-            "https://example.com/",
-            "--site-key",
-            "demo",
-            "--adapter",
-            "cloakbrowser",
-            "--json",
-        ],
-    )
-
-    assert rejected.exit_code != 0
-    assert "is not probe-capable" in rejected.output
 
 
 def test_probe_acquisition_allows_profile_path_without_site_key(tmp_path: Path, monkeypatch):
@@ -227,6 +239,106 @@ def test_probe_acquisition_allows_profile_path_without_site_key(tmp_path: Path, 
     payload = json.loads(result.output)
     assert payload["profile"]["site_key"] == "profile-site"
     assert payload["attempt"]["status"] == "passed"
+
+
+def test_probe_acquisition_rejects_cloakbrowser_without_explicit_profile_safety(monkeypatch):
+    monkeypatch.setattr(
+        acquisition_tools,
+        "build_builtin_adapters",
+        lambda: {"cloakbrowser": FakeCloakProbeAdapter()},
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "probe-acquisition",
+            "--url",
+            "https://example.com/",
+            "--site-key",
+            "demo",
+            "--adapter",
+            "cloakbrowser",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "requires" in result.output
+    assert "safety.allow_stealth_browser=true" in result.output
+    assert "safety.require_authorized_access=true" in result.output
+
+
+def test_probe_acquisition_allows_cloakbrowser_with_authorized_profile_path(tmp_path: Path, monkeypatch):
+    profile_path = tmp_path / "cloak-profile.yaml"
+    profile = build_default_acquisition_profile(
+        "profile-site",
+        allowed_domains=["example.com"],
+        allow_stealth_browser=True,
+        require_authorized_access=True,
+    )
+    profile.quality_gates.min_words = 1
+    profile.quality_gates.min_links = 1
+    profile_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
+    monkeypatch.setattr(
+        acquisition_tools,
+        "build_builtin_adapters",
+        lambda: {"cloakbrowser": FakeCloakProbeAdapter()},
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "probe-acquisition",
+            "--url",
+            "https://example.com/",
+            "--profile-path",
+            str(profile_path),
+            "--adapter",
+            "cloakbrowser",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["profile"]["safety"]["allow_stealth_browser"] is True
+    assert payload["profile"]["safety"]["require_authorized_access"] is True
+    assert payload["attempt"]["adapter"] == "cloakbrowser"
+    assert payload["attempt"]["status"] == "passed"
+    assert payload["attempt"]["metadata"]["driver"] == "cloakbrowser"
+
+
+def test_probe_acquisition_allows_cloakbrowser_with_inline_authorization(monkeypatch):
+    monkeypatch.setattr(
+        acquisition_tools,
+        "build_builtin_adapters",
+        lambda: {"cloakbrowser": FakeCloakProbeAdapter()},
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "probe-acquisition",
+            "--url",
+            "https://example.com/",
+            "--site-key",
+            "demo",
+            "--adapter",
+            "cloakbrowser",
+            "--allowed-domain",
+            "example.com",
+            "--allow-stealth-browser",
+            "--require-authorized-access",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["profile"]["safety"]["allowed_domains"] == ["example.com"]
+    assert payload["profile"]["safety"]["allow_stealth_browser"] is True
+    assert payload["profile"]["safety"]["require_authorized_access"] is True
+    assert payload["attempt"]["adapter"] == "cloakbrowser"
 
 
 def test_probe_acquisition_requires_site_key_when_no_profile_path():

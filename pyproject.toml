@@ -32,6 +32,9 @@ dev = [
 browser = [
     "playwright>=1.52.0",
 ]
+cloakbrowser = [
+    "cloakbrowser>=0.3.26",
+]
 
 [project.scripts]
 web-listening = "web_listening.cli:app"

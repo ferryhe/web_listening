@@ -58,7 +58,7 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             "implemented_for_pr3_probing": False,
             "probe_capable": False,
             "safety_notes": [
-                "List-only in PR3; do not execute as a probe adapter.",
+                "List-only in this build; do not execute as a probe adapter.",
             ],
         },
         {
@@ -69,19 +69,25 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             "implemented_for_pr3_probing": False,
             "probe_capable": False,
             "safety_notes": [
-                "List-only in PR3; do not execute as a probe adapter.",
+                "List-only in this build; do not execute as a probe adapter.",
             ],
         },
         {
             "adapter": "cloakbrowser",
             "category": "authorized_browser",
-            "purpose": "Reserved contract for authorized stealth-browser contexts.",
-            "built_in_now": False,
-            "implemented_for_pr3_probing": False,
-            "probe_capable": False,
+            "purpose": "Probe authorized pages with optional CloakBrowser stealth-browser runtime.",
+            "built_in_now": True,
+            "implemented_for_pr3_probing": True,
+            "probe_capable": True,
+            "optional_runtime": {
+                "extra": "cloakbrowser",
+                "package": "cloakbrowser>=0.3.26",
+                "first_launch_download": "CloakBrowser may download a browser binary on first launch.",
+            },
             "safety_notes": [
-                "Requires explicit authorization and safety flags before future use.",
-                "List-only in PR3; do not execute as a probe adapter.",
+                "Requires safety.allow_stealth_browser=true and safety.require_authorized_access=true in the active acquisition profile.",
+                "Use only where the operator has explicit authorization for the target site and access context.",
+                "Optional runtime is not installed by the core package.",
             ],
         },
         {
@@ -93,13 +99,13 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             "probe_capable": False,
             "safety_notes": [
                 "Requires reviewed code and explicit operator approval before future use.",
-                "List-only in PR3; do not execute as a probe adapter.",
+                "List-only in this build; do not execute as a probe adapter.",
             ],
         },
     ]
     return {
         "contract_version": CATALOG_CONTRACT_VERSION,
-        "catalog_version": "pr3-2026-05-12",
+        "catalog_version": "pr5-2026-05-12",
         "tools": tools,
     }
 
@@ -131,7 +137,7 @@ def validate_probe_adapter(adapter_id: str) -> AdapterId:
         raise AcquisitionToolError(f"Unsupported acquisition adapter `{adapter_id}`. Supported adapters: {supported}.")
     tool = _catalog_tool(adapter_id)
     if not tool["probe_capable"]:
-        raise AcquisitionToolError(f"Acquisition adapter `{adapter_id}` is not probe-capable in PR3.")
+        raise AcquisitionToolError(f"Acquisition adapter `{adapter_id}` is not probe-capable in this build.")
     return adapter_id  # type: ignore[return-value]
 
 
@@ -154,11 +160,12 @@ def probe_acquisition_url(
         allow_stealth_browser=allow_stealth_browser,
         require_authorized_access=require_authorized_access,
     )
+    _validate_adapter_profile_safety(adapter, profile)
     adapters = build_builtin_adapters()
     try:
         selected = adapters.get(adapter)
         if selected is None:
-            raise AcquisitionToolError(f"Acquisition adapter `{adapter}` has no built-in PR3 probe implementation.")
+            raise AcquisitionToolError(f"Acquisition adapter `{adapter}` has no built-in probe implementation.")
 
         attempt = run_capture_attempt(normalized_url, selected, profile)
         return {
@@ -213,6 +220,22 @@ def _catalog_tool(adapter_id: str) -> dict[str, Any]:
         if tool["adapter"] == adapter_id:
             return tool
     raise AcquisitionToolError(f"Unsupported acquisition adapter `{adapter_id}`.")
+
+
+def _validate_adapter_profile_safety(adapter_id: AdapterId, profile: AcquisitionProfile) -> None:
+    if adapter_id != "cloakbrowser":
+        return
+    if not profile.safety.permits_cloakbrowser:
+        raise AcquisitionToolError(
+            "Acquisition adapter `cloakbrowser` requires safety.allow_stealth_browser=true "
+            "and safety.require_authorized_access=true in the active acquisition profile."
+        )
+    cloakbrowser_config = next(
+        (adapter for adapter in profile.adapters if adapter.adapter == "cloakbrowser"),
+        None,
+    )
+    if cloakbrowser_config is not None and not cloakbrowser_config.enabled:
+        raise AcquisitionToolError("Acquisition adapter `cloakbrowser` is disabled in the active acquisition profile.")
 
 
 def _close_adapters(adapters: dict[str, Any]) -> None:

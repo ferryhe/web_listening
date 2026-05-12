@@ -530,6 +530,7 @@ def export_manifest(
             manifest_json_path=resolved_json_path,
             acquisition_profile_path=acquisition_profile_path,
             capture_attempt_path=capture_attempt_path,
+            precomputed_acquisition_evidence=manifest.acquisition_evidence,
         )
     finally:
         storage.close()

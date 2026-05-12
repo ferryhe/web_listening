@@ -79,6 +79,19 @@ def _portable_path(path: str | Path | None, *, artifact_base: Path | None = None
         return candidate.name
 
 
+def _portable_acquisition_evidence(evidence: dict | None, *, artifact_base: Path) -> dict | None:
+    if evidence is None:
+        return None
+    payload = dict(evidence)
+    raw_paths = evidence.get("input_paths")
+    if isinstance(raw_paths, dict):
+        payload["input_paths"] = {
+            str(key): _portable_path(value, artifact_base=artifact_base) or ""
+            for key, value in raw_paths.items()
+        }
+    return payload
+
+
 def _sha256_file(path: str | Path | None) -> str | None:
     if path is None:
         return None
@@ -201,6 +214,7 @@ def build_scope_document_manifest(
     run_id: int | None = None,
     acquisition_profile_path: str | Path | None = None,
     capture_attempt_path: str | Path | None = None,
+    precomputed_acquisition_evidence: dict | None = None,
 ) -> ScopeDocumentManifest:
     plan = load_monitor_scope_plan(scope_path)
     site, scope = find_scope_for_plan(storage, plan)
@@ -218,10 +232,12 @@ def build_scope_document_manifest(
         "preferred_display_path uses tracked_local_path when present and falls back to local_path otherwise.",
         "tracked_local_path is the source-oriented browsing path; local_path remains the canonical SHA256 blob path.",
     ]
-    acquisition_evidence = load_acquisition_evidence(
-        profile_path=acquisition_profile_path,
-        capture_attempt_path=capture_attempt_path,
-    )
+    acquisition_evidence = precomputed_acquisition_evidence
+    if acquisition_evidence is None and (acquisition_profile_path is not None or capture_attempt_path is not None):
+        acquisition_evidence = load_acquisition_evidence(
+            profile_path=acquisition_profile_path,
+            capture_attempt_path=capture_attempt_path,
+        )
 
     return ScopeDocumentManifest(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -325,6 +341,7 @@ def build_web_listening_manifest_v1(
     command: str | None = None,
     acquisition_profile_path: str | Path | None = None,
     capture_attempt_path: str | Path | None = None,
+    precomputed_acquisition_evidence: dict | None = None,
 ) -> dict:
     """Build the reviewed web-listening-manifest.v1 JSON payload.
 
@@ -456,16 +473,20 @@ def build_web_listening_manifest_v1(
             }
         )
 
-    acquisition_evidence = load_acquisition_evidence(
-        profile_path=acquisition_profile_path,
-        capture_attempt_path=capture_attempt_path,
-    )
+    acquisition_evidence = precomputed_acquisition_evidence
+    if acquisition_evidence is None and (acquisition_profile_path is not None or capture_attempt_path is not None):
+        acquisition_evidence = load_acquisition_evidence(
+            profile_path=acquisition_profile_path,
+            capture_attempt_path=capture_attempt_path,
+        )
+    acquisition_evidence = _portable_acquisition_evidence(acquisition_evidence, artifact_base=artifact_base)
     deprecated_manifest = build_scope_document_manifest(
         scope_path,
         storage=storage,
         run_id=resolved_run_id,
         acquisition_profile_path=acquisition_profile_path,
         capture_attempt_path=capture_attempt_path,
+        precomputed_acquisition_evidence=acquisition_evidence,
     ).to_dict()
 
     payload = {

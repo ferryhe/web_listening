@@ -11,6 +11,11 @@ from web_listening.blocks.acquisition_profile import CaptureAttempt, load_acquis
 
 
 SCHEMA_VERSION = "acquisition-evidence.v1"
+MAX_EVIDENCE_BYTES = 512 * 1024
+
+
+class AcquisitionEvidenceError(ValueError):
+    """Raised when an acquisition evidence artifact cannot be loaded safely."""
 
 
 def load_acquisition_evidence(
@@ -33,6 +38,7 @@ def load_acquisition_evidence(
     source_next_actions: list[str] = []
 
     if profile_path is not None:
+        _ensure_artifact_size(profile_path)
         profile_payload = load_acquisition_profile(profile_path).model_dump(mode="json")
 
     for path in (capture_attempt_path, probe_path):
@@ -78,10 +84,22 @@ def acquisition_artifact_rows(
 
 
 def _load_structured_file(path: str | Path) -> Any:
-    raw = Path(path).read_text(encoding="utf-8")
-    if Path(path).suffix.lower() == ".json":
+    candidate = Path(path)
+    _ensure_artifact_size(candidate)
+    raw = candidate.read_text(encoding="utf-8")
+    if candidate.suffix.lower() == ".json":
         return json.loads(raw)
     return yaml.safe_load(raw)
+
+
+def _ensure_artifact_size(path: str | Path) -> None:
+    candidate = Path(path)
+    size = candidate.stat().st_size
+    if size > MAX_EVIDENCE_BYTES:
+        raise AcquisitionEvidenceError(
+            f"Acquisition evidence artifact `{candidate}` is too large to inline "
+            f"({size} bytes > {MAX_EVIDENCE_BYTES} bytes)."
+        )
 
 
 def _extract_payload_parts(payload: Any) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str]:

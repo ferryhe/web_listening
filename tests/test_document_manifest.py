@@ -244,7 +244,9 @@ selected_sections:
     assert handoff["artifacts"]["structured_exports"][0]["sha256"] is None
     assert handoff["artifacts"]["compatibility_exports"][0]["kind"] == "document_manifest_yaml"
     assert handoff["artifact_root"] == "."
-    assert str(profile_path) in handoff["extensions"]["acquisition"]["input_paths"]["profile_path"]
+    extension_profile_path = handoff["extensions"]["acquisition"]["input_paths"]["profile_path"]
+    assert Path(extension_profile_path).name == profile_path.name
+    assert not Path(extension_profile_path).is_absolute()
     assert handoff["extensions"]["acquisition"]["latest_attempt"]["adapter"] == "web_http"
     assert handoff["extensions"]["acquisition"]["recommended_next_adapter"] == "browser_rendered"
     assert any(Path(path).name == profile_path.name for path in handoff["run"]["input_paths"])

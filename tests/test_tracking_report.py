@@ -3,7 +3,7 @@ from pathlib import Path
 
 import yaml
 
-from web_listening.blocks.acquisition_evidence import acquisition_artifact_rows, load_acquisition_evidence
+from web_listening.blocks.acquisition_evidence import AcquisitionEvidenceError, acquisition_artifact_rows, load_acquisition_evidence
 from web_listening.blocks.acquisition_profile import build_default_acquisition_profile, render_acquisition_profile_yaml
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text as render_scope_yaml_text
 from web_listening.blocks.monitor_task import build_monitor_task, render_yaml_text as render_task_yaml_text
@@ -94,6 +94,18 @@ def test_load_acquisition_evidence_combines_profile_and_probe_payload(tmp_path: 
     rows = acquisition_artifact_rows(profile_path=profile_path, probe_path=probe_path)
     assert rows[0]["kind"] == "acquisition_profile"
     assert rows[1]["kind"] == "acquisition_probe"
+
+
+def test_load_acquisition_evidence_rejects_large_artifacts(tmp_path: Path):
+    capture_attempt_path = tmp_path / "huge_capture_attempt.json"
+    capture_attempt_path.write_text(" " * (512 * 1024 + 1), encoding="utf-8")
+
+    try:
+        load_acquisition_evidence(capture_attempt_path=capture_attempt_path)
+    except AcquisitionEvidenceError as exc:
+        assert "too large to inline" in str(exc)
+    else:
+        raise AssertionError("expected AcquisitionEvidenceError for oversized acquisition evidence")
 
 
 def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_and_scope_identity(tmp_path: Path):

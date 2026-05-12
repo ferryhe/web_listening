@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 
+from web_listening.blocks.acquisition_evidence import AcquisitionEvidenceError
 from web_listening.blocks.acquisition_tools import (
     AcquisitionToolError,
     acquisition_tools_catalog,
@@ -681,6 +682,8 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
         return execute_job(job_type="scope.report", scope_id=scope_id, runner=_runner)
     except HTTPException:
         raise
+    except AcquisitionEvidenceError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

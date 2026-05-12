@@ -257,6 +257,16 @@ GET /api/v1/acquisition/tools
 
 The catalog maps ordinary public HTML to `web_http`, dynamic JavaScript pages to `browser_rendered`, authorized stealth-browser/CDP-like contexts to `cloakbrowser`, bulk structured or site-specific scrape jobs to reserved `batch_python`, and discovery/feed cases to reserved `sitemap` or `rss`. This picker contract is planning/probing metadata only; it does not change `bootstrap-scope` or `run-scope` crawl execution.
 
+Agent usage sequence:
+
+1. Load the picker contract with `web-listening list-acquisition-tools --json` or `GET /api/v1/acquisition/tools`.
+2. Match page signals against `tool_selection_rules`, then choose a `tools[].adapter` whose `runtime_status`, `probe_capable`, and safety requirements are satisfied.
+3. Collect the listed `operator_inputs`; use either a reviewed `profile_path` or inline fields such as `url` and conditional `site_key`.
+4. Build or provide an `acquisition-profile.v1`, then probe with `web-listening probe-acquisition --adapter <adapter> ...` or `POST /api/v1/acquisition/probe`.
+5. Keep probe output as acquisition evidence for operator review and downstream reports; do not treat picker/probe selection as changing the fixed staged workflow execution path.
+
+Frontends should render `frontend_control` for labels, groups, ordering, and selectable state. Agents should treat `safety_notes`, `requires_profile_safety`, and `optional_runtime` as hard gates before executing a probe.
+
 ## Interface Authority Map
 
 The packaged CLI and REST API still exist and are useful for site-level monitoring.

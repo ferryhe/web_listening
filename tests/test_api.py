@@ -31,6 +31,25 @@ class FakeProbeAdapter:
         )
 
 
+class FakeCloakProbeAdapter(FakeProbeAdapter):
+    adapter_id = "cloakbrowser"
+
+    def capture(self, url: str, *, config=None) -> FetchResult:
+        result = super().capture(url, config=config)
+        metadata = dict(result.metadata_json)
+        metadata["driver"] = "cloakbrowser"
+        return FetchResult(
+            raw_html=result.raw_html,
+            cleaned_html=result.cleaned_html,
+            content_text=result.content_text,
+            markdown=result.markdown,
+            fit_markdown=result.fit_markdown,
+            metadata_json=metadata,
+            final_url=result.final_url,
+            status_code=result.status_code,
+        )
+
+
 def test_acquisition_tools_endpoint_returns_catalog():
     client = TestClient(create_app())
     response = client.get("/api/v1/acquisition/tools")
@@ -41,8 +60,10 @@ def test_acquisition_tools_endpoint_returns_catalog():
     tools = {tool["adapter"]: tool for tool in payload["tools"]}
     assert tools["web_http"]["probe_capable"] is True
     assert tools["browser_rendered"]["probe_capable"] is True
-    assert tools["cloakbrowser"]["built_in_now"] is False
-    assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is False
+    assert tools["cloakbrowser"]["built_in_now"] is True
+    assert tools["cloakbrowser"]["probe_capable"] is True
+    assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is True
+    assert tools["cloakbrowser"]["optional_runtime"]["extra"] == "cloakbrowser"
 
 
 def test_acquisition_default_profile_endpoint_returns_profile():
@@ -138,6 +159,79 @@ def test_acquisition_probe_endpoint_loads_profile_path_without_site_key(tmp_path
     payload = response.json()
     assert payload["profile"]["site_key"] == "profile-site"
     assert payload["attempt"]["status"] == "passed"
+
+
+def test_acquisition_probe_endpoint_rejects_profile_path_with_inline_overrides(tmp_path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+    profile_path = tmp_path / "profiles" / "profile.yaml"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile = build_default_acquisition_profile("profile-site", allowed_domains=["example.com"])
+    profile_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/acquisition/probe",
+        json={
+            "url": "https://example.com/",
+            "profile_path": "profiles/profile.yaml",
+            "allowed_domains": ["example.com"],
+            "allow_stealth_browser": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "inline override fields are not allowed with profile_path" in response.json()["detail"]
+    assert "allowed_domains" in response.json()["detail"]
+    assert "allow_stealth_browser" in response.json()["detail"]
+
+
+def test_acquisition_probe_endpoint_rejects_cloakbrowser_without_authorization(monkeypatch):
+    monkeypatch.setattr(
+        "web_listening.blocks.acquisition_tools.build_builtin_adapters",
+        lambda: {"cloakbrowser": FakeCloakProbeAdapter()},
+    )
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/acquisition/probe",
+        json={
+            "url": "https://example.com/",
+            "site_key": "demo",
+            "adapter": "cloakbrowser",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "requires safety.allow_stealth_browser=true" in response.json()["detail"]
+    assert "safety.require_authorized_access=true" in response.json()["detail"]
+
+
+def test_acquisition_probe_endpoint_allows_cloakbrowser_with_authorization(monkeypatch):
+    monkeypatch.setattr(
+        "web_listening.blocks.acquisition_tools.build_builtin_adapters",
+        lambda: {"cloakbrowser": FakeCloakProbeAdapter()},
+    )
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/acquisition/probe",
+        json={
+            "url": "https://example.com/",
+            "site_key": "demo",
+            "adapter": "cloakbrowser",
+            "allowed_domains": ["example.com"],
+            "allow_stealth_browser": True,
+            "require_authorized_access": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["profile"]["safety"]["allow_stealth_browser"] is True
+    assert payload["profile"]["safety"]["require_authorized_access"] is True
+    assert payload["attempt"]["adapter"] == "cloakbrowser"
+    assert payload["attempt"]["status"] == "passed"
+    assert payload["attempt"]["metadata"]["driver"] == "cloakbrowser"
 
 
 def test_acquisition_probe_endpoint_rejects_profile_path_outside_data_dir(tmp_path, monkeypatch):

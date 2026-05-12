@@ -349,7 +349,7 @@ def analyze(
 def list_acquisition_tools(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON catalog."),
 ):
-    """List acquisition tool contracts and PR3 probe capabilities."""
+    """List acquisition tool contracts and probe capabilities."""
     from web_listening.blocks.acquisition_tools import acquisition_tools_catalog
 
     payload = acquisition_tools_catalog()
@@ -416,6 +416,9 @@ def probe_acquisition_command(
     site_key: str = typer.Option("", "--site-key", help="Stable site key for a generated probe profile."),
     profile_path: str = typer.Option("", "--profile-path", help="Optional acquisition profile YAML path."),
     adapter: str = typer.Option("web_http", "--adapter", help="Probe adapter id."),
+    allowed_domain: list[str] | None = typer.Option(None, "--allowed-domain", help="Allowed domain for generated probe profile; repeat for multiple domains."),
+    allow_stealth_browser: bool = typer.Option(False, "--allow-stealth-browser", help="Permit authorized stealth-browser probing for generated probe profile."),
+    require_authorized_access: bool = typer.Option(False, "--require-authorized-access", help="Confirm explicit authorization is required for generated probe profile."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON probe payload."),
 ):
     """Probe one URL with a selected acquisition adapter without changing staged workflow execution."""
@@ -432,6 +435,9 @@ def probe_acquisition_command(
             site_key=site_key or None,
             adapter_id=adapter,
             profile_path=profile_path or None,
+            allowed_domains=allowed_domain,
+            allow_stealth_browser=allow_stealth_browser,
+            require_authorized_access=require_authorized_access,
         )
     except (AcquisitionToolError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc

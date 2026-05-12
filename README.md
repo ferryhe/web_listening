@@ -48,6 +48,7 @@ What is production-usable now:
 
 What still remains future-facing:
 
+- acquisition profiles as a control artifact for choosing HTTP, rendered browser, sitemap/feed, authorized stealth-browser, or batch acquisition before the fixed staged workflow
 - persistent jobs and webhooks for longer-running or external delivery workflows
 - richer incremental change bundles and conversion routing
 - REST/API expansion beyond the current staged workflow and compatibility surfaces
@@ -230,6 +231,8 @@ Typical artifacts from the staged workflow:
 - `document_manifest_<site>_<date>.yaml`
 - `document_manifest_<site>_<date>.md`
 - handoff contract docs:
+  - `docs/contracts/acquisition-profile-v1.md`
+  - `docs/testing/fixtures/acquisition-profile-v1.sample.yaml`
   - `docs/contracts/web-listening-manifest-v1.md`
   - `docs/testing/fixtures/web-listening-manifest-v1.sample.json`
 

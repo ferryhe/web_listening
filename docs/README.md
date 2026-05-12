@@ -24,8 +24,10 @@ These are the long-lived docs that describe the current system:
 - validation guide:
   - [validation/README.md](validation/README.md)
 - contracts:
+  - [acquisition-profile-v1.md](contracts/acquisition-profile-v1.md)
   - [web-listening-manifest-v1.md](contracts/web-listening-manifest-v1.md)
 - testing fixtures:
+  - [acquisition-profile-v1.sample.yaml](testing/fixtures/acquisition-profile-v1.sample.yaml)
   - [web-listening-contract-smoke.md](testing/web-listening-contract-smoke.md)
 
 ## Current Entry Points
@@ -61,6 +63,7 @@ These are the long-lived docs that describe the current system:
 ## New Stable Artifacts
 
 - control plane:
+  - `acquisition_profile_<site_key>_<date>.yaml` (contract defined; workflow integration planned; static fixtures/examples may omit the date)
   - `monitor_task_<task>_<date>.yaml`
   - `section_selection_<site>_<date>.yaml`
   - `monitor_scope_<site>_<date>.yaml`

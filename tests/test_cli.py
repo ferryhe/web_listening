@@ -244,6 +244,36 @@ def test_probe_acquisition_requires_site_key_when_no_profile_path():
     assert "site_key is required when profile_path is not provided" in result.output
 
 
+def test_probe_acquisition_rejects_credential_and_private_hosts():
+    credential_result = runner.invoke(
+        app,
+        [
+            "probe-acquisition",
+            "--url",
+            "https://user:pass@example.com/",
+            "--site-key",
+            "demo",
+            "--json",
+        ],
+    )
+    assert credential_result.exit_code != 0
+    assert "must not include embedded credentials" in credential_result.output
+
+    private_result = runner.invoke(
+        app,
+        [
+            "probe-acquisition",
+            "--url",
+            "http://127.0.0.1/",
+            "--site-key",
+            "demo",
+            "--json",
+        ],
+    )
+    assert private_result.exit_code != 0
+    assert "must not be a private" in private_result.output
+
+
 def test_probe_acquisition_closes_built_in_adapters_after_success(monkeypatch):
     selected_adapter = CrawlerOwnedProbeAdapter()
     unused_adapter = CloseRecordingAdapter()

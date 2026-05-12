@@ -377,7 +377,7 @@ def list_acquisition_tools(
 @app.command("build-acquisition-profile")
 def build_acquisition_profile_command(
     site_key: str = typer.Option(..., "--site-key", help="Stable site key for the acquisition profile."),
-    allowed_domain: list[str] = typer.Option(None, "--allowed-domain", help="Allowed domain; repeat for multiple domains."),
+    allowed_domain: list[str] | None = typer.Option(None, "--allowed-domain", help="Allowed domain; repeat for multiple domains."),
     allow_stealth_browser: bool = typer.Option(False, "--allow-stealth-browser", help="Permit future authorized stealth-browser use."),
     require_authorized_access: bool = typer.Option(False, "--require-authorized-access", help="Require explicit authorization for protected access."),
     output: str = typer.Option("", "--output", help="Optional YAML output path."),

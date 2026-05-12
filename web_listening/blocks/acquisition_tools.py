@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -126,7 +127,7 @@ def build_default_acquisition_profile_payload(
 
 def validate_probe_adapter(adapter_id: str) -> AdapterId:
     if adapter_id not in ALLOWED_ADAPTER_IDS:
-        supported = ", ".join(ALLOWED_ADAPTER_IDS)
+        supported = ", ".join(sorted(ALLOWED_ADAPTER_IDS))
         raise AcquisitionToolError(f"Unsupported acquisition adapter `{adapter_id}`. Supported adapters: {supported}.")
     tool = _catalog_tool(adapter_id)
     if not tool["probe_capable"]:
@@ -174,8 +175,15 @@ def probe_acquisition_url(
 def validate_http_url(url: str) -> str:
     normalized = (url or "").strip()
     parsed = urlparse(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
         raise AcquisitionToolError("url must be a valid http or https URL")
+    if parsed.username or parsed.password:
+        raise AcquisitionToolError("url must not include embedded credentials")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise AcquisitionToolError("url port must be valid") from exc
+    _reject_private_probe_host(parsed.hostname)
     return normalized
 
 
@@ -225,7 +233,26 @@ def _close_adapters(adapters: dict[str, Any]) -> None:
 
 
 def _url_host(url: str) -> str:
-    return urlparse(url).netloc
+    return urlparse(url).hostname or ""
+
+
+def _reject_private_probe_host(hostname: str) -> None:
+    normalized = hostname.strip().casefold().rstrip(".")
+    if normalized == "localhost" or normalized.endswith(".localhost") or normalized.endswith(".local"):
+        raise AcquisitionToolError("url host must not be localhost or a local-only hostname")
+    try:
+        address = ip_address(normalized)
+    except ValueError:
+        return
+    if (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    ):
+        raise AcquisitionToolError("url host must not be a private, loopback, link-local, or reserved IP address")
 
 
 def _next_action(status: str, recommended_next_adapter: str) -> str:

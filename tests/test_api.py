@@ -169,6 +169,20 @@ def test_acquisition_probe_endpoint_requires_site_key_without_profile_path():
     assert "site_key is required when profile_path is not provided" in response.json()["detail"]
 
 
+def test_acquisition_probe_endpoint_rejects_private_probe_hosts():
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/acquisition/probe",
+        json={
+            "url": "http://127.0.0.1/",
+            "site_key": "demo",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "must not be a private" in response.json()["detail"]
+
+
 def test_get_latest_snapshot_endpoint(tmp_path, monkeypatch):
     db_path = tmp_path / "api.db"
     monkeypatch.setattr(routes.settings, "db_path", db_path)

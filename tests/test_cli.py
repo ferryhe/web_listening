@@ -3,9 +3,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import yaml
 from typer.testing import CliRunner
 
+import web_listening.blocks.acquisition_tools as acquisition_tools
 from web_listening.cli import app
+from web_listening.blocks.acquisition_profile import (
+    build_default_acquisition_profile,
+    render_acquisition_profile_yaml,
+)
+from web_listening.blocks.crawler import FetchResult
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text as render_scope_yaml_text
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
@@ -13,6 +20,49 @@ from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation
 
 
 runner = CliRunner()
+
+
+class FakeProbeAdapter:
+    adapter_id = "web_http"
+
+    def capture(self, url: str, *, config=None) -> FetchResult:
+        text = " ".join(f"word{i}" for i in range(150))
+        return FetchResult(
+            raw_html="<html></html>",
+            cleaned_html="<main></main>",
+            content_text=text,
+            markdown=text,
+            fit_markdown=text,
+            metadata_json={"link_count": 4, "document_link_count": 0},
+            final_url=url,
+            status_code=200,
+        )
+
+
+class CloseRecordingAdapter(FakeProbeAdapter):
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class CloseRecordingCrawler:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class CrawlerOwnedProbeAdapter(FakeProbeAdapter):
+    def __init__(self):
+        self.crawler = CloseRecordingCrawler()
+
+
+class RaisingCloseRecordingAdapter(CloseRecordingAdapter):
+    def capture(self, url: str, *, config=None) -> FetchResult:
+        raise RuntimeError("capture failed")
 
 
 def test_cli_help_registers_staged_workflow_commands():
@@ -32,8 +82,204 @@ def test_cli_help_registers_staged_workflow_commands():
         "get-job",
         "create-monitor-task",
         "export-tracking-report",
+        "list-acquisition-tools",
+        "build-acquisition-profile",
+        "probe-acquisition",
     ]:
         assert command_name in result.output
+
+
+def test_list_acquisition_tools_json_lists_probe_capabilities():
+    result = runner.invoke(app, ["list-acquisition-tools", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["contract_version"] == "acquisition-tools.v1"
+    tools = {tool["adapter"]: tool for tool in payload["tools"]}
+    assert tools["web_http"]["probe_capable"] is True
+    assert tools["browser_rendered"]["probe_capable"] is True
+    assert tools["cloakbrowser"]["probe_capable"] is False
+    assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is False
+
+
+def test_build_acquisition_profile_json_writes_yaml(tmp_path: Path):
+    output_path = tmp_path / "acquisition-profile.yaml"
+
+    result = runner.invoke(
+        app,
+        [
+            "build-acquisition-profile",
+            "--site-key",
+            "demo",
+            "--allowed-domain",
+            "example.com",
+            "--allow-stealth-browser",
+            "--require-authorized-access",
+            "--output",
+            str(output_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["contract_version"] == "acquisition-profile-build.v1"
+    assert payload["output_path"] == str(output_path)
+    assert payload["profile"]["site_key"] == "demo"
+    assert payload["profile"]["safety"]["allowed_domains"] == ["example.com"]
+    assert output_path.exists()
+    written = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+    assert written["schema_version"] == "acquisition-profile.v1"
+    assert written["site_key"] == "demo"
+    assert "cloakbrowser" in written["fallback_order"]
+
+
+def test_probe_acquisition_json_uses_helper_and_rejects_list_only_adapter(monkeypatch):
+    def fake_probe_acquisition_url(**kwargs):
+        assert kwargs["url"] == "https://example.com/"
+        assert kwargs["site_key"] == "demo"
+        assert kwargs["adapter_id"] == "web_http"
+        return {
+            "contract_version": "acquisition-probe.v1",
+            "profile": {"site_key": "demo", "default_adapter": "web_http"},
+            "attempt": {
+                "schema_version": "capture-attempt.v1",
+                "adapter": "web_http",
+                "status": "passed",
+                "url": "https://example.com/",
+                "final_url": "https://example.com/",
+                "status_code": 200,
+                "word_count": 150,
+                "link_count": 5,
+                "document_link_count": 1,
+                "failure_reason": "",
+                "recommended_next_adapter": "",
+                "metadata": {},
+            },
+            "available_tools": {"contract_version": "acquisition-tools.v1", "tools": []},
+            "next_action": "use_adapter_output",
+        }
+
+    monkeypatch.setattr(
+        "web_listening.blocks.acquisition_tools.probe_acquisition_url",
+        fake_probe_acquisition_url,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "probe-acquisition",
+            "--url",
+            "https://example.com/",
+            "--site-key",
+            "demo",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["attempt"]["status"] == "passed"
+    assert payload["attempt"]["status_code"] == 200
+
+    rejected = runner.invoke(
+        app,
+        [
+            "probe-acquisition",
+            "--url",
+            "https://example.com/",
+            "--site-key",
+            "demo",
+            "--adapter",
+            "cloakbrowser",
+            "--json",
+        ],
+    )
+
+    assert rejected.exit_code != 0
+    assert "is not probe-capable" in rejected.output
+
+
+def test_probe_acquisition_allows_profile_path_without_site_key(tmp_path: Path, monkeypatch):
+    profile_path = tmp_path / "profile.yaml"
+    profile = build_default_acquisition_profile("profile-site", allowed_domains=["example.com"])
+    profile.quality_gates.min_words = 1
+    profile.quality_gates.min_links = 1
+    profile_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
+    monkeypatch.setattr(
+        "web_listening.blocks.acquisition_tools.build_builtin_adapters",
+        lambda: {"web_http": FakeProbeAdapter()},
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "probe-acquisition",
+            "--url",
+            "https://example.com/",
+            "--profile-path",
+            str(profile_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["profile"]["site_key"] == "profile-site"
+    assert payload["attempt"]["status"] == "passed"
+
+
+def test_probe_acquisition_requires_site_key_when_no_profile_path():
+    result = runner.invoke(
+        app,
+        [
+            "probe-acquisition",
+            "--url",
+            "https://example.com/",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "site_key is required when profile_path is not provided" in result.output
+
+
+def test_probe_acquisition_closes_built_in_adapters_after_success(monkeypatch):
+    selected_adapter = CrawlerOwnedProbeAdapter()
+    unused_adapter = CloseRecordingAdapter()
+    monkeypatch.setattr(
+        acquisition_tools,
+        "build_builtin_adapters",
+        lambda: {"web_http": selected_adapter, "browser_rendered": unused_adapter},
+    )
+
+    payload = acquisition_tools.probe_acquisition_url(
+        url="https://example.com/",
+        site_key="demo",
+        adapter_id="web_http",
+    )
+
+    assert payload["attempt"]["status"] == "passed"
+    assert selected_adapter.crawler.closed is True
+    assert unused_adapter.closed is True
+
+
+def test_probe_acquisition_closes_built_in_adapters_after_capture_exception(monkeypatch):
+    selected_adapter = RaisingCloseRecordingAdapter()
+    monkeypatch.setattr(
+        acquisition_tools,
+        "build_builtin_adapters",
+        lambda: {"web_http": selected_adapter},
+    )
+
+    payload = acquisition_tools.probe_acquisition_url(
+        url="https://example.com/",
+        site_key="demo",
+        adapter_id="web_http",
+    )
+
+    assert payload["attempt"]["status"] == "error"
+    assert selected_adapter.closed is True
 
 
 def test_add_site_rejects_invalid_fetch_config_json():

@@ -6,10 +6,167 @@ from fastapi.testclient import TestClient
 
 from web_listening.api import routes
 from web_listening.api.app import create_app
+from web_listening.blocks.acquisition_profile import build_default_acquisition_profile, render_acquisition_profile_yaml
+from web_listening.blocks.crawler import FetchResult
 from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text as render_scope_yaml_text
 from web_listening.blocks.rescue import RescueAttempt, RescueResult
 from web_listening.blocks.storage import Storage
 from web_listening.models import CrawlRun, CrawlScope, Document, Job, Site, SiteSnapshot
+
+
+class FakeProbeAdapter:
+    adapter_id = "web_http"
+
+    def capture(self, url: str, *, config=None) -> FetchResult:
+        text = " ".join(f"word{i}" for i in range(150))
+        return FetchResult(
+            raw_html="<html></html>",
+            cleaned_html="<main></main>",
+            content_text=text,
+            markdown=text,
+            fit_markdown=text,
+            metadata_json={"link_count": 4, "document_link_count": 0},
+            final_url=url,
+            status_code=200,
+        )
+
+
+def test_acquisition_tools_endpoint_returns_catalog():
+    client = TestClient(create_app())
+    response = client.get("/api/v1/acquisition/tools")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["contract_version"] == "acquisition-tools.v1"
+    tools = {tool["adapter"]: tool for tool in payload["tools"]}
+    assert tools["web_http"]["probe_capable"] is True
+    assert tools["browser_rendered"]["probe_capable"] is True
+    assert tools["cloakbrowser"]["built_in_now"] is False
+    assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is False
+
+
+def test_acquisition_default_profile_endpoint_returns_profile():
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/acquisition/profiles/default",
+        json={
+            "site_key": "demo",
+            "allowed_domains": ["example.com"],
+            "allow_stealth_browser": True,
+            "require_authorized_access": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["contract_version"] == "acquisition-profile-build.v1"
+    assert payload["profile"]["site_key"] == "demo"
+    assert payload["profile"]["safety"]["allowed_domains"] == ["example.com"]
+    assert "cloakbrowser" in payload["profile"]["fallback_order"]
+    assert payload["output_path"] == ""
+
+
+def test_acquisition_probe_endpoint_uses_helper_network_free(monkeypatch):
+    def fake_probe_acquisition_url(**kwargs):
+        assert kwargs["url"] == "https://example.com/"
+        assert kwargs["site_key"] == "demo"
+        assert kwargs["adapter_id"] == "browser_rendered"
+        assert kwargs["profile_path"] is None
+        return {
+            "contract_version": "acquisition-probe.v1",
+            "profile": {"site_key": "demo", "default_adapter": "web_http"},
+            "attempt": {
+                "schema_version": "capture-attempt.v1",
+                "adapter": "browser_rendered",
+                "status": "failed_quality_gate",
+                "url": "https://example.com/",
+                "final_url": "https://example.com/",
+                "status_code": 200,
+                "word_count": 10,
+                "link_count": 1,
+                "document_link_count": 0,
+                "failure_reason": "word_count 10 < min_words 120",
+                "recommended_next_adapter": "sitemap",
+                "metadata": {},
+            },
+            "available_tools": {"contract_version": "acquisition-tools.v1", "tools": []},
+            "next_action": "try_adapter:sitemap",
+        }
+
+    monkeypatch.setattr(routes, "probe_acquisition_url", fake_probe_acquisition_url)
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/acquisition/probe",
+        json={
+            "url": "https://example.com/",
+            "site_key": "demo",
+            "adapter": "browser_rendered",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["attempt"]["adapter"] == "browser_rendered"
+    assert payload["attempt"]["status"] == "failed_quality_gate"
+    assert payload["next_action"] == "try_adapter:sitemap"
+
+
+def test_acquisition_probe_endpoint_loads_profile_path_without_site_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+    profile_path = tmp_path / "profiles" / "profile.yaml"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile = build_default_acquisition_profile("profile-site", allowed_domains=["example.com"])
+    profile.quality_gates.min_words = 1
+    profile.quality_gates.min_links = 1
+    profile_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
+    monkeypatch.setattr(
+        "web_listening.blocks.acquisition_tools.build_builtin_adapters",
+        lambda: {"web_http": FakeProbeAdapter()},
+    )
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/acquisition/probe",
+        json={
+            "url": "https://example.com/",
+            "profile_path": "profiles/profile.yaml",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["profile"]["site_key"] == "profile-site"
+    assert payload["attempt"]["status"] == "passed"
+
+
+def test_acquisition_probe_endpoint_rejects_profile_path_outside_data_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", tmp_path)
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/acquisition/probe",
+        json={
+            "url": "https://example.com/",
+            "profile_path": "/tmp/outside-profile.yaml",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "must stay under" in response.json()["detail"]
+
+
+def test_acquisition_probe_endpoint_requires_site_key_without_profile_path():
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/acquisition/probe",
+        json={
+            "url": "https://example.com/",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "site_key is required when profile_path is not provided" in response.json()["detail"]
 
 
 def test_get_latest_snapshot_endpoint(tmp_path, monkeypatch):

@@ -201,6 +201,29 @@ def test_evaluate_capture_attempt_preserves_error_evidence():
     assert evaluated.failure_reason == "RuntimeError: adapter exploded"
 
 
+def test_evaluate_capture_attempt_uses_blocked_marker_independent_of_other_failures():
+    gates = AcquisitionQualityGates(
+        min_words=100,
+        min_links=1,
+        blocked_markers=["captcha"],
+    )
+    attempt = CaptureAttempt(
+        adapter="web_http",
+        status="failed_quality_gate",
+        url="https://example.com/",
+        status_code=503,
+        word_count=1,
+        link_count=0,
+        metadata={"notice": "CAPTCHA challenge"},
+    )
+
+    evaluated = evaluate_capture_attempt(attempt, gates)
+
+    assert evaluated.status == "blocked"
+    assert "blocked marker found: captcha" in evaluated.failure_reason
+    assert "status_code 503" in evaluated.failure_reason
+
+
 def test_run_capture_attempt_catches_adapter_exception_and_recommends_next_adapter():
     profile = make_profile()
 

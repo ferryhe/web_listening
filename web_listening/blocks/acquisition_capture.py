@@ -28,6 +28,7 @@ from web_listening.config import settings
 class CaptureEvaluation:
     passed: bool
     failure_reason: str
+    blocked_marker: str
     word_count: int
     link_count: int
     document_link_count: int
@@ -80,7 +81,7 @@ def evaluate_fetch_result(
 ) -> CaptureAttempt:
     evaluation = _evaluate_result(result, quality_gates)
     status = "passed" if evaluation.passed else "failed_quality_gate"
-    if evaluation.failure_reason.startswith("blocked marker"):
+    if evaluation.blocked_marker:
         status = "blocked"
     return CaptureAttempt(
         adapter=adapter,
@@ -105,20 +106,21 @@ def evaluate_capture_attempt(
     if attempt.status == "blocked" or _has_blocked_failure_reason(attempt.failure_reason):
         return attempt.model_copy(update={"status": "blocked"})
 
+    blocked_marker = _find_blocked_marker(
+        _metadata_text(attempt.metadata),
+        quality_gates.blocked_markers,
+    )
     failure_reasons = _quality_failure_reasons(
         status_code=attempt.status_code,
         word_count=attempt.word_count,
         link_count=attempt.link_count,
         document_link_count=attempt.document_link_count,
-        blocked_marker=_find_blocked_marker(
-            _metadata_text(attempt.metadata),
-            quality_gates.blocked_markers,
-        ),
+        blocked_marker=blocked_marker,
         quality_gates=quality_gates,
     )
     status = "passed"
     if failure_reasons:
-        status = "blocked" if failure_reasons[0].startswith("blocked marker") else "failed_quality_gate"
+        status = "blocked" if blocked_marker else "failed_quality_gate"
     return attempt.model_copy(
         update={
             "status": status,
@@ -177,6 +179,7 @@ def _evaluate_result(
     return CaptureEvaluation(
         passed=not failure_reasons,
         failure_reason="; ".join(failure_reasons),
+        blocked_marker=blocked_marker,
         word_count=word_count,
         link_count=link_count,
         document_link_count=document_link_count,

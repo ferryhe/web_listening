@@ -48,13 +48,12 @@ Every Codex worker run must:
 
 After development and local verification are complete, but before creating or updating a PR, run a separate Codex CLI review of the current branch against the PR base. Treat this as a mandatory local review gate.
 
-Use the PR base branch as the diff base; if there is no open PR yet, use `main` unless the task explicitly names another base:
+Use the actual PR base branch as the diff base. For PRs that target `main`, run the review directly against `origin/main`; if there is no open PR yet, use `main` unless the task explicitly names another base:
 
 ```bash
 BASE_BRANCH=${BASE_BRANCH:-main}
 git fetch origin "$BASE_BRANCH"
-git diff --no-ext-diff "origin/$BASE_BRANCH"...HEAD > /tmp/codex-pr.diff
-codex exec --sandbox read-only "Review /tmp/codex-pr.diff for technically correct, in-scope issues that should block this PR."
+codex -c 'model="gpt-5.5"' review --base "origin/$BASE_BRANCH"
 ```
 
 Evaluate Codex findings the same way as remote review comments: accept only technically correct, in-scope findings; make the necessary fixes; rerun the focused/full verification; then create or update the PR. If Codex CLI cannot run because of authentication or tooling, record the blocker explicitly in the final report before proceeding.

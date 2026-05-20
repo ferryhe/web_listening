@@ -24,4 +24,10 @@ jobs:
           python -m pip install -e ".[dev]"
 
       - name: Run tests
+        env:
+          # GitHub Actions sets GITHUB_ACTIONS=true, which makes Typer/Rich
+          # render option names with ANSI segments. The CLI tests assert plain
+          # error-message substrings, so use a dumb terminal for deterministic
+          # output in CI.
+          TERM: dumb
         run: python -m pytest -q

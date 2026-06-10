@@ -29,7 +29,7 @@ Boss requires the following workflow for every implementation PR unless the task
 8. Evaluate all comments on merit; fix only technically valid, in-scope comments.
 9. Rerun focused/full validation as appropriate and push follow-up fixes.
 10. Merge only when CI and valid review/Copilot comments are clean.
-11. After merge, delete the completed task branch.
+11. After merge, delete the completed task branch when branch deletion is in scope for the run.
 12. Sync local `main` back to latest `origin/main` before starting the next PR.
 
 Do not skip the reviewer gate or the 10-minute CI/Copilot/review wait. Destructive actions such as force-push, history rewrite, or broad cleanup require explicit approval from 北老师.

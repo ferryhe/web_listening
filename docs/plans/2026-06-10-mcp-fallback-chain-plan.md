@@ -167,9 +167,9 @@ running
 | `partial` | true | true/false | strategy-dependent | May continue if task requires stronger evidence. |
 | `failed_quality_gate` | true | false | yes | Response exists but below quality threshold. |
 | `blocked` | true | false | yes, if safer/stronger tool allowed | Captcha, Cloudflare, forbidden, JS wall, etc. |
-| `not_found` | false | false | no | URL/object does not exist. |
-| `auth_required` | false | false | no | Stop for human/operator auth. |
-| `permission_denied` | false | false | no | Stop unless permissions change. |
+| `not_found` | true | false | no | The tool completed and determined the URL/object does not exist. |
+| `auth_required` | true | false | no | The tool completed and determined human/operator auth is required. |
+| `permission_denied` | true | false | no | The tool completed and determined access is denied unless permissions change. |
 | `error` | false | false | maybe | Continue only if retryable/safe. |
 | `not_applicable` | true | false | context-dependent | Terminal for successful write/control operations with no data; non-terminal for skipped reserved adapters inside a fallback chain. |
 | `running` | true | false | no | Poll job. |
@@ -899,7 +899,7 @@ Rejected or deferred review suggestions:
 pytest tests/test_tool_result.py -v
 pytest tests/test_acquisition_fallback.py -v
 pytest tests/test_acquisition_fallback_execution.py -v
-pytest tests/test_mcp_tools.py -v
+pytest tests/test_mcp_server.py -v
 pytest tests/test_cli.py tests/test_api.py -v
 ```
 

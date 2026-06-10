@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from urllib.parse import urlparse
-from typing import Any
+from typing import Any, Literal
 
 from web_listening.blocks.acquisition_capture import build_builtin_adapters, run_capture_attempt
 from web_listening.blocks.acquisition_profile import (
@@ -29,6 +29,15 @@ DEFAULT_CHAINS: dict[str, list[AdapterId]] = {
     "authorized_fallback": ["web_http", "browser_rendered", "cloakbrowser", "batch_python"],
 }
 
+GoalPreset = Literal["page_text", "section_discovery", "document_discovery", "change_monitoring"]
+
+GOAL_PRESET_QUALITY_GATES: dict[GoalPreset, dict[str, Any]] = {
+    "page_text": {"min_words": 120, "min_links": 0, "min_document_links": 0},
+    "section_discovery": {"min_words": 80, "min_links": 3, "min_document_links": 0},
+    "document_discovery": {"min_words": 80, "min_links": 0, "min_document_links": 1},
+    "change_monitoring": {"min_words": 20, "min_links": 0, "min_document_links": 0},
+}
+
 _RESERVED_ADAPTER_REASON = "adapter is reserved / not probe-capable in this build"
 _TERMINAL_STATUSES = {"present", "artifact_only", "not_found", "auth_required", "permission_denied", "running"}
 
@@ -41,6 +50,7 @@ def acquire_with_fallback_result(
     quality_gates: AcquisitionQualityGates | Mapping[str, Any] | None = None,
     allowed_domains: Sequence[str] | str | None = None,
     strategy: str | None = None,
+    goal_preset: GoalPreset | str | None = None,
     max_attempts: int | None = None,
     inline_content_limit: int = 2_000,
 ) -> ToolResult:
@@ -52,20 +62,26 @@ def acquire_with_fallback_result(
     non-terminal ``not_applicable`` attempts instead of failing the chain.
     """
 
+    resolved_goal_preset = _resolve_goal_preset(goal_preset)
+    preset_quality_gates = _goal_preset_quality_gates(resolved_goal_preset)
+    effective_quality_gates_input = quality_gates if quality_gates is not None else preset_quality_gates
     requested_gates = _requested_quality_gates(quality_gates)
     resolved_profile = _resolve_profile(
         url,
         profile=profile,
-        quality_gates=quality_gates,
+        quality_gates=effective_quality_gates_input,
         allowed_domains=allowed_domains,
         strategy=strategy,
     )
     effective_gates = resolved_profile.quality_gates.model_dump(mode="json")
     warnings: list[str] = []
 
+    def finalize(result: ToolResult) -> ToolResult:
+        return _with_goal_preset_meta(result, resolved_goal_preset)
+
     input_safety_error = _input_url_safety_error(url, resolved_profile.safety.allowed_domains)
     if input_safety_error is not None:
-        return _terminal_result(
+        return finalize(_terminal_result(
             tool="",
             data_status="permission_denied",
             stop_reason="unsafe_url",
@@ -79,7 +95,7 @@ def acquire_with_fallback_result(
                 retryable=False,
                 safe_to_escalate=False,
             ),
-        )
+        ))
 
     executable_adapters = dict(adapters) if adapters is not None else build_builtin_adapters()
     chain = _adapter_chain(resolved_profile, strategy)
@@ -106,7 +122,7 @@ def acquire_with_fallback_result(
         if adapter_id == "cloakbrowser" and not resolved_profile.safety.permits_cloakbrowser:
             unsafe_warning = "cloakbrowser fallback requires authorized stealth-browser safety flags"
             if last_result is None:
-                return _terminal_result(
+                return finalize(_terminal_result(
                     tool="cloakbrowser",
                     data_status="permission_denied",
                     stop_reason="unsafe_escalation",
@@ -120,8 +136,8 @@ def acquire_with_fallback_result(
                         retryable=False,
                         safe_to_escalate=False,
                     ),
-                )
-            return _terminal_result(
+                ))
+            return finalize(_terminal_result(
                 tool="cloakbrowser",
                 data_status="permission_denied",
                 stop_reason="unsafe_escalation",
@@ -135,7 +151,7 @@ def acquire_with_fallback_result(
                     retryable=False,
                     safe_to_escalate=False,
                 ),
-            )
+            ))
 
         adapter = executable_adapters.get(adapter_id)
         if adapter is None:
@@ -193,10 +209,10 @@ def acquire_with_fallback_result(
         last_result = result
 
         if not should_continue(result):
-            return _with_attempt_history(result, attempt_records, warnings)
+            return finalize(_with_attempt_history(result, attempt_records, warnings))
 
     if last_result is None:
-        return _terminal_result(
+        return finalize(_terminal_result(
             tool="",
             data_status="not_applicable",
             stop_reason="no_available_adapter",
@@ -204,14 +220,14 @@ def acquire_with_fallback_result(
             requested_quality_gates=requested_gates,
             effective_quality_gates=effective_gates,
             warnings=warnings,
-        )
+        ))
 
     stop_reason = "max_attempts_reached" if max_attempts is not None and len(chain) >= max_attempts else "no_available_adapter"
-    return _with_attempt_history(
+    return finalize(_with_attempt_history(
         last_result.model_copy(update={"next_tool": None, "next_action": None, "stop_reason": stop_reason}),
         attempt_records,
         warnings,
-    )
+    ))
 
 
 def should_continue(result: ToolResult) -> bool:
@@ -253,6 +269,23 @@ def _resolve_profile(
         updates["fallback_order"] = chain[1:]
         updates["adapters"] = _profile_adapters_for_chain(resolved, chain)
     return resolved.model_copy(update=updates)
+
+
+def _resolve_goal_preset(goal_preset: GoalPreset | str | None) -> GoalPreset | None:
+    if goal_preset is None:
+        return None
+    if not isinstance(goal_preset, str):
+        raise ValueError("goal_preset must be a string")
+    if goal_preset not in GOAL_PRESET_QUALITY_GATES:
+        allowed = ", ".join(GOAL_PRESET_QUALITY_GATES)
+        raise ValueError(f"goal_preset must be one of: {allowed}")
+    return goal_preset  # type: ignore[return-value]
+
+
+def _goal_preset_quality_gates(goal_preset: GoalPreset | None) -> AcquisitionQualityGates | None:
+    if goal_preset is None:
+        return None
+    return AcquisitionQualityGates(**GOAL_PRESET_QUALITY_GATES[goal_preset])
 
 
 def _profile_adapters_for_chain(
@@ -425,6 +458,12 @@ def _with_attempt_history(
     return result.model_copy(update={"attempts": attempts, "warnings": [*warnings, *result.warnings]})
 
 
+def _with_goal_preset_meta(result: ToolResult, goal_preset: GoalPreset | None) -> ToolResult:
+    if goal_preset is None:
+        return result
+    return result.model_copy(update={"meta": {**result.meta, "goal_preset": goal_preset}})
+
+
 def _attempt_record(result: ToolResult, *, skipped: bool = False) -> dict[str, Any]:
     record: dict[str, Any] = {
         "tool": result.tool,
@@ -472,4 +511,10 @@ def _host_allowed(host: str, allowed_domains: Sequence[str]) -> bool:
     return False
 
 
-__all__ = ["DEFAULT_CHAINS", "acquire_with_fallback_result", "should_continue"]
+__all__ = [
+    "DEFAULT_CHAINS",
+    "GOAL_PRESET_QUALITY_GATES",
+    "GoalPreset",
+    "acquire_with_fallback_result",
+    "should_continue",
+]

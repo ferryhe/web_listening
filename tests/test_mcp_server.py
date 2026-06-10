@@ -162,6 +162,7 @@ def test_acquire_with_fallback_tool_serializes_core_result(monkeypatch):
             "https://example.com",
             site_key="example",
             goal="find public reports",
+            goal_preset="document_discovery",
             strategy="public_web_default",
             quality_gates={"min_words": 10},
             safety={"allowed_domains": ["example.com"]},
@@ -173,10 +174,43 @@ def test_acquire_with_fallback_tool_serializes_core_result(monkeypatch):
     assert result.tool == "web_http"
     assert captured["url"] == "https://example.com"
     assert captured["strategy"] == "public_web_default"
+    assert captured["goal_preset"] == "document_discovery"
     assert captured["quality_gates"] == {"min_words": 10}
     assert captured["allowed_domains"] == ["example.com"]
     assert captured["max_attempts"] == 2
     assert result.meta["goal"] == "find public reports"
+
+
+def test_acquire_with_fallback_tool_rejects_invalid_goal_preset():
+    result = ToolResult(
+        **tools.web_listening_acquire_with_fallback(
+            "https://example.com",
+            site_key="example",
+            goal_preset="not_a_preset",
+            max_attempts=0,
+        )
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code == "invalid_acquisition_request"
+    assert "goal_preset must be one of" in result.error.message
+
+
+def test_acquire_with_fallback_tool_rejects_non_string_goal_preset():
+    result = ToolResult(
+        **tools.web_listening_acquire_with_fallback(
+            "https://example.com",
+            site_key="example",
+            goal_preset=["document_discovery"],  # type: ignore[arg-type]
+            max_attempts=0,
+        )
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code == "invalid_acquisition_request"
+    assert result.error.message == "goal_preset must be a string"
 
 
 def test_acquire_with_fallback_tool_defaults_allowed_domains_to_input_host(monkeypatch):

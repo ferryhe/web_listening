@@ -1,14 +1,13 @@
 # Project Status
 
-- Date: 2026-06-10
+- Date: 2026-06-11
 - Project: web_listening
 - Repo path: `/root/.hermes/projects/web_listening`
-- Branch: `feat/acquisition-fallback-core`
-- Run type: PR3 implementation for core acquisition fallback engine only.
-- Scope: added shared core fallback execution in `web_listening.blocks`; no MCP server, CLI, or API in this PR.
-- Workspace boundary: only `/root/.hermes/projects/web_listening` is in scope; sibling repositories are off-limits unless explicitly named by a task.
-- Starting state: `git status --short --branch` showed clean branch `feat/acquisition-fallback-core`.
-- Changes: added `web_listening/blocks/acquisition_fallback.py` with `acquire_with_fallback_result`, default strategy chains, continuation logic, quality gate/profile resolution, allowed-domain/input/final-url safety checks, reserved-adapter skipped attempts, status-code terminal mapping that clears usable data for terminal HTTP statuses, and structured-error escalation requiring both `retryable` and `safe_to_escalate`; updated capture/profile helpers so successful attempts expose safe inline previews and `allowed_domains` accepts sequence inputs; added `tests/test_acquisition_fallback.py` with fake-adapter/no-network coverage for fallback success, quality-gate override behavior, reserved adapter skips, all-fail history, max attempts, domain safety, not-found/auth/permission terminal behavior, preview availability, and structured-error escalation.
-- Verification: `git diff --check` passed. `python -m pytest tests/test_acquisition_fallback.py tests/test_tool_result.py tests/test_acquisition_capture.py tests/test_acquisition_profile.py -q` passed (51 passed, 0.52s). `python -m pytest -q` passed (272 passed, 22.05s).
-- Reviewer gate: Hermes reviewer-agent gate completed after two fix loops; final spec/scope reviewer PASS and final code quality/security/maintainability reviewer PASS.
-- Next recommended action: commit, push, create PR, then wait for CI/Copilot/review feedback before merge.
+- Branch: `feat/mcp-workflow-tools`
+- Run type: PR6 implementation for workflow MCP tools only.
+- Scope: added narrow MCP workflow tool exposure in `web_listening/mcp/tools.py` and `web_listening/mcp/server.py`; added focused tests in `tests/test_mcp_server.py`; sibling repositories are off-limits.
+- Starting state: `git status --short --branch` showed branch `feat/mcp-workflow-tools` with pre-existing modified `web_listening/mcp/server.py` and `web_listening/mcp/tools.py` draft workflow MCP tools.
+- Changes: added workflow MCP handlers for bootstrap/run/report/export/get-job/read-artifact; registered them on the MCP server; added workflow tool names to `web_listening.mcp.tools.__all__`; mapped persisted jobs into `ToolResult` (`artifact_only`, `running`, `error`); added safe artifact reading under `WL_DATA_DIR` with traversal refusal, text-only inline content, metadata-only large/binary/control-byte artifacts, and failed-job error redaction.
+- Verification: `git diff --check` passed. `python -m pytest tests/test_mcp_server.py -q` passed (32 passed, 0.82s). `python -m pytest tests/test_mcp_server.py tests/test_tool_result.py tests/test_storage.py -q` passed (50 passed, 3.06s before follow-up comment fixes). `python -m pytest -q` passed (309 passed, 21.00s). `python -m compileall -q web_listening/mcp tests/test_mcp_server.py` passed. `python -m web_listening.mcp.server --help` exited 0.
+- Reviewer gate: Hermes spec/scope reviewer PASS. Hermes code quality/security reviewer APPROVED after fixes for failed-job error redaction and binary/control-byte artifact handling. Remote Copilot review comments were evaluated and addressed: invalid `output_format` now returns an observable safe validation error, and absent `task_path` is omitted from produced artifacts.
+- Next recommended action: commit, push, create PR6, wait for CI/Copilot/review feedback, then merge only when clean.

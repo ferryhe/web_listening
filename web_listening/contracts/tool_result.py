@@ -116,9 +116,8 @@ def tool_result_from_capture_attempt(
             message=attempt.failure_reason or "Capture attempt failed",
         )
 
-    result_meta = {"contract_version": TOOL_RESULT_CONTRACT_VERSION}
-    if meta:
-        result_meta.update(dict(meta))
+    result_meta = dict(meta or {})
+    result_meta["contract_version"] = TOOL_RESULT_CONTRACT_VERSION
 
     return ToolResult(
         ok=ok,

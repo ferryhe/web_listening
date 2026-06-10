@@ -52,6 +52,7 @@ def test_capture_attempt_passed_maps_to_present_tool_result():
         requested_quality_gates={"min_words": 120, "min_links": 3},
         effective_quality_gates={"min_words": 120, "min_links": 3},
         data={"url": attempt.final_url},
+        meta={"contract_version": "caller-supplied-version", "request_id": "req-123"},
     )
 
     assert result.ok is True
@@ -72,6 +73,10 @@ def test_capture_attempt_passed_maps_to_present_tool_result():
     assert result.quality_gates.requested == {"min_words": 120, "min_links": 3}
     assert result.quality_gates.effective == {"min_words": 120, "min_links": 3}
     assert result.attempts == [attempt.model_dump(mode="json")]
+    assert result.meta == {
+        "contract_version": TOOL_RESULT_CONTRACT_VERSION,
+        "request_id": "req-123",
+    }
 
 
 def test_capture_attempt_failed_quality_gate_maps_next_adapter():

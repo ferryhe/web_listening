@@ -247,9 +247,10 @@ def test_capture_attempt_rejects_unsupported_recommended_next_adapter():
         )
 
 
-def test_allowed_domains_error_message_mentions_single_string_or_list():
+@pytest.mark.parametrize("bad_value", [{"example.com": True}, b"example.com", bytearray(b"example.com")])
+def test_allowed_domains_error_message_mentions_single_string_or_list(bad_value):
     with pytest.raises(
         ValidationError,
         match="list of non-empty strings or a single string",
     ):
-        AcquisitionSafetyPolicy(allowed_domains={"example.com": True})
+        AcquisitionSafetyPolicy(allowed_domains=bad_value)

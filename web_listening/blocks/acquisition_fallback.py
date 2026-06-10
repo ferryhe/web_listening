@@ -121,17 +121,20 @@ def acquire_with_fallback_result(
                         safe_to_escalate=False,
                     ),
                 )
-            return _with_attempt_history(
-                last_result.model_copy(
-                    update={
-                        "next_tool": None,
-                        "next_action": None,
-                        "stop_reason": "unsafe_escalation",
-                        "warnings": [*last_result.warnings, unsafe_warning],
-                    }
+            return _terminal_result(
+                tool="cloakbrowser",
+                data_status="permission_denied",
+                stop_reason="unsafe_escalation",
+                attempts=attempt_records,
+                requested_quality_gates=requested_gates,
+                effective_quality_gates=effective_gates,
+                warnings=[unsafe_warning],
+                error=ToolResultError(
+                    code="unsafe_escalation",
+                    message=unsafe_warning,
+                    retryable=False,
+                    safe_to_escalate=False,
                 ),
-                attempt_records,
-                warnings,
             )
 
         adapter = executable_adapters.get(adapter_id)
@@ -163,10 +166,17 @@ def acquire_with_fallback_result(
         if final_url_warning:
             result = result.model_copy(
                 update={
-                    "ok": True,
+                    "ok": False,
                     "has_data": False,
                     "data_status": "permission_denied",
                     "data_count": 0,
+                    "data": {},
+                    "data_quality": result.data_quality.model_copy(
+                        update={
+                            "passed": False,
+                            "failure_reasons": [*result.data_quality.failure_reasons, final_url_warning],
+                        }
+                    ),
                     "warnings": [*result.warnings, final_url_warning],
                     "error": ToolResultError(
                         code="unsafe_final_url",

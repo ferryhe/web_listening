@@ -348,12 +348,12 @@ def _best_content_text(result: FetchResult) -> str:
 
 def _content_preview_metadata(result: FetchResult) -> dict[str, str]:
     metadata: dict[str, str] = {}
-    content_text = result.content_text.strip()
-    if content_text:
-        metadata["content_text_preview"] = content_text[:2_000]
-    markdown = (result.fit_markdown or result.markdown).strip()
-    if markdown:
-        metadata["markdown_preview"] = markdown[:2_000]
+    content_text_preview = result.content_text[:2_000].strip()
+    if content_text_preview:
+        metadata["content_text_preview"] = content_text_preview
+    markdown_preview = (result.fit_markdown or result.markdown)[:2_000].strip()
+    if markdown_preview:
+        metadata["markdown_preview"] = markdown_preview
     return metadata
 
 

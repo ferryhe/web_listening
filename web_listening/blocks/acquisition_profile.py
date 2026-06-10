@@ -72,6 +72,8 @@ class AcquisitionSafetyPolicy(BaseModel):
             return []
         if isinstance(value, str):
             values = [value]
+        elif isinstance(value, bytes | bytearray):
+            raise ValueError(ALLOWED_DOMAINS_ERROR)
         elif isinstance(value, Sequence):
             values = list(value)
         else:

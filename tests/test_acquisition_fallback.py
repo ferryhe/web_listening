@@ -164,6 +164,25 @@ def test_reserved_adapters_are_recorded_as_non_terminal_skips():
     }
 
 
+def test_unauthorized_cloakbrowser_escalation_returns_permission_denied_terminal_result():
+    result = acquire_with_fallback_result(
+        "https://example.com/page",
+        profile=make_profile(),
+        strategy="authorized_fallback",
+        adapters={"web_http": FakeAdapter("web_http", make_fetch_result(text="short", link_count=0))},
+    )
+
+    assert result.ok is False
+    assert result.has_data is False
+    assert result.data_status == "permission_denied"
+    assert result.tool == "cloakbrowser"
+    assert result.stop_reason == "unsafe_escalation"
+    assert result.error is not None
+    assert result.error.code == "unsafe_escalation"
+    assert [attempt["tool"] for attempt in result.attempts] == ["web_http", "browser_rendered"]
+    assert result.attempts[1]["skipped"] is True
+
+
 def test_all_adapters_fail_returns_all_attempts_and_no_data():
     profile = make_profile(fallback_order=["browser_rendered", "sitemap"])
 
@@ -247,7 +266,11 @@ def test_final_url_outside_allowed_domains_is_not_marked_usable():
     )
 
     assert result.has_data is False
+    assert result.ok is False
     assert result.data_status == "permission_denied"
+    assert result.data == {}
+    assert result.data_quality.passed is False
+    assert result.data_quality.failure_reasons == ["final_url host other.test is outside allowed_domains"]
     assert result.stop_reason == "unsafe_final_url"
     assert result.error is not None
     assert result.error.code == "unsafe_final_url"

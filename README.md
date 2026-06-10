@@ -251,7 +251,7 @@ Typical artifacts from the staged workflow:
 Agents can connect to the optional MCP stdio server when they need acquisition fallback behavior through a tool protocol instead of the local CLI/API:
 
 ```powershell
-pip install -e .[mcp]
+pip install -e '.[mcp]'
 web-listening-mcp
 ```
 

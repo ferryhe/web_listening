@@ -168,7 +168,7 @@ def web_listening_acquire_with_fallback(
     """Run the shared core fallback engine for MCP callers."""
 
     try:
-        validate_http_url(url)
+        url = validate_http_url(url)
         if profile_path and _has_inline_safety_override(safety=safety, allowed_domains=allowed_domains):
             raise AcquisitionToolError(
                 "profile_path loads a complete acquisition profile; inline safety overrides are not allowed with profile_path"
@@ -303,7 +303,7 @@ def _has_inline_safety_override(*, safety: dict[str, Any] | None, allowed_domain
     if not safety:
         return False
     return any(
-        safety.get(field) not in (None, False, [], "")
+        field in safety
         for field in ("allowed_domains", "allow_stealth_browser", "require_authorized_access")
     )
 

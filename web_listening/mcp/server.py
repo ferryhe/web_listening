@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError as exc:  # pragma: no cover - exercised only without optional dependency
+    raise RuntimeError("web-listening-mcp requires the optional MCP dependency; install with `pip install 'web-listening[mcp]'` or the project's dev extra") from exc
 
 from web_listening.mcp import tools
 

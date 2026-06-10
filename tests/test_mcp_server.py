@@ -198,6 +198,59 @@ def test_acquire_with_fallback_tool_defaults_allowed_domains_to_input_host(monke
     assert captured["allowed_domains"] == ["example.com"]
 
 
+def test_acquire_with_fallback_tool_uses_normalized_url(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_acquire_with_fallback_result(url: str, **kwargs: Any) -> ToolResult:
+        captured["url"] = url
+        captured.update(kwargs)
+        return ToolResult(
+            ok=True,
+            has_data=False,
+            data_status="not_applicable",
+            data_count=0,
+            tool="",
+            stop_reason="no_available_adapter",
+        )
+
+    monkeypatch.setattr(tools, "acquire_with_fallback_result", fake_acquire_with_fallback_result)
+
+    tools.web_listening_acquire_with_fallback("  https://example.com/page  ", site_key="example", max_attempts=0)
+
+    assert captured["url"] == "https://example.com/page"
+    assert captured["allowed_domains"] == ["example.com"]
+
+
+@pytest.mark.parametrize(
+    "safety",
+    [
+        {"allowed_domains": []},
+        {"allow_stealth_browser": False},
+        {"require_authorized_access": False},
+    ],
+)
+def test_acquire_with_fallback_tool_rejects_profile_path_safety_key_presence(
+    tmp_path: Path,
+    safety: dict[str, Any],
+):
+    profile = build_default_acquisition_profile(site_key="example", allowed_domains=["example.org"])
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text(yaml.safe_dump(profile.model_dump(mode="json")), encoding="utf-8")
+
+    result = ToolResult(
+        **tools.web_listening_acquire_with_fallback(
+            "https://example.net/page",
+            profile_path=str(profile_path),
+            safety=safety,
+            max_attempts=0,
+        )
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code == "invalid_acquisition_request"
+
+
 def test_acquire_with_fallback_tool_rejects_profile_path_safety_override(tmp_path: Path):
     profile = build_default_acquisition_profile(site_key="example", allowed_domains=["example.org"])
     profile_path = tmp_path / "profile.yaml"

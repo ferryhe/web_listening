@@ -330,14 +330,19 @@ def web_listening_report_scope(
 ) -> dict[str, Any]:
     """Export a tracking report for one monitor scope and return its job envelope."""
 
+    normalized_format = (output_format or "md").strip().lower()
+    if normalized_format not in {"md", "yaml"}:
+        return _error_result(
+            "web_listening_report_scope",
+            code="invalid_workflow_request",
+            message="output_format must be one of: md, yaml",
+        )
+
     try:
         from web_listening.blocks.job_orchestration import persist_job_result
         from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
         from web_listening.blocks.staged_workflow import report_scope as staged_report_scope
 
-        normalized_format = (output_format or "md").strip().lower()
-        if normalized_format not in {"md", "yaml"}:
-            raise ValueError("output_format must be one of: md, yaml")
         plan = load_monitor_scope_plan(scope_path)
         started = datetime.now(timezone.utc)
         artifacts = staged_report_scope(
@@ -350,6 +355,7 @@ def web_listening_report_scope(
             capture_attempt_path=capture_attempt_path or None,
         )
         acquisition_artifacts = {
+            **({"task_path": str(task_path)} if task_path else {}),
             **({"acquisition_profile_path": str(acquisition_profile_path)} if acquisition_profile_path else {}),
             **({"capture_attempt_path": str(capture_attempt_path)} if capture_attempt_path else {}),
         }
@@ -359,7 +365,6 @@ def web_listening_report_scope(
             run_id=artifacts.report.run_id,
             produced_artifacts={
                 "scope_path": str(scope_path),
-                "task_path": str(task_path) if task_path else "",
                 "output_path": str(artifacts.output_path),
                 "output_format": artifacts.output_format,
                 **acquisition_artifacts,

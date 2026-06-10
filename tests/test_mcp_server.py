@@ -314,6 +314,15 @@ def test_acquire_with_fallback_tool_returns_error_envelope_on_invalid_profile():
     assert result.error.code == "fallback_acquisition_failed"
 
 
+def test_report_scope_invalid_output_format_is_observable():
+    result = ToolResult(**tools.web_listening_report_scope("scope.yaml", output_format="html"))
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code == "invalid_workflow_request"
+    assert result.error.message == "output_format must be one of: md, yaml"
+
+
 def test_workflow_job_helper_maps_completed_artifacts_to_artifact_only():
     job = Job(
         job_id=42,

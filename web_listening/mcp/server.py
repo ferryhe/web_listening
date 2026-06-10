@@ -24,6 +24,12 @@ def create_server() -> FastMCP:
     server.tool(name="web_listening_probe_tool_once")(tools.web_listening_probe_tool_once)
     server.tool(name="web_listening_recommend_next_tool")(tools.web_listening_recommend_next_tool)
     server.tool(name="web_listening_acquire_with_fallback")(tools.web_listening_acquire_with_fallback)
+    server.tool(name="web_listening_bootstrap_scope")(tools.web_listening_bootstrap_scope)
+    server.tool(name="web_listening_run_scope")(tools.web_listening_run_scope)
+    server.tool(name="web_listening_report_scope")(tools.web_listening_report_scope)
+    server.tool(name="web_listening_export_manifest")(tools.web_listening_export_manifest)
+    server.tool(name="web_listening_get_job")(tools.web_listening_get_job)
+    server.tool(name="web_listening_read_artifact")(tools.web_listening_read_artifact)
     return server
 
 

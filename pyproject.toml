@@ -28,6 +28,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "httpx",
+    "mcp>=1.0.0",
 ]
 browser = [
     "playwright>=1.52.0",
@@ -35,9 +36,13 @@ browser = [
 cloakbrowser = [
     "cloakbrowser>=0.3.26",
 ]
+mcp = [
+    "mcp>=1.0.0",
+]
 
 [project.scripts]
 web-listening = "web_listening.cli:app"
+web-listening-mcp = "web_listening.mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

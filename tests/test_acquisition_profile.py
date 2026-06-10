@@ -247,7 +247,16 @@ def test_capture_attempt_rejects_unsupported_recommended_next_adapter():
         )
 
 
-@pytest.mark.parametrize("bad_value", [{"example.com": True}, b"example.com", bytearray(b"example.com")])
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        {"example.com": True},
+        b"example.com",
+        bytearray(b"example.com"),
+        [123],
+        range(1),
+    ],
+)
 def test_allowed_domains_error_message_mentions_single_string_or_list(bad_value):
     with pytest.raises(
         ValidationError,

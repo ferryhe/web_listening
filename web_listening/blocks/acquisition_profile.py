@@ -78,7 +78,9 @@ class AcquisitionSafetyPolicy(BaseModel):
             values = list(value)
         else:
             raise ValueError(ALLOWED_DOMAINS_ERROR)
-        domains = [str(item).strip() for item in values]
+        if any(not isinstance(item, str) for item in values):
+            raise ValueError(ALLOWED_DOMAINS_ERROR)
+        domains = [item.strip() for item in values]
         if any(not domain for domain in domains):
             raise ValueError(ALLOWED_DOMAINS_ERROR)
         return domains

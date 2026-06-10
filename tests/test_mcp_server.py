@@ -197,6 +197,22 @@ def test_acquire_with_fallback_tool_rejects_invalid_goal_preset():
     assert "goal_preset must be one of" in result.error.message
 
 
+def test_acquire_with_fallback_tool_rejects_non_string_goal_preset():
+    result = ToolResult(
+        **tools.web_listening_acquire_with_fallback(
+            "https://example.com",
+            site_key="example",
+            goal_preset=["document_discovery"],  # type: ignore[arg-type]
+            max_attempts=0,
+        )
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code == "invalid_acquisition_request"
+    assert result.error.message == "goal_preset must be a string"
+
+
 def test_acquire_with_fallback_tool_defaults_allowed_domains_to_input_host(monkeypatch):
     captured: dict[str, Any] = {}
 

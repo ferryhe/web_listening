@@ -274,6 +274,8 @@ def _resolve_profile(
 def _resolve_goal_preset(goal_preset: GoalPreset | str | None) -> GoalPreset | None:
     if goal_preset is None:
         return None
+    if not isinstance(goal_preset, str):
+        raise ValueError("goal_preset must be a string")
     if goal_preset not in GOAL_PRESET_QUALITY_GATES:
         allowed = ", ".join(GOAL_PRESET_QUALITY_GATES)
         raise ValueError(f"goal_preset must be one of: {allowed}")

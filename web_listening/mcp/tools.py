@@ -176,6 +176,8 @@ def web_listening_acquire_with_fallback(
 
     try:
         url = validate_http_url(url)
+        if goal_preset is not None and not isinstance(goal_preset, str):
+            raise AcquisitionToolError("goal_preset must be a string")
         if goal_preset is not None and goal_preset not in GOAL_PRESET_QUALITY_GATES:
             allowed = ", ".join(GOAL_PRESET_QUALITY_GATES)
             raise AcquisitionToolError(f"goal_preset must be one of: {allowed}")

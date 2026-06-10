@@ -246,6 +246,16 @@ def test_strategy_document_discovery_does_not_imply_goal_preset():
     assert "goal_preset" not in result.meta
 
 
+def test_non_string_goal_preset_is_rejected_before_membership_check():
+    with pytest.raises(ValueError, match="goal_preset must be a string"):
+        acquire_with_fallback_result(
+            "https://example.com/page",
+            profile=make_profile(fallback_order=[]),
+            adapters={"web_http": FakeAdapter("web_http", make_fetch_result())},
+            goal_preset=["document_discovery"],  # type: ignore[arg-type]
+        )
+
+
 def test_goal_preset_meta_is_preserved_on_unsafe_url_terminal_result():
     result = acquire_with_fallback_result(
         "https://evil.example/page",

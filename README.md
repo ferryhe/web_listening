@@ -246,6 +246,57 @@ Typical artifacts from the staged workflow:
   - `docs/contracts/web-listening-manifest-v1.md`
   - `docs/testing/fixtures/web-listening-manifest-v1.sample.json`
 
+## MCP Acquisition Fallback
+
+Agents can connect to the optional MCP stdio server when they need acquisition fallback behavior through a tool protocol instead of the local CLI/API:
+
+```powershell
+pip install -e '.[mcp]'
+web-listening-mcp
+```
+
+Hermes config example:
+
+```yaml
+mcp_servers:
+  web_listening:
+    command: "web-listening-mcp"
+    args: []
+    timeout: 300
+    connect_timeout: 60
+```
+
+The server exposes thin wrappers around the shared acquisition core:
+
+- `web_listening_list_acquisition_tools`
+- `web_listening_probe_tool_once`
+- `web_listening_recommend_next_tool`
+- `web_listening_acquire_with_fallback`
+
+Example agent-facing fallback call:
+
+```json
+{
+  "url": "https://example.com/reports",
+  "site_key": "example",
+  "goal": "find public report/document links",
+  "strategy": "document_discovery",
+  "quality_gates": {
+    "min_words": 120,
+    "min_links": 3,
+    "min_document_links": 1
+  },
+  "safety": {
+    "allowed_domains": ["example.com"],
+    "allow_stealth_browser": false,
+    "require_authorized_access": false
+  },
+  "max_attempts": 4
+}
+```
+
+See [MCP_FALLBACK_CHAIN_DESIGN.md](docs/design/MCP_FALLBACK_CHAIN_DESIGN.md) for the full response contract, safety policy, and usage guidance.
+
 ## Acquisition Tool Picker Contract
 
 Delivery UIs and agents should use `acquisition-tools.v1` as the stable picker contract for acquisition tool selection:

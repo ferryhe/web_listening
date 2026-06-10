@@ -5,7 +5,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from web_listening.blocks.acquisition_fallback import DEFAULT_CHAINS, acquire_with_fallback_result
+from web_listening.blocks.acquisition_fallback import (
+    DEFAULT_CHAINS,
+    GOAL_PRESET_QUALITY_GATES,
+    acquire_with_fallback_result,
+)
 from web_listening.blocks.acquisition_profile import (
     AcquisitionProfile,
     CaptureAttempt,
@@ -160,6 +164,7 @@ def web_listening_acquire_with_fallback(
     profile_path: str | None = None,
     site_key: str | None = None,
     goal: str | None = None,
+    goal_preset: str | None = None,
     strategy: str | None = None,
     quality_gates: dict[str, Any] | None = None,
     safety: dict[str, Any] | None = None,
@@ -171,6 +176,9 @@ def web_listening_acquire_with_fallback(
 
     try:
         url = validate_http_url(url)
+        if goal_preset is not None and goal_preset not in GOAL_PRESET_QUALITY_GATES:
+            allowed = ", ".join(GOAL_PRESET_QUALITY_GATES)
+            raise AcquisitionToolError(f"goal_preset must be one of: {allowed}")
         if profile_path and _has_inline_safety_override(safety=safety, allowed_domains=allowed_domains):
             raise AcquisitionToolError(
                 "profile_path loads a complete acquisition profile; inline safety overrides are not allowed with profile_path"
@@ -194,6 +202,7 @@ def web_listening_acquire_with_fallback(
             url,
             profile=resolved_profile,
             strategy=strategy,
+            goal_preset=goal_preset,
             quality_gates=quality_gates,
             allowed_domains=default_allowed_domains,
             max_attempts=max_attempts,

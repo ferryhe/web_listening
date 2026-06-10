@@ -140,6 +140,154 @@ def test_quality_gate_override_controls_document_link_escalation():
     assert requires_document.quality_gates.effective["min_document_links"] == 1
 
 
+def test_document_discovery_goal_preset_continues_until_document_links_are_found():
+    profile = make_profile(fallback_order=["browser_rendered"])
+    http_result = make_fetch_result(
+        text=" ".join(f"word{i}" for i in range(130)),
+        link_count=2,
+        document_link_count=0,
+    )
+    browser_result = make_fetch_result(
+        text=" ".join(f"word{i}" for i in range(130)),
+        link_count=2,
+        document_link_count=1,
+    )
+
+    page_text = acquire_with_fallback_result(
+        "https://example.com/reports",
+        profile=profile,
+        adapters={
+            "web_http": FakeAdapter("web_http", http_result),
+            "browser_rendered": FakeAdapter("browser_rendered", browser_result),
+        },
+        goal_preset="page_text",
+    )
+    document_discovery = acquire_with_fallback_result(
+        "https://example.com/reports",
+        profile=profile,
+        adapters={
+            "web_http": FakeAdapter("web_http", http_result),
+            "browser_rendered": FakeAdapter("browser_rendered", browser_result),
+        },
+        goal_preset="document_discovery",
+    )
+
+    assert page_text.tool == "web_http"
+    assert len(page_text.attempts) == 1
+    assert page_text.quality_gates.effective["min_document_links"] == 0
+    assert page_text.meta["goal_preset"] == "page_text"
+    assert document_discovery.tool == "browser_rendered"
+    assert [attempt["tool"] for attempt in document_discovery.attempts] == ["web_http", "browser_rendered"]
+    assert document_discovery.attempts[0]["data_status"] == "failed_quality_gate"
+    assert document_discovery.quality_gates.requested == {}
+    assert document_discovery.quality_gates.effective["min_document_links"] == 1
+    assert document_discovery.meta["goal_preset"] == "document_discovery"
+
+
+@pytest.mark.parametrize(
+    ("goal_preset", "expected_gates"),
+    [
+        ("page_text", {"min_words": 120, "min_links": 0, "min_document_links": 0}),
+        ("section_discovery", {"min_words": 80, "min_links": 3, "min_document_links": 0}),
+        ("document_discovery", {"min_words": 80, "min_links": 0, "min_document_links": 1}),
+        ("change_monitoring", {"min_words": 20, "min_links": 0, "min_document_links": 0}),
+    ],
+)
+def test_goal_presets_apply_default_quality_gates(goal_preset: str, expected_gates: dict[str, int]):
+    result = acquire_with_fallback_result(
+        "https://example.com/page",
+        profile=make_profile(fallback_order=[]),
+        adapters={"web_http": FakeAdapter("web_http", make_fetch_result())},
+        goal_preset=goal_preset,
+    )
+
+    assert result.quality_gates.requested == {}
+    for gate, expected in expected_gates.items():
+        assert result.quality_gates.effective[gate] == expected
+    assert result.meta["goal_preset"] == goal_preset
+
+
+def test_explicit_quality_gates_win_over_goal_preset_defaults():
+    browser = FakeAdapter("browser_rendered", make_fetch_result(document_link_count=1))
+
+    result = acquire_with_fallback_result(
+        "https://example.com/reports",
+        profile=make_profile(fallback_order=["browser_rendered"]),
+        adapters={
+            "web_http": FakeAdapter("web_http", make_fetch_result(document_link_count=0)),
+            "browser_rendered": browser,
+        },
+        goal_preset="document_discovery",
+        quality_gates={"min_words": 1, "min_links": 0, "min_document_links": 0},
+    )
+
+    assert result.tool == "web_http"
+    assert len(result.attempts) == 1
+    assert browser.calls == []
+    assert result.quality_gates.requested["min_document_links"] == 0
+    assert result.quality_gates.effective["min_document_links"] == 0
+    assert result.meta["goal_preset"] == "document_discovery"
+
+
+def test_strategy_document_discovery_does_not_imply_goal_preset():
+    result = acquire_with_fallback_result(
+        "https://example.com/reports",
+        profile=make_profile(fallback_order=["browser_rendered"]),
+        adapters={
+            "web_http": FakeAdapter("web_http", make_fetch_result(document_link_count=0)),
+            "browser_rendered": FakeAdapter("browser_rendered", make_fetch_result(document_link_count=1)),
+        },
+        strategy="document_discovery",
+    )
+
+    assert result.tool == "web_http"
+    assert len(result.attempts) == 1
+    assert result.quality_gates.effective["min_document_links"] == 0
+    assert "goal_preset" not in result.meta
+
+
+def test_goal_preset_meta_is_preserved_on_unsafe_url_terminal_result():
+    result = acquire_with_fallback_result(
+        "https://evil.example/page",
+        profile=make_profile(),
+        adapters={"web_http": FakeAdapter("web_http", make_fetch_result())},
+        allowed_domains=["example.com"],
+        goal_preset="document_discovery",
+    )
+
+    assert result.ok is False
+    assert result.stop_reason == "unsafe_url"
+    assert result.meta["goal_preset"] == "document_discovery"
+
+
+def test_goal_preset_meta_is_preserved_on_no_adapter_terminal_result():
+    result = acquire_with_fallback_result(
+        "https://example.com/page",
+        profile=make_profile(fallback_order=[]),
+        adapters={"web_http": FakeAdapter("web_http", make_fetch_result())},
+        max_attempts=0,
+        goal_preset="change_monitoring",
+    )
+
+    assert result.data_status == "not_applicable"
+    assert result.stop_reason == "no_available_adapter"
+    assert result.meta["goal_preset"] == "change_monitoring"
+
+
+def test_goal_preset_meta_is_preserved_on_unsafe_escalation_terminal_result():
+    result = acquire_with_fallback_result(
+        "https://example.com/page",
+        profile=make_profile(fallback_order=[]),
+        strategy="authorized_fallback",
+        adapters={"web_http": FakeAdapter("web_http", make_fetch_result(text="short", link_count=0))},
+        goal_preset="document_discovery",
+    )
+
+    assert result.ok is False
+    assert result.stop_reason == "unsafe_escalation"
+    assert result.meta["goal_preset"] == "document_discovery"
+
+
 def test_reserved_adapters_are_recorded_as_non_terminal_skips():
     profile = make_profile(fallback_order=["sitemap", "browser_rendered", "rss"])
     http = FakeAdapter("web_http", make_fetch_result(text="too short", link_count=0))

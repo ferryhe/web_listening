@@ -140,6 +140,8 @@ def evaluate_fetch_result(
     status = "passed" if evaluation.passed else "failed_quality_gate"
     if evaluation.blocked_marker:
         status = "blocked"
+    metadata = dict(result.metadata_json or {})
+    metadata.update(_content_preview_metadata(result))
     return CaptureAttempt(
         adapter=adapter,
         status=status,
@@ -150,7 +152,7 @@ def evaluate_fetch_result(
         link_count=evaluation.link_count,
         document_link_count=evaluation.document_link_count,
         failure_reason=evaluation.failure_reason,
-        metadata=dict(result.metadata_json or {}),
+        metadata=metadata,
     )
 
 
@@ -342,6 +344,17 @@ def _status_is_ok(status_code: int | None) -> bool:
 
 def _best_content_text(result: FetchResult) -> str:
     return result.fit_markdown or result.markdown or result.content_text or ""
+
+
+def _content_preview_metadata(result: FetchResult) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    content_text = result.content_text.strip()
+    if content_text:
+        metadata["content_text_preview"] = content_text[:2_000]
+    markdown = (result.fit_markdown or result.markdown).strip()
+    if markdown:
+        metadata["markdown_preview"] = markdown[:2_000]
+    return metadata
 
 
 def _word_count(text: str) -> int:

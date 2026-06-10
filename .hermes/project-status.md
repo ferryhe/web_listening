@@ -1,12 +1,14 @@
 # Project Status
 
-- Date: 2026-05-20
+- Date: 2026-06-10
 - Project: web_listening
-- Branch: ci/add-github-actions
-- Run type: add minimal GitHub Actions CI.
-- Scope: add a minimal, reliable GitHub Actions workflow for this repository; avoid browser/network/secret-dependent smoke coverage; verify locally; run the required Codex review gate; commit, push, and open a PR.
-- Repo baseline: started from clean `origin/main` after PR #21 merge and reset local `main` hard to `origin/main` (`951bae4`).
-- Config findings: `pyproject.toml` declares `requires-python = ">=3.10"`, optional dependency group `dev = [pytest, pytest-asyncio, httpx]`, and pytest config `asyncio_mode = "auto"`, `testpaths = ["tests"]`.
-- Code changes: added `.github/workflows/ci.yml` with a single Ubuntu job that checks out the repo, sets up Python 3.11, installs with `python -m pip install -e ".[dev]"`, and runs `python -m pytest -q` on `push` to `main` and all `pull_request` events.
-- Verification: local `python3 -m pip install -e '.[dev]' && python3 -m pytest -q` passed (252 passed, 11.87s); `git diff --check` passed; mandatory `codex -c 'model="gpt-5.5"' review --base origin/main` rerun after staging the workflow and reported no discrete correctness issues.
-- Next recommended action: monitor the new PR's GitHub checks and remote review comments, then apply only confirmed-safe follow-up fixes if needed.
+- Repo path: `/root/.hermes/projects/web_listening`
+- Branch: `docs/project-agent-mcp-fallback-plan`
+- Run type: reviewer-feedback documentation fixes for PR1 project agent management and MCP fallback planning.
+- Scope: documentation only; modify only `AGENTS.md`, `.hermes/project-status.md`, and `docs/plans/2026-06-10-mcp-fallback-chain-plan.md`. No code implementation, commit, push, or PR creation in this run.
+- Workspace boundary: only `/root/.hermes/projects/web_listening` is in scope; sibling repositories are off-limits unless explicitly named by a task.
+- Starting state: `git status --short --branch` showed modified `AGENTS.md` and `.hermes/project-status.md`, plus untracked `docs/plans/2026-06-10-mcp-fallback-chain-plan.md`.
+- AGENTS.md updates: reviewer gate now uses fresh read-only Hermes reviewer agents instead of Codex CLI review; the gate blocks PR creation/update and review-gated progress if reviewer agents cannot run, unless 北老师 explicitly approves bypassing the specific blocker; project-status updates are required only for non-read-only runs that edit project files; added a concise regular status cadence for long or multi-step runs.
+- Plan updates: reserved adapter `skipped`/`not_applicable` attempts are explicitly non-terminal in acquisition fallback chains; error continuation now requires both `retryable` and `safe_to_escalate`; `ToolResult` includes requested/effective `quality_gates`; redirect safety validates final URL host after redirects; `recommend_next_tool` example no longer claims business data; duplicate `web_listening/mcp/__init__.py` task listing was removed.
+- Verification: `git diff --check` passed on 2026-06-10 after reviewer-feedback documentation fixes; two read-only reviewer agents re-reviewed and returned PASS; `python -m pip install -e '.[dev]' && python -m pytest -q` passed (252 passed, 23.94s). Boss confirmed this project should use Hermes reviewer agents instead of Codex CLI review. After PR creation, CI passed and Copilot raised three valid documentation comments; all three have local fixes ready for a follow-up commit.
+- Next recommended action: push the follow-up fix commit, wait for CI/review refresh, then merge only if checks and valid feedback are clean.

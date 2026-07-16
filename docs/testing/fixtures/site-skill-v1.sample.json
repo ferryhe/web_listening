@@ -1,0 +1,73 @@
+{
+  "schema_version": "site-skill.v1",
+  "skill_id": "example-news-skill",
+  "site_key": "example-news",
+  "version": "1.0.0",
+  "status": "active",
+  "generated_at": "2026-07-16T12:00:00Z",
+  "runtime_requirements": [
+    {
+      "requirement_id": "python-312",
+      "description": "Python 3.12 runtime.",
+      "optional": false
+    }
+  ],
+  "secret_policy": {
+    "allow_secret_references": true,
+    "forbid_secret_values": true,
+    "allowed_reference_schemes": [
+      "env"
+    ]
+  },
+  "allowed_domains": [
+    "example.com"
+  ],
+  "default_executor_id": "web_http",
+  "default_recipe_id": "news-http",
+  "executors": [
+    {
+      "executor_id": "web_http",
+      "enabled": true,
+      "config": {
+        "timeout_seconds": 30
+      },
+      "script_path": null
+    },
+    {
+      "executor_id": "browser_rendered",
+      "enabled": true,
+      "config": {
+        "wait_until": "domcontentloaded"
+      },
+      "script_path": null
+    },
+    {
+      "executor_id": "browseract",
+      "enabled": false,
+      "config": {},
+      "script_path": "site_skills/example_news/browseract.py"
+    }
+  ],
+  "recipes": [
+    {
+      "recipe_id": "news-http",
+      "enabled": true,
+      "executor_id": "web_http",
+      "profile_ref": "site_skills/example_news/http-profile.yaml",
+      "entrypoint": "site_skills/example_news/http.py",
+      "output_contract": "capture-result.v1",
+      "required_capabilities": [
+        "http_get"
+      ],
+      "verification_rules": [
+        {
+          "rule_id": "status-ok",
+          "description": "Require a successful HTTP status."
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "purpose": "Canonical non-secret governed manifest example"
+  }
+}

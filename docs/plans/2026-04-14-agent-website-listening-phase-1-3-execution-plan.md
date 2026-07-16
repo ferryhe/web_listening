@@ -1,5 +1,7 @@
 # Agent Website Listening Phase 1-3 Execution Plan
 
+> **Historical snapshot:** This plan preserves the design context at the time it was written. Its runtime prerequisites and setup commands are superseded by [Python Runtime Compatibility](../operations/PYTHON_RUNTIME.md), which is the active authority.
+
 > **For Hermes:** Execute this plan from the latest `origin/main` on a fresh feature branch, with small commits and tests after each task.
 
 **Goal:** Turn the current artifact-oriented `web_listening` mainline into a clearer staged product interface: first unify the tree workflow behind packaged CLI commands and stronger baseline quality signals, then upgrade task/report contracts, then add job/status orchestration.

@@ -13,15 +13,42 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.12.x
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Build distributions
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install build
+          python -m build
+
+      - name: Verify wheel Python contract
+        run: |
+          python - <<'PY'
+          from email.parser import Parser
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          wheel = next(Path("dist").glob("*.whl"))
+          with ZipFile(wheel) as archive:
+              metadata_path = next(
+                  name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+              )
+              metadata = Parser().parsestr(archive.read(metadata_path).decode())
+          assert set(metadata["Requires-Python"].split(",")) == {">=3.12", "<3.13"}
+          PY
+
+      - name: Install wheel and test dependencies
+        run: |
+          wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          python -m pip install "${wheel}[dev]"
+
+      - name: Smoke installed CLI
+        run: |
+          web-listening --help > /dev/null
+          web-listening list-acquisition-tools --json > /dev/null
 
       - name: Run tests
         env:
@@ -31,3 +58,36 @@ jobs:
           # output in CI.
           TERM: dumb
         run: python -m pytest -q
+
+      - name: Set up unsupported Python 3.11.x
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify Python 3.11 installation is rejected
+        shell: bash
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          if [[ ${#wheels[@]} -ne 1 ]]; then
+            echo "Expected exactly one wheel in dist/, found ${#wheels[@]}" >&2
+            ls -la dist >&2
+            exit 1
+          fi
+
+          python --version
+          set +e
+          python -m pip install --no-deps "${wheels[0]}" 2>&1 | tee /tmp/python-311-install.log
+          install_status=${PIPESTATUS[0]}
+          set -e
+
+          if [[ ${install_status} -eq 0 ]]; then
+            echo "ERROR: Python 3.11 unexpectedly installed ${wheels[0]}" >&2
+            exit 1
+          fi
+          if ! grep -Eqi "requires a different Python|requires-python" /tmp/python-311-install.log; then
+            echo "ERROR: install failed, but not because of the Requires-Python contract" >&2
+            exit 1
+          fi
+          echo "PASS: Python 3.11 installation was rejected by Requires-Python."

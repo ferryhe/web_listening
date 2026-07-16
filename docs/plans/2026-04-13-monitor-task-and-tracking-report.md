@@ -1,5 +1,7 @@
 # Monitor Task + Tracking Report Implementation Plan
 
+> **Historical snapshot:** This plan preserves the design context at the time it was written. Its runtime prerequisites and setup commands are superseded by [Python Runtime Compatibility](../operations/PYTHON_RUNTIME.md), which is the active authority.
+
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** Add a first-class task artifact and a unified tracking report artifact so `web_listening` is easier to drive as an agent skill and easier to review after bootstrap/rerun workflows.

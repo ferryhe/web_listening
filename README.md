@@ -55,9 +55,22 @@ What still remains future-facing:
 
 ## Install
 
+Python 3.12.x is required; Python 3.11 and Python 3.13 are not supported runtime
+targets. On Windows, confirm the selected interpreter before creating the project
+environment:
+
 ```powershell
-python -m venv .venv
+py -3.12 --version
+py -3.12 -m venv .venv
 .venv\Scripts\activate
+pip install -e .[dev]
+```
+
+On Linux or macOS, use the approved Python 3.12 executable:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -e .[dev]
 ```
 
@@ -387,6 +400,7 @@ Use the live validation commands instead of relying on committed point-in-time s
 ```
 
 Validation guide: [docs/validation/README.md](docs/validation/README.md)
+Runtime compatibility and deployment inventory: [docs/operations/PYTHON_RUNTIME.md](docs/operations/PYTHON_RUNTIME.md)
 
 ## Active Docs
 
@@ -396,5 +410,6 @@ Start with:
 - [TREE_MONITORING_DESIGN.md](docs/design/TREE_MONITORING_DESIGN.md)
 - [AGENT_SITE_MONITORING_MASTER_PLAN.md](docs/roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md)
 - [SMOKE_SITE_MANAGEMENT.md](docs/operations/SMOKE_SITE_MANAGEMENT.md)
+- [PYTHON_RUNTIME.md](docs/operations/PYTHON_RUNTIME.md)
 - [TREE_BUDGET_RULES.md](docs/operations/TREE_BUDGET_RULES.md)
 - [OPENCLAW_SKILL_USAGE.md](docs/skills/OPENCLAW_SKILL_USAGE.md)

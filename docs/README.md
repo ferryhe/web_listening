@@ -25,13 +25,20 @@ These are the long-lived docs that describe the current system:
 - validation guide:
   - [validation/README.md](validation/README.md)
 - contracts:
+  - [site-skill-protocol-v1.md](contracts/site-skill-protocol-v1.md)
   - [acquisition-tools-v1.md](contracts/acquisition-tools-v1.md)
   - [acquisition-profile-v1.md](contracts/acquisition-profile-v1.md)
   - [web-listening-manifest-v1.md](contracts/web-listening-manifest-v1.md)
 - testing fixtures:
+  - [site-skill-v1.sample.json](testing/fixtures/site-skill-v1.sample.json)
+  - [capture-request-v1.sample.json](testing/fixtures/capture-request-v1.sample.json)
+  - [capture-result-v1.sample.json](testing/fixtures/capture-result-v1.sample.json)
+  - [acquisition-attempt-v2.sample.json](testing/fixtures/acquisition-attempt-v2.sample.json)
   - [acquisition-tools-v1.sample.json](testing/fixtures/acquisition-tools-v1.sample.json)
   - [acquisition-profile-v1.sample.yaml](testing/fixtures/acquisition-profile-v1.sample.yaml)
   - [web-listening-contract-smoke.md](testing/web-listening-contract-smoke.md)
+- architecture decisions:
+  - [ADR-001-site-skill-protocol-authority.md](architecture/ADR-001-site-skill-protocol-authority.md)
 
 ## Current Entry Points
 

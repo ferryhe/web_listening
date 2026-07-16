@@ -1,0 +1,20 @@
+{
+  "site_key": "example-news",
+  "site_skill_id": "example-news-skill",
+  "site_skill_version": "1.0.0",
+  "site_skill_digest": "76bd33212578397c7b056b690ac316818ddc6294b4a14e560111e603fcc41ada",
+  "recipe_id": "news-http",
+  "run_id": "run-example-news-001",
+  "scope_id": "scope-example-news",
+  "schema_version": "capture-request.v1",
+  "request_id": "request-example-news-001",
+  "executor_id": "web_http",
+  "url": "https://example.com/news",
+  "requested_at": "2026-07-16T12:01:00Z",
+  "config": {
+    "timeout_seconds": 30
+  },
+  "metadata": {
+    "purpose": "public news capture"
+  }
+}

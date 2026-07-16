@@ -252,6 +252,12 @@ Typical artifacts from the staged workflow:
 - `document_manifest_<site>_<date>.yaml`
 - `document_manifest_<site>_<date>.md`
 - handoff contract docs:
+  - `docs/contracts/site-skill-protocol-v1.md`
+  - `docs/architecture/ADR-001-site-skill-protocol-authority.md`
+  - `docs/testing/fixtures/site-skill-v1.sample.json`
+  - `docs/testing/fixtures/capture-request-v1.sample.json`
+  - `docs/testing/fixtures/capture-result-v1.sample.json`
+  - `docs/testing/fixtures/acquisition-attempt-v2.sample.json`
   - `docs/contracts/acquisition-tools-v1.md`
   - `docs/testing/fixtures/acquisition-tools-v1.sample.json`
   - `docs/contracts/acquisition-profile-v1.md`

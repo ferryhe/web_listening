@@ -42,8 +42,16 @@ jobs:
 
       - name: Install wheel and test dependencies
         run: |
-          wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
-          python -m pip install "${wheel}[dev]"
+          wheel_uri="$(python - <<'PY'
+          from pathlib import Path
+
+          wheels = list(Path("dist").glob("*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit(f"Expected exactly one wheel in dist/, found {len(wheels)}")
+          print(wheels[0].resolve().as_uri())
+          PY
+          )"
+          python -m pip install "web-listening[dev] @ ${wheel_uri}"
 
       - name: Smoke installed CLI
         run: |

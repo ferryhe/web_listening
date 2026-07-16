@@ -55,7 +55,7 @@ What still remains future-facing:
 
 ## Install
 
-Python 3.12.x is required; Python 3.11 and Python 3.13 are not supported runtime
+Python 3.12.x is required; Python 3.11 and Python 3.13 are not supported as runtime
 targets. On Windows, confirm the selected interpreter before creating the project
 environment:
 
@@ -63,7 +63,7 @@ environment:
 py -3.12 --version
 py -3.12 -m venv .venv
 .venv\Scripts\activate
-pip install -e .[dev]
+pip install -e ".[dev]"
 ```
 
 On Linux or macOS, use the approved Python 3.12 executable:
@@ -71,20 +71,20 @@ On Linux or macOS, use the approved Python 3.12 executable:
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e .[dev]
+pip install -e ".[dev]"
 ```
 
 Optional browser support:
 
 ```powershell
-pip install -e .[browser]
+pip install -e ".[browser]"
 playwright install chromium
 ```
 
 Optional CloakBrowser acquisition probing support:
 
 ```powershell
-pip install -e .[cloakbrowser]
+pip install -e ".[cloakbrowser]"
 ```
 
 `probe-acquisition --adapter cloakbrowser` is only for explicitly authorized access contexts. The active acquisition profile must set both `safety.allow_stealth_browser=true` and `safety.require_authorized_access=true`; this adapter is not used by `bootstrap-scope` or `run-scope`. CloakBrowser may download a browser binary on first launch.

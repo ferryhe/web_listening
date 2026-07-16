@@ -1,5 +1,7 @@
 # Next Stage Execution Plan: Orchestration v2, Report Contract v3, and Agent-First Selection
 
+> **Historical snapshot:** This plan preserves the design context at the time it was written. Its runtime prerequisites and setup commands are superseded by [Python Runtime Compatibility](../operations/PYTHON_RUNTIME.md), which is the active authority.
+
 > **For Hermes:** Execute this plan after PRing the current `feat/mainline-cli-quality-foundation` branch. Use small commits, tests after each task, and keep the staged workflow as the primary product path.
 
 **Goal:** Advance `web_listening` from a stable Phase 1-3 foundation into a more production-ready agent backend by deepening orchestration, making report delivery more actionable, and starting the first real agent-first differentiation layer.

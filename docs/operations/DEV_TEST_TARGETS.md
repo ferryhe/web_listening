@@ -3,6 +3,10 @@
 > Last updated: 2026-04-06
 > Status: Active operations guide
 
+Prerequisite: use the project virtual environment created with Python 3.12.x.
+Python 3.11 and Python 3.13 are outside the supported runtime baseline. See
+[PYTHON_RUNTIME.md](PYTHON_RUNTIME.md) for environment and rollback guidance.
+
 ## Required live target set
 
 Every live development validation in this repo should include these three public sites:

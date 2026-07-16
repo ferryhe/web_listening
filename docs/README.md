@@ -14,6 +14,7 @@ These are the long-lived docs that describe the current system:
   - [AGENT_SCOPE_PLANNING_DESIGN.md](design/AGENT_SCOPE_PLANNING_DESIGN.md)
   - [TREE_MONITORING_DESIGN.md](design/TREE_MONITORING_DESIGN.md)
 - operations:
+  - [PYTHON_RUNTIME.md](operations/PYTHON_RUNTIME.md)
   - [DEV_TEST_TARGETS.md](operations/DEV_TEST_TARGETS.md)
   - [SMOKE_SITE_MANAGEMENT.md](operations/SMOKE_SITE_MANAGEMENT.md)
   - [TREE_BUDGET_RULES.md](operations/TREE_BUDGET_RULES.md)

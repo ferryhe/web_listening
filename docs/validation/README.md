@@ -4,6 +4,11 @@ This folder now holds evergreen validation guidance, not committed point-in-time
 
 Live validation outputs should be generated into `data/reports/` when needed.
 
+Run all development and validation commands in the project virtual environment
+created with Python 3.12.x. See
+[PYTHON_RUNTIME.md](../operations/PYTHON_RUNTIME.md) for the supported runtime
+and rollback policy.
+
 ## Recommended Validation Layers
 
 ### Unit and integration tests

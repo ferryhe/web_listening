@@ -1,5 +1,7 @@
 # Web Listening MCP Fallback Chain Implementation Plan
 
+> **Historical snapshot:** This plan preserves the design context at the time it was written. Its runtime prerequisites and setup commands are superseded by [Python Runtime Compatibility](../operations/PYTHON_RUNTIME.md), which is the active authority.
+
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** Add an MCP-facing acquisition fallback engine so agents can ask `web_listening` for usable website data and automatically escalate from one acquisition tool to the next when the current tool does not return enough information.

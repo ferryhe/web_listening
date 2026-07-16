@@ -15,7 +15,7 @@ from web_listening.contracts._protocol import (
     require_aware_timestamp,
     validate_artifact_path,
     validate_http_url_without_credentials,
-    validate_portable_json,
+    validate_portable_json_field,
 )
 
 
@@ -42,7 +42,9 @@ class CaptureRequest(CaptureLineage):
         validate_http_url_without_credentials
     )
     _validate_requested_at = field_validator("requested_at")(require_aware_timestamp)
-    _validate_json = field_validator("config", "metadata")(validate_portable_json)
+    _validate_json = field_validator("config", "metadata")(
+        validate_portable_json_field
+    )
 
 
 class CaptureError(StrictContractModel):
@@ -51,7 +53,7 @@ class CaptureError(StrictContractModel):
     retryable: bool = False
     metadata: JsonObject = Field(default_factory=dict)
 
-    _validate_metadata = field_validator("metadata")(validate_portable_json)
+    _validate_metadata = field_validator("metadata")(validate_portable_json_field)
 
 
 class CaptureContent(StrictContractModel):
@@ -62,7 +64,7 @@ class CaptureContent(StrictContractModel):
     metadata: JsonObject = Field(default_factory=dict)
 
     _validate_artifact_path = field_validator("artifact_path")(validate_artifact_path)
-    _validate_metadata = field_validator("metadata")(validate_portable_json)
+    _validate_metadata = field_validator("metadata")(validate_portable_json_field)
 
     @model_validator(mode="after")
     def require_content_pointer(self) -> CaptureContent:
@@ -89,7 +91,7 @@ class CaptureResult(CaptureLineage):
     )
     _validate_started_at = field_validator("started_at")(require_aware_timestamp)
     _validate_finished_at = field_validator("finished_at")(require_aware_timestamp)
-    _validate_metadata = field_validator("metadata")(validate_portable_json)
+    _validate_metadata = field_validator("metadata")(validate_portable_json_field)
 
     @model_validator(mode="after")
     def validate_state_and_timing(self) -> CaptureResult:

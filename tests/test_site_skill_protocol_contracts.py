@@ -18,7 +18,10 @@ from web_listening.contracts import (
     SiteSkill,
     SiteSkillExecutor,
 )
-from web_listening.contracts._protocol import ImmutableJsonMapping
+from web_listening.contracts._protocol import (
+    ImmutableJsonMapping,
+    validate_portable_json,
+)
 
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "docs" / "testing" / "fixtures"
@@ -811,6 +814,23 @@ def test_portable_json_serialization_rejects_nested_secret_like_keys(
     serialized = json.dumps(payload)
     with pytest.raises(ValidationError, match="secret-like key"):
         model.model_validate_json(serialized)
+
+
+@pytest.mark.parametrize("field", ["config", "metadata"])
+def test_portable_json_errors_identify_the_validated_top_level_field(field):
+    payload = load_fixture("capture-request-v1.sample.json")
+    payload[field] = {"nested": [{"apiKey": "must-not-serialize"}]}
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_json(CaptureRequest, payload)
+
+    message = str(exc_info.value)
+    assert f"{field}.nested[0] contains forbidden secret-like key: apiKey" in message
+
+
+def test_direct_portable_json_validation_uses_a_generic_location_label():
+    with pytest.raises(ValueError, match=r"JSON value\.nested\[0\]"):
+        validate_portable_json({"nested": [{"apiKey": "must-not-serialize"}]})
 
 
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])

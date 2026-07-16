@@ -14,7 +14,7 @@ from web_listening.contracts._protocol import (
     require_aware_timestamp,
     validate_domain,
     validate_entrypoint,
-    validate_portable_json,
+    validate_portable_json_field,
     validate_profile_ref,
     validate_script_path,
 )
@@ -65,7 +65,7 @@ class SiteSkillExecutor(StrictContractModel):
     config: JsonObject = Field(default_factory=dict)
     script_path: str | None = None
 
-    _validate_config = field_validator("config")(validate_portable_json)
+    _validate_config = field_validator("config")(validate_portable_json_field)
     _validate_script_path = field_validator("script_path")(validate_script_path)
 
 
@@ -113,7 +113,7 @@ class SiteSkill(StrictContractModel):
     _validate_domains = field_validator("allowed_domains")(
         lambda values: tuple(validate_domain(v) for v in values)
     )
-    _validate_metadata = field_validator("metadata")(validate_portable_json)
+    _validate_metadata = field_validator("metadata")(validate_portable_json_field)
 
     @model_validator(mode="after")
     def validate_manifest_consistency(self) -> SiteSkill:

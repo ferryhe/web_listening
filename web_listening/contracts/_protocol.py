@@ -17,6 +17,7 @@ from pydantic import (
     Field,
     JsonValue,
     PlainSerializer,
+    ValidationInfo,
 )
 
 
@@ -207,7 +208,9 @@ def _urlsplit_for_userinfo_detection(value: str):
     return urlsplit(detection_value)
 
 
-def validate_portable_json(value: JsonObject) -> JsonObject:
+def validate_portable_json(
+    value: JsonObject, *, location: str = "JSON value"
+) -> JsonObject:
     def visit(item: JsonValue, location: str) -> None:
         if isinstance(item, Mapping):
             for key, child in item.items():
@@ -244,8 +247,14 @@ def validate_portable_json(value: JsonObject) -> JsonObject:
             return tuple(freeze(child) for child in item)
         return item
 
-    visit(value, "JSON metadata")
+    visit(value, location)
     return freeze(value)  # type: ignore[return-value]
+
+
+def validate_portable_json_field(
+    value: JsonObject, info: ValidationInfo
+) -> JsonObject:
+    return validate_portable_json(value, location=info.field_name)
 
 
 def validate_http_url_without_credentials(value: object) -> object:

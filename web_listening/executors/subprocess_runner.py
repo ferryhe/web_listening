@@ -29,7 +29,7 @@ _GOVERNED_PATH_AUTHORITIES = {
     "output", "report", "storage",
 }
 _LOCATION_SUFFIXES = {"path", "dir", "directory", "file", "root", "location", "url", "uri"}
-_WORKING_DIRECTORY_ALIASES = {"cwd", "workdir", "workingdir"}
+_WORKING_DIRECTORY_ALIASES = {"cwd", "workdir", "workingdir", "workingdirectory"}
 _URL_TOKEN = re.compile(
     r"(?i)\b(?:https?:[\\/]{0,2}|[a-z][a-z0-9+.-]*:(?://|\\\\))[^\s<>\"']*"
 )
@@ -349,8 +349,14 @@ def _parse_result(request: CaptureRequest, started: datetime, stdout: bytes, dia
                 error["message"] = _sanitize_diagnostic(
                     error["message"].encode("utf-8"), 64 * 1024
                 )
-            if isinstance(error.get("code"), str) and not _SAFE_ERROR_CODE.fullmatch(error["code"]):
-                error["code"] = "executor_child_failed"
+            if isinstance(error.get("code"), str):
+                child_code = error["code"]
+                if (
+                    not _SAFE_ERROR_CODE.fullmatch(child_code)
+                    or _is_structured_credential_key(child_code)
+                    or _sanitize_diagnostic(child_code.encode("utf-8"), 64 * 1024) != child_code
+                ):
+                    error["code"] = "executor_child_failed"
             if "metadata" in error:
                 error["metadata"] = _sanitize_diagnostic_values(error["metadata"])
             if "metadata" in payload:
@@ -382,10 +388,14 @@ def _sanitize_diagnostic_values(value: object) -> object:
     if isinstance(value, Mapping):
         sanitized: dict[object, object] = {}
         for key, child in value.items():
-            safe_key = _sanitize_diagnostic_values(key)
+            credential_key = _is_structured_credential_key(key)
+            safe_key = "[REDACTED]" if credential_key else _sanitize_diagnostic_values(key)
             if safe_key in sanitized:
                 raise ValueError("diagnostic metadata keys collide after sanitization")
-            sanitized[safe_key] = _sanitize_diagnostic_values(child)
+            sanitized[safe_key] = (
+                "[REDACTED]" if credential_key
+                else _sanitize_diagnostic_values(child)
+            )
         return sanitized
     if isinstance(value, list):
         return [_sanitize_diagnostic_values(child) for child in value]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -345,6 +346,19 @@ def test_nested_governed_path_key_variants_are_rejected(container, key):
     assert result.error.code == "executor_request_rejected"
 
 
+@pytest.mark.parametrize("key", [
+    "workingDirectory", "working_directory", "working-directory",
+])
+def test_nested_working_directory_key_variants_are_rejected(key):
+    unsafe = request().model_copy(update={
+        "config": {"ordinary": {"nested": {key: "/governed"}}},
+    })
+    result = SubprocessAcquisitionExecutor(
+        "web_http", (sys.executable, str(FAKE), "success")
+    ).execute(unsafe)
+    assert result.error.code == "executor_request_rejected"
+
+
 def test_governed_words_in_ordinary_values_are_not_rejected():
     safe = request().model_copy(update={"metadata": {"description": "download report data"}})
     assert SubprocessAcquisitionExecutor("web_http", (sys.executable, str(FAKE), "success")).execute(safe).state == "succeeded"
@@ -677,6 +691,63 @@ def test_failed_child_diagnostic_metadata_and_error_code_are_sanitized_before_re
     assert result.metadata["nested"] == {"url": "[URL REDACTED]"}
     assert result.metadata["detail"] == "token=[REDACTED]"
     assert result.metadata["items"] == (None, 23, False)
+
+
+def test_failed_child_credential_labelled_error_code_is_replaced():
+    secret = "syntheticsecret9f83"
+    payload = run("failed_diagnostic_metadata").model_dump(mode="json")
+    payload["error"]["code"] = f"password_{secret}"
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stdout.write({json.dumps(payload)!r})"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.state == "failed"
+    assert result.error.code == "executor_child_failed"
+    assert secret not in result.model_dump_json()
+
+
+def test_diagnostic_metadata_redacts_credential_labelled_subtree_directly():
+    secret = "direct-client-api-key-secret"
+
+    sanitized = subprocess_runner._sanitize_diagnostic_values({
+        "clientAPIKey": {"visible": secret},
+        "ordinary": {"detail": "safe"},
+    })
+
+    assert sanitized == {
+        "[REDACTED]": "[REDACTED]",
+        "ordinary": {"detail": "safe"},
+    }
+
+
+@pytest.mark.parametrize(("surface", "credential_key"), [
+    ("error", "clientAPIKey"),
+    ("top", "client_api_key"),
+])
+def test_failed_child_credential_metadata_subtree_is_redacted_end_to_end(surface, credential_key):
+    secret = f"{surface}-client-api-key-secret"
+    payload = run("failed_diagnostic_metadata").model_dump(mode="json")
+    payload["error"]["code"] = "child_failed"
+    payload["error"]["metadata"] = {"ordinary": "safe"}
+    payload["metadata"] = {"ordinary": "safe"}
+    target = payload["error"]["metadata"] if surface == "error" else payload["metadata"]
+    target[credential_key] = {"visible": secret}
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stdout.write({json.dumps(payload)!r})"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.state == "failed"
+    assert result.error.code == "child_failed"
+    assert result.error.code != "executor_protocol_error"
+    assert secret not in result.model_dump_json()
+    sanitized_target = result.error.metadata if surface == "error" else result.metadata
+    assert sanitized_target == {"ordinary": "safe", "[REDACTED]": "[REDACTED]"}
 
 
 def test_failed_child_diagnostic_metadata_keys_are_sanitized():

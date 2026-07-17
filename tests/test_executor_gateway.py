@@ -361,6 +361,34 @@ def test_stderr_redaction_never_echoes_exact_secrets_and_stays_bounded():
     assert len(redacted.encode()) <= 512
 
 
+def test_proxy_credential_assignment_is_redacted_from_subprocess_stderr():
+    secret = "proxy-credential-VALUE-9f83"
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write('proxy-credential={secret}'); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.error.code == "executor_nonzero_exit"
+    assert result.metadata["stderr"] == "proxy-credential=[REDACTED]"
+    assert secret not in result.model_dump_json()
+
+
+@pytest.mark.parametrize("key", [
+    "credential", "credentials", "proxy_credential", "proxy-credentials",
+    "proxyCredential", "proxyCredentials", "proxycredential", "proxycredentials",
+])
+def test_json_credential_labelled_diagnostics_are_redacted(key):
+    secret = "json-credential-VALUE-9f83"
+    diagnostic = f'{{"{key}": "{secret}"}}'
+
+    redacted = subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512)
+
+    assert redacted == f'{{"{key}": [REDACTED]}}'
+    assert secret not in redacted
+
+
 @pytest.mark.parametrize(("header", "secrets"), [
     ("Cookie: session=first-secret; refresh=second-secret", ("first-secret", "second-secret")),
     ("Set-Cookie: session=first-secret; refresh=second-secret", ("first-secret", "second-secret")),

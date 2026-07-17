@@ -36,7 +36,7 @@ _URL_TOKEN = re.compile(
 _SAFE_ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _CREDENTIAL_KEY = re.compile(
     r"(?ix)([\"']?(?:"
-    r"authorization|cookie|password|token|"
+    r"authorization|cookie|password|token|credentials?|"
     r"api[\s_-]*key|client[\s_-]*secret|private[\s_-]*key|"
     r"(?:aws[\s_-]*)?access[\s_-]*key[\s_-]*id|"
     r"(?:aws[\s_-]*)?secret[\s_-]*access[\s_-]*key"

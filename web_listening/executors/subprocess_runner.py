@@ -314,19 +314,36 @@ def _terminate_tree(process: subprocess.Popen[bytes], limits: SubprocessLimits) 
         pass
 
 
-def _contains_write_path_key(value: object) -> bool:
+def _contains_write_path_key(value: object, governed_container: bool = False) -> bool:
     if isinstance(value, Mapping):
         for key, child in value.items():
-            compact = re.sub(r"[^a-z0-9]", "", str(key).lower())
-            governed = compact in _WORKING_DIRECTORY_ALIASES or any(
+            text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(key))
+            tokens = tuple(re.findall(r"[a-z0-9]+", text.lower()))
+            compact = "".join(tokens)
+            authority_indexes = (
+                index for index, token in enumerate(tokens)
+                if token in _GOVERNED_PATH_AUTHORITIES
+            )
+            governed = (
+                compact in _WORKING_DIRECTORY_ALIASES
+                or any(
+                    any(token in _LOCATION_SUFFIXES for token in tokens[index + 1:])
+                    for index in authority_indexes
+                )
+                or any(
                 compact == authority + suffix
                 for authority in _GOVERNED_PATH_AUTHORITIES
                 for suffix in _LOCATION_SUFFIXES
+                )
+                or governed_container and len(tokens) == 1 and tokens[0] in _LOCATION_SUFFIXES
             )
-            if governed or _contains_write_path_key(child):
+            child_governed_container = governed_container or (
+                len(tokens) == 1 and tokens[0] in _GOVERNED_PATH_AUTHORITIES
+            )
+            if governed or _contains_write_path_key(child, child_governed_container):
                 return True
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return any(_contains_write_path_key(child) for child in value)
+        return any(_contains_write_path_key(child, governed_container) for child in value)
     return False
 
 
@@ -408,16 +425,19 @@ def _sanitize_diagnostic(data: bytes, byte_limit: int) -> str:
         return _bounded_marker(_DIAGNOSTIC_EXCEEDED, byte_limit)
     text = data.decode("utf-8", errors="replace")
     stripped = text.strip()
-    starts_structured = stripped.startswith("{") or (
-        stripped.startswith("[") and not stripped.startswith("[REDACTED]")
-    )
+    starts_structured = stripped.startswith("{") or stripped.startswith("[")
     if starts_structured:
         try:
             structured = json.loads(text, object_pairs_hook=_unique_json_object)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            if _CREDENTIAL_KEY.search(text) or _JSON_STRING_ESCAPE.search(text):
+            if _JSON_STRING_ESCAPE.search(text):
                 return _bounded_marker(_INVALID_STRUCTURED_DIAGNOSTIC, byte_limit)
-        except (_DuplicateJsonKey, RecursionError):
+            if _CREDENTIAL_KEY.search(text):
+                sanitized_fallback = _sanitize_unstructured_diagnostic(text)
+                if sanitized_fallback != text:
+                    return _bounded_marker(_INVALID_STRUCTURED_DIAGNOSTIC, byte_limit)
+                text = sanitized_fallback
+        except (_DuplicateJsonKey, RecursionError, ValueError):
             return _bounded_marker(_INVALID_STRUCTURED_DIAGNOSTIC, byte_limit)
         else:
             try:
@@ -427,9 +447,10 @@ def _sanitize_diagnostic(data: bytes, byte_limit: int) -> str:
                     ensure_ascii=False,
                     separators=(",", ":"),
                 )
-            except (RecursionError, TypeError, ValueError):
+                encoded = text.encode("utf-8")
+            except (RecursionError, TypeError, UnicodeEncodeError, ValueError):
                 return _bounded_marker(_INVALID_STRUCTURED_DIAGNOSTIC, byte_limit)
-            return text.encode("utf-8")[:byte_limit].decode("utf-8", errors="ignore")
+            return encoded[:byte_limit].decode("utf-8", errors="ignore")
     text = _sanitize_unstructured_diagnostic(text)
     # Redaction placeholders may expand the input, so enforce the bound again.
     return text.encode("utf-8")[:byte_limit].decode("utf-8", errors="ignore")

@@ -346,6 +346,20 @@ def test_nested_governed_path_key_variants_are_rejected(container, key):
     assert result.error.code == "executor_request_rejected"
 
 
+@pytest.mark.parametrize("payload", [
+    {"artifact_output_path": "/governed"},
+    {"artifact": {"path": "/governed"}},
+    {"database": {"url": "sqlite:///governed.db"}},
+    {"manifest": {"file": "/governed/manifest.json"}},
+])
+def test_governed_compound_keys_and_nested_authority_locations_are_rejected(payload):
+    unsafe = request().model_copy(update={"config": payload})
+    result = SubprocessAcquisitionExecutor(
+        "web_http", (sys.executable, str(FAKE), "success")
+    ).execute(unsafe)
+    assert result.error.code == "executor_request_rejected"
+
+
 @pytest.mark.parametrize("key", [
     "workingDirectory", "working_directory", "working-directory",
 ])
@@ -368,6 +382,19 @@ def test_governed_words_in_ordinary_values_are_not_rejected():
 def test_ordinary_keys_are_not_rejected(key):
     safe = request().model_copy(update={"config": {"nested": {key: "ordinary value"}}})
     assert SubprocessAcquisitionExecutor("web_http", (sys.executable, str(FAKE), "success")).execute(safe).state == "succeeded"
+
+
+@pytest.mark.parametrize("payload", [
+    {"artifact": {"description": "ordinary value"}},
+    {"category": {"path": "ordinary value"}},
+    {"database_notes": {"source_url": "https://example.com/source"}},
+    {"manifestation": {"file": "ordinary value"}},
+])
+def test_non_location_authority_content_and_non_authority_containers_are_accepted(payload):
+    safe = request().model_copy(update={"config": payload})
+    assert SubprocessAcquisitionExecutor(
+        "web_http", (sys.executable, str(FAKE), "success")
+    ).execute(safe).state == "succeeded"
 
 
 def test_stderr_redaction_never_echoes_exact_secrets_and_stays_bounded():
@@ -450,6 +477,64 @@ def test_deep_structured_stderr_fails_closed_end_to_end():
     assert result.error.code == "executor_nonzero_exit"
     assert result.metadata["stderr"] == "[invalid structured diagnostic redacted]"
     assert result.state == "failed"
+
+
+def test_oversized_integer_structured_diagnostic_fails_closed_directly():
+    diagnostic = b"[" + b"1" * 5000 + b"]"
+
+    sanitized = subprocess_runner._sanitize_diagnostic(diagnostic, 6000)
+
+    assert sanitized == "[invalid structured diagnostic redacted]"
+    assert len(sanitized.encode("utf-8")) <= 6000
+
+
+def test_oversized_integer_structured_stderr_fails_closed_end_to_end():
+    diagnostic = "[" + "1" * 5000 + "]"
+    capture_request = request()
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+        limits=SubprocessLimits(stderr_bytes=6000),
+    )
+
+    result = executor.execute(capture_request)
+
+    assert result.state == "failed"
+    assert result.error.code == "executor_nonzero_exit"
+    assert result.metadata["stderr"] == "[invalid structured diagnostic redacted]"
+    assert len(result.metadata["stderr"].encode("utf-8")) <= 6000
+    for field in (
+        "site_key", "site_skill_id", "site_skill_version", "site_skill_digest",
+        "recipe_id", "run_id", "scope_id", "request_id", "executor_id",
+    ):
+        assert getattr(result, field) == getattr(capture_request, field)
+
+
+def test_lone_surrogate_structured_diagnostic_fails_closed_directly():
+    diagnostic = bytes.fromhex("7b2273616665223a225c7564383030227d")
+
+    sanitized = subprocess_runner._sanitize_diagnostic(diagnostic, 512)
+
+    assert sanitized == "[invalid structured diagnostic redacted]"
+    assert len(sanitized.encode("utf-8")) <= 512
+
+
+def test_lone_surrogate_structured_stderr_fails_closed_end_to_end():
+    diagnostic = bytes.fromhex("7b2273616665223a225c7564383030227d")
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (
+            sys.executable,
+            "-c",
+            f"import sys; sys.stderr.buffer.write(bytes.fromhex({diagnostic.hex()!r})); sys.exit(1)",
+        ),
+    )
+
+    result = executor.execute(request())
+
+    assert result.state == "failed"
+    assert result.error.code == "executor_nonzero_exit"
+    assert result.metadata["stderr"] == "[invalid structured diagnostic redacted]"
 
 
 @pytest.mark.parametrize(("diagnostic", "expected"), [
@@ -536,6 +621,47 @@ def test_malformed_structured_credential_assignment_fails_closed_end_to_end():
 
     assert result.metadata["stderr"] == "[invalid structured diagnostic redacted]"
     assert secret not in result.model_dump_json()
+
+
+def test_redacted_prefix_malformed_structured_credential_fails_closed_directly():
+    secret = "SYNTHETIC-LEAK-9f83"
+    diagnostic = f'[REDACTED],{{"credentials":{{"username":"alice","value":"{secret}"}}}}'
+
+    sanitized = subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512)
+
+    assert sanitized == "[invalid structured diagnostic redacted]"
+    assert secret not in sanitized
+
+
+def test_redacted_prefix_malformed_structured_credential_fails_closed_end_to_end():
+    secret = "SYNTHETIC-LEAK-9f83"
+    diagnostic = f'[REDACTED],{{"credentials":{{"username":"alice","value":"{secret}"}}}}'
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.error.code == "executor_nonzero_exit"
+    assert result.metadata["stderr"] == "[invalid structured diagnostic redacted]"
+    assert secret not in result.model_dump_json()
+
+
+def test_exact_redacted_marker_keeps_safe_textual_fallback_directly():
+    assert subprocess_runner._sanitize_diagnostic(b"[REDACTED]", 512) == "[REDACTED]"
+
+
+def test_exact_redacted_marker_is_unchanged_end_to_end():
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", "import sys; sys.stderr.write('[REDACTED]'); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.error.code == "executor_nonzero_exit"
+    assert result.metadata["stderr"] == "[REDACTED]"
 
 
 def test_malformed_structured_escaped_credential_key_fails_closed():

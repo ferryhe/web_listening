@@ -1448,6 +1448,88 @@ def test_memory_error_during_bounded_read_fails_closed(
     assert "package.resource_exhausted" in diagnostic_codes(result)
 
 
+@pytest.mark.parametrize("parser", ["manifest", "profile"])
+def test_structured_parser_memory_error_is_deterministic_api_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parser: str
+) -> None:
+    package = copy_example(tmp_path)
+
+    def exhaust(*args, **kwargs):
+        raise MemoryError
+
+    if parser == "manifest":
+        monkeypatch.setattr(registry_module.SiteSkill, "model_validate_json", exhaust)
+    else:
+        monkeypatch.setattr(registry_module.yaml, "load", exhaust)
+
+    first = validate_site_skill_package(package)
+    second = validate_site_skill_package(package)
+
+    assert first == second
+    assert first["valid"] is False
+    assert first["package_sha256"] is None
+    assert first["manifest_sha256"] is None
+    assert first["script_sha256"] == {}
+    assert first["diagnostics"] == [
+        {
+            "code": "package.resource_exhausted",
+            "path": ".",
+            "message": "package validation exceeded available memory",
+        }
+    ]
+
+
+def test_structured_parser_programmer_error_is_not_hidden(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = copy_example(tmp_path)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("programmer error")
+
+    monkeypatch.setattr(registry_module.SiteSkill, "model_validate_json", fail)
+
+    with pytest.raises(RuntimeError, match="programmer error"):
+        validate_site_skill_package(package)
+
+
+@pytest.mark.parametrize("parser", ["manifest", "profile"])
+def test_structured_parser_memory_error_has_stable_cli_json_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parser: str
+) -> None:
+    package = copy_example(tmp_path)
+
+    def exhaust(*args, **kwargs):
+        raise MemoryError
+
+    if parser == "manifest":
+        monkeypatch.setattr(registry_module.SiteSkill, "model_validate_json", exhaust)
+    else:
+        monkeypatch.setattr(registry_module.yaml, "load", exhaust)
+
+    args = ["validate-site-skill", "--package-path", str(package), "--json"]
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code == 1
+    assert first.stdout == second.stdout
+    assert first.stderr == second.stderr == ""
+    payload = json.loads(first.stdout)
+    assert payload["schema_version"] == "site-skill-validation.v1"
+    skill = payload["skill"]
+    assert skill["valid"] is False
+    assert skill["package_sha256"] is None
+    assert skill["manifest_sha256"] is None
+    assert skill["script_sha256"] == {}
+    assert skill["diagnostics"] == [
+        {
+            "code": "package.resource_exhausted",
+            "path": ".",
+            "message": "package validation exceeded available memory",
+        }
+    ]
+
+
 def test_regular_file_replaced_by_fifo_at_open_is_rejected_without_blocking(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1004,7 +1004,7 @@ def _structured_absolute_path(value: object) -> bool:
     return False
 
 
-def validate_site_skill_package(
+def _validate_site_skill_package(
     package_path: str | Path, *, _package_fd: int | None = None
 ) -> dict[str, object]:
     package = Path(package_path)
@@ -1309,6 +1309,20 @@ def validate_site_skill_package(
         "script_sha256": dict(sorted(script_digests.items())),
         "diagnostics": [item.to_dict() for item in diagnostics],
     }
+
+
+def validate_site_skill_package(
+    package_path: str | Path, *, _package_fd: int | None = None
+) -> dict[str, object]:
+    package = Path(package_path)
+    try:
+        return _validate_site_skill_package(package, _package_fd=_package_fd)
+    except MemoryError:
+        return _registry_failure(
+            package,
+            "package.resource_exhausted",
+            "package validation exceeded available memory",
+        )
 
 
 def _registry_failure(path: Path, code: str, message: str) -> dict[str, object]:

@@ -7,6 +7,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import typer
 import yaml
 from typer.testing import CliRunner
 
@@ -2152,6 +2153,135 @@ def test_site_skill_parser_failures_are_json_stdout_only(
     failures = payload[payload_key]
     failure = failures[0] if isinstance(failures, list) else failures
     assert diagnostic_codes(failure) == {"parser.invalid"}
+
+
+@pytest.mark.parametrize(
+    ("args", "schema", "payload_key"),
+    [
+        (
+            ["list-site-skills", "--root", "{missing_root}", "--json"],
+            "site-skill-list.v1",
+            "skills",
+        ),
+        (["inspect-site-skill", "--json"], "site-skill-inspect.v1", "skill"),
+        (
+            ["validate-site-skill", "--package-path", "{invalid_package}", "--json"],
+            "site-skill-validation.v1",
+            "skill",
+        ),
+    ],
+)
+def test_site_skill_json_command_exit_is_handled_by_cli_runner(
+    tmp_path: Path, args: list[str], schema: str, payload_key: str
+) -> None:
+    rendered_args = [
+        arg.format(
+            missing_root=tmp_path / "missing-root",
+            invalid_package=tmp_path / "missing-package",
+        )
+        for arg in args
+    ]
+
+    first = runner.invoke(app, rendered_args)
+    second = runner.invoke(app, rendered_args)
+
+    assert first.exit_code == second.exit_code == 1
+    assert first.stdout == second.stdout
+    assert first.stderr == second.stderr == ""
+    assert "Traceback" not in first.output
+    payload = json.loads(first.stdout)
+    assert payload["schema_version"] == schema
+    failure = payload[payload_key]
+    if isinstance(failure, list):
+        failure = failure[0]
+    assert failure["valid"] is False
+
+
+@pytest.mark.parametrize("standalone_mode", [False, True])
+@pytest.mark.parametrize(
+    ("args", "schema"),
+    [
+        (
+            ["list-site-skills", "--root", "{missing_root}", "--json"],
+            "site-skill-list.v1",
+        ),
+        (["inspect-site-skill", "--json"], "site-skill-inspect.v1"),
+        (
+            ["validate-site-skill", "--package-path", "{invalid_package}", "--json"],
+            "site-skill-validation.v1",
+        ),
+    ],
+)
+def test_site_skill_json_command_exit_is_handled_by_direct_group_main(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    standalone_mode: bool,
+    args: list[str],
+    schema: str,
+) -> None:
+    rendered_args = [
+        arg.format(
+            missing_root=tmp_path / "missing-root",
+            invalid_package=tmp_path / "missing-package",
+        )
+        for arg in args
+    ]
+    group = typer.main.get_command(app)
+
+    if standalone_mode:
+        with pytest.raises(SystemExit) as exc_info:
+            group.main(args=rendered_args, standalone_mode=True)
+        exit_code = exc_info.value.code
+    else:
+        exit_code = group.main(args=rendered_args, standalone_mode=False)
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.err == ""
+    assert "Traceback" not in captured.out
+    assert json.loads(captured.out)["schema_version"] == schema
+
+
+@pytest.mark.parametrize("standalone_mode", [False, True])
+def test_site_skill_json_direct_group_main_keeps_usage_error_at_exit_two(
+    capsys: pytest.CaptureFixture[str], standalone_mode: bool
+) -> None:
+    group = typer.main.get_command(app)
+    args = ["validate-site-skill", "--json", "--unknown-option"]
+
+    if standalone_mode:
+        with pytest.raises(SystemExit) as exc_info:
+            group.main(args=args, standalone_mode=True)
+        exit_code = exc_info.value.code
+    else:
+        exit_code = group.main(args=args, standalone_mode=False)
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.err == ""
+    payload = json.loads(captured.out)
+    assert payload["schema_version"] == "site-skill-validation.v1"
+    assert diagnostic_codes(payload["skill"]) == {"parser.invalid"}
+
+
+@pytest.mark.parametrize("standalone_mode", [False, True])
+def test_site_skill_json_direct_group_main_keeps_valid_command_at_zero(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    standalone_mode: bool,
+) -> None:
+    package = copy_example(tmp_path)
+    group = typer.main.get_command(app)
+    args = ["validate-site-skill", "--package-path", str(package), "--json"]
+
+    result = group.main(args=args, standalone_mode=standalone_mode)
+
+    captured = capsys.readouterr()
+    assert result is None
+    assert captured.err == ""
+    payload = json.loads(captured.out)
+    assert payload["schema_version"] == "site-skill-validation.v1"
+    assert payload["skill"]["valid"] is True
 
 
 def test_validate_cli_rejects_path_combined_with_selectors() -> None:

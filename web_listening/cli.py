@@ -9,14 +9,17 @@ from urllib.parse import urlparse
 
 import typer
 from click import UsageError as ClickUsageError
+from click.exceptions import Exit as ClickExit
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from typer.core import TyperGroup
 
 try:
+    from typer._click.exceptions import Exit as TyperExit
     from typer._click.exceptions import UsageError as TyperUsageError
 except ImportError:  # pragma: no cover - depends on Typer's Click packaging.
+    TyperExit = ClickExit
     TyperUsageError = ClickUsageError
 
 
@@ -79,6 +82,10 @@ class _SiteSkillJsonGroup(TyperGroup):
                 windows_expand_args=windows_expand_args,
                 **extra,
             )
+        except (ClickExit, TyperExit) as exc:
+            if standalone_mode:
+                raise SystemExit(exc.exit_code) from None
+            return exc.exit_code
         except (ClickUsageError, TyperUsageError) as exc:
             _stable_json(_parser_failure(command, exc.format_message()))
             if standalone_mode:

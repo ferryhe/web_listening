@@ -203,6 +203,15 @@ def test_stdout_and_stderr_limits_are_distinct_and_bounded():
     assert result.metadata["stderr"] == "[stderr exceeded configured byte limit]"
 
 
+def test_stderr_limit_marker_respects_one_byte_limit_without_secret_leak():
+    result = run("stderr_limit_credential", stderr=1)
+
+    assert result.error.code == "executor_stderr_limit"
+    assert len(result.metadata["stderr"].encode("utf-8")) <= 1
+    assert "cut-user" not in result.model_dump_json()
+    assert "cut-password" not in result.model_dump_json()
+
+
 def test_environment_is_empty_except_explicit_allowlist(monkeypatch):
     monkeypatch.setenv("TZ", "UTC")
     monkeypatch.setenv("DATABASE_URL", "secret")
@@ -385,8 +394,194 @@ def test_json_credential_labelled_diagnostics_are_redacted(key):
 
     redacted = subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512)
 
-    assert redacted == f'{{"{key}": [REDACTED]}}'
+    assert redacted == f'{{"{key}":"[REDACTED]"}}'
     assert secret not in redacted
+
+
+@pytest.mark.parametrize(("diagnostic", "byte_limit", "marker"), [
+    (b"xx", 1, "[diagnostic exceeded configured byte limit]"),
+    (b'{"client\\u0053":', 19, "[invalid structured diagnostic redacted]"),
+])
+def test_fixed_diagnostic_markers_respect_configured_byte_limit(diagnostic, byte_limit, marker):
+    sanitized = subprocess_runner._sanitize_diagnostic(diagnostic, byte_limit)
+
+    assert sanitized == marker.encode("utf-8")[:byte_limit].decode("utf-8")
+    assert len(sanitized.encode("utf-8")) <= byte_limit
+
+
+def test_credential_labelled_multi_member_object_is_redacted_end_to_end():
+    secret = "OBJECT-CREDENTIAL-SECRET-9f83"
+    diagnostic = '{"credentials":{"username":"alice","value":"' + secret + '"}}'
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.error.code == "executor_nonzero_exit"
+    assert result.metadata["stderr"] == '{"credentials":"[REDACTED]"}'
+    assert secret not in result.model_dump_json()
+
+
+def test_deep_structured_stderr_fails_closed_end_to_end():
+    diagnostic = "{\"safe\":" * 600 + "null" + "}" * 600
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.error.code == "executor_nonzero_exit"
+    assert result.metadata["stderr"] == "[invalid structured diagnostic redacted]"
+    assert result.state == "failed"
+
+
+@pytest.mark.parametrize(("diagnostic", "expected"), [
+    ('{"outer":{"client_secret":{"value":"nested-secret"}}}', '{"outer":{"client_secret":"[REDACTED]"}}'),
+    ('{"outer":[{"credentials":["array-secret",{"visible":"also-secret"}]}]}', '{"outer":[{"credentials":"[REDACTED]"}]}'),
+    ('{"refresh_token":{"value":"refresh-secret"}}', '{"refresh_token":"[REDACTED]"}'),
+    ('{"items":[{"proxy_password":"proxy-secret"}]}', '{"items":[{"proxy_password":"[REDACTED]"}]}'),
+    ('{"client_api_key":["api-secret",{"visible":"also-secret"}]}', '{"client_api_key":"[REDACTED]"}'),
+    ('{"session_cookie":{"value":"cookie-secret"}}', '{"session_cookie":"[REDACTED]"}'),
+    ('{"outer":{"aws_secret_access_key":"aws-secret"}}', '{"outer":{"aws_secret_access_key":"[REDACTED]"}}'),
+])
+def test_nested_structured_credential_values_are_redacted_completely(diagnostic, expected):
+    redacted = subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512)
+
+    assert redacted == expected
+
+
+@pytest.mark.parametrize("key", [
+    "apikey", "APIKey", "clientsecret", "clientSecret", "privatekey", "privateKey",
+    "accesskeyid", "accessKeyID", "secretaccesskey", "AWSSecretAccessKey",
+    "awsaccesskeyid", "AWSAccessKeyID", "awssecretaccesskey", "awsSecretAccessKey",
+    "clientAPIKey", "AUTHToken", "authtoken", "userpassword", "sessioncookie",
+    "backupAWSSecretAccessKey",
+])
+def test_compact_and_acronym_credential_keys_redact_the_whole_subtree(key):
+    diagnostic = f'{{"outer":{{"{key}":{{"visible":"compact-secret"}}}},"safe":"ordinary"}}'
+
+    assert subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512) == (
+        f'{{"outer":{{"{key}":"[REDACTED]"}},"safe":"ordinary"}}'
+    )
+
+
+@pytest.mark.parametrize("key", ["clientAPIKEY", "clientApiKEY", "serviceAPIKEY"])
+def test_acronym_compound_credential_keys_redact_the_whole_subtree(key):
+    diagnostic = f'{{"{key}":{{"visible":"acronym-secret"}},"safe":"ordinary"}}'
+
+    assert subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512) == (
+        f'{{"{key}":"[REDACTED]","safe":"ordinary"}}'
+    )
+
+
+def test_client_api_key_acronym_is_redacted_end_to_end():
+    key = "clientAPIKEY"
+    secret = "client-api-key-secret-9f83"
+    diagnostic = f'{{"{key}":{{"visible":"{secret}"}}}}'
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.metadata["stderr"] == f'{{"{key}":"[REDACTED]"}}'
+    assert secret not in result.model_dump_json()
+
+
+@pytest.mark.parametrize("key", [
+    "clientAPIKey", "AUTHToken", "authtoken", "userpassword", "sessioncookie",
+    "backupAWSSecretAccessKey",
+])
+def test_boundary_model_credential_keys_are_redacted_end_to_end(key):
+    secret = f"{key}-secret-9f83"
+    diagnostic = f'{{"{key}":{{"visible":"{secret}"}}}}'
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.metadata["stderr"] == f'{{"{key}":"[REDACTED]"}}'
+    assert secret not in result.model_dump_json()
+
+
+def test_malformed_structured_credential_assignment_fails_closed_end_to_end():
+    secret = "malformed-object-secret-9f83"
+    diagnostic = f'{{"credentials":{{"username":"alice","value":"{secret}"'
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.metadata["stderr"] == "[invalid structured diagnostic redacted]"
+    assert secret not in result.model_dump_json()
+
+
+def test_malformed_structured_escaped_credential_key_fails_closed():
+    diagnostic = r'{"client\u0053ecret":{"visible":"SECRET"'
+
+    assert subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512) == (
+        "[invalid structured diagnostic redacted]"
+    )
+
+
+def test_malformed_structured_escaped_credential_key_fails_closed_end_to_end():
+    secret = "escaped-client-secret-9f83"
+    diagnostic = rf'{{"client\u0053ecret":{{"visible":"{secret}"'
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.metadata["stderr"] == "[invalid structured diagnostic redacted]"
+    assert secret not in result.model_dump_json()
+
+
+def test_malformed_structured_text_without_credential_label_keeps_bounded_fallback():
+    diagnostic = '{"ordinary":"visible"'
+
+    assert subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512) == diagnostic
+
+
+@pytest.mark.parametrize("key", [
+    "refresh_interval", "client_label", "noncredential", "noncredentials", "tokenizer",
+    "cookiecutter", "passwordless",
+])
+def test_noncredential_structured_values_are_preserved(key):
+    diagnostic = f'{{"profile":{{"{key}":"ordinary-value"}},"items":[1,true]}}'
+
+    assert subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512) == diagnostic
+
+
+def test_structured_url_key_is_sanitized_end_to_end():
+    secret = "url-key-secret-9f83"
+    diagnostic = f'{{"https://key-user:{secret}@example.test/path":"safe"}}'
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.metadata["stderr"] == '{"[URL REDACTED]":"safe"}'
+    assert secret not in result.model_dump_json()
+
+
+def test_structured_sanitized_key_collision_fails_closed():
+    diagnostic = '{"https://first:secret@example.test":"one","https://second:secret@example.test":"two"}'
+
+    assert subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512) == (
+        "[invalid structured diagnostic redacted]"
+    )
 
 
 @pytest.mark.parametrize(("header", "secrets"), [

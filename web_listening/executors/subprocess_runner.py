@@ -54,6 +54,27 @@ _PEM_PRIVATE_KEY = re.compile(
     re.DOTALL,
 )
 _TRUSTED_EXECUTOR_IDS = frozenset(get_args(ExecutorId))
+_DIAGNOSTIC_EXCEEDED = "[diagnostic exceeded configured byte limit]"
+_INVALID_STRUCTURED_DIAGNOSTIC = "[invalid structured diagnostic redacted]"
+_STDERR_EXCEEDED = "[stderr exceeded configured byte limit]"
+_JSON_STRING_ESCAPE = re.compile(r'\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})')
+_MAX_STRUCTURED_DIAGNOSTIC_DEPTH = 128
+_STRUCTURED_CREDENTIAL_PHRASES = (
+    ("authorization",), ("cookie",), ("password",), ("token",),
+    ("credential",), ("credentials",), ("api", "key"), ("client", "secret"),
+    ("private", "key"), ("access", "key", "id"),
+    ("secret", "access", "key"),
+)
+_STRUCTURED_CREDENTIAL_COMPACT_PHRASES = frozenset({
+    "authorization", "cookie", "password", "token", "credential", "credentials",
+    "apikey", "clientsecret", "privatekey", "accesskeyid", "secretaccesskey",
+    "awsaccesskeyid", "awssecretaccesskey",
+})
+_STRUCTURED_CREDENTIAL_COMPACT_EXCLUSIONS = frozenset({"noncredential", "noncredentials"})
+
+
+class _DuplicateJsonKey(ValueError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,7 +262,7 @@ class SubprocessAcquisitionExecutor:
                 reader.join(self._limits.kill_grace_seconds)
 
             if stderr.exceeded.is_set() or failure_code == "executor_stderr_limit":
-                diagnostic = "[stderr exceeded configured byte limit]"
+                diagnostic = _bounded_marker(_STDERR_EXCEEDED, self._limits.stderr_bytes)
             else:
                 diagnostic = _sanitize_diagnostic(bytes(stderr.data), self._limits.stderr_bytes)
             if failure_code:
@@ -350,7 +371,7 @@ def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError(f"duplicate JSON object key: {key!r}")
+            raise _DuplicateJsonKey(f"duplicate JSON object key: {key!r}")
         result[key] = value
     return result
 
@@ -374,8 +395,41 @@ def _sanitize_diagnostic_values(value: object) -> object:
 def _sanitize_diagnostic(data: bytes, byte_limit: int) -> str:
     """Return bounded, credential-free text safe for governed metadata."""
     if len(data) > byte_limit:
-        return "[diagnostic exceeded configured byte limit]"
+        return _bounded_marker(_DIAGNOSTIC_EXCEEDED, byte_limit)
     text = data.decode("utf-8", errors="replace")
+    stripped = text.strip()
+    starts_structured = stripped.startswith("{") or (
+        stripped.startswith("[") and not stripped.startswith("[REDACTED]")
+    )
+    if starts_structured:
+        try:
+            structured = json.loads(text, object_pairs_hook=_unique_json_object)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            if _CREDENTIAL_KEY.search(text) or _JSON_STRING_ESCAPE.search(text):
+                return _bounded_marker(_INVALID_STRUCTURED_DIAGNOSTIC, byte_limit)
+        except (_DuplicateJsonKey, RecursionError):
+            return _bounded_marker(_INVALID_STRUCTURED_DIAGNOSTIC, byte_limit)
+        else:
+            try:
+                sanitized = _sanitize_structured_diagnostic(structured)
+                text = json.dumps(
+                    sanitized,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            except (RecursionError, TypeError, ValueError):
+                return _bounded_marker(_INVALID_STRUCTURED_DIAGNOSTIC, byte_limit)
+            return text.encode("utf-8")[:byte_limit].decode("utf-8", errors="ignore")
+    text = _sanitize_unstructured_diagnostic(text)
+    # Redaction placeholders may expand the input, so enforce the bound again.
+    return text.encode("utf-8")[:byte_limit].decode("utf-8", errors="ignore")
+
+
+def _bounded_marker(marker: str, byte_limit: int) -> str:
+    return marker.encode("utf-8")[:byte_limit].decode("utf-8", errors="ignore")
+
+
+def _sanitize_unstructured_diagnostic(text: str) -> str:
     text = _PEM_PRIVATE_KEY.sub("[PRIVATE KEY REDACTED]", text)
     text = _URL_TOKEN.sub("[URL REDACTED]", text)
     text = _COOKIE_HEADER_VALUE.sub(r"\1[REDACTED]", text)
@@ -386,8 +440,58 @@ def _sanitize_diagnostic(data: bytes, byte_limit: int) -> str:
         else f"\\x{ord(character):02x}"
         for character in text
     )
-    # Redaction placeholders may expand the input, so enforce the bound again.
-    return text.encode("utf-8")[:byte_limit].decode("utf-8", errors="ignore")
+    return text
+
+
+def _sanitize_structured_diagnostic(value: object, depth: int = 0) -> object:
+    if depth > _MAX_STRUCTURED_DIAGNOSTIC_DEPTH:
+        raise ValueError("structured diagnostic exceeds maximum depth")
+    if isinstance(value, Mapping):
+        sanitized: dict[str, object] = {}
+        for key, child in value.items():
+            safe_key = _sanitize_unstructured_diagnostic(str(key))
+            if safe_key in sanitized:
+                raise ValueError("structured diagnostic keys collide after sanitization")
+            sanitized[safe_key] = (
+                "[REDACTED]" if _is_structured_credential_key(key)
+                else _sanitize_structured_diagnostic(child, depth + 1)
+            )
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_structured_diagnostic(child, depth + 1) for child in value]
+    if isinstance(value, str):
+        return _sanitize_unstructured_diagnostic(value)
+    return value
+
+
+def _is_structured_credential_key(key: object) -> bool:
+    text = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", str(key))
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+    words = tuple(re.findall(r"[a-z0-9]+", text.lower()))
+    expanded_words = tuple(
+        part
+        for word in words
+        for part in next(
+            (
+                phrase for phrase in _STRUCTURED_CREDENTIAL_PHRASES
+                if len(phrase) > 1 and word == "".join(phrase)
+            ),
+            (word,),
+        )
+    )
+    compact = "".join(words)
+    return (
+        any(
+            expanded_words[index:index + len(phrase)] == phrase
+            for phrase in _STRUCTURED_CREDENTIAL_PHRASES
+            for index in range(len(expanded_words) - len(phrase) + 1)
+        )
+        or (
+            len(words) == 1
+            and compact not in _STRUCTURED_CREDENTIAL_COMPACT_EXCLUSIONS
+            and any(compact.endswith(phrase) for phrase in _STRUCTURED_CREDENTIAL_COMPACT_PHRASES)
+        )
+    )
 
 
 def _message(code: str) -> str:

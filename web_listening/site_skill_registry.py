@@ -372,7 +372,9 @@ def _read_tree(
                 )
                 try:
                     file_fd = os.open(name, file_flags, dir_fd=directory_fd)
-                    with os.fdopen(file_fd, "rb", closefd=True) as stream:
+                    stream = None
+                    try:
+                        stream = os.fdopen(file_fd, "rb", closefd=False)
                         opened = os.fstat(stream.fileno())
                         if not stat.S_ISREG(opened.st_mode):
                             raise OSError("opened entry is not a regular file")
@@ -416,6 +418,12 @@ def _read_tree(
                             )
                             continue
                         after_read = os.fstat(stream.fileno())
+                    finally:
+                        try:
+                            if stream is not None:
+                                stream.close()
+                        finally:
+                            os.close(file_fd)
                     entry_after = os.stat(
                         name, dir_fd=directory_fd, follow_symlinks=False
                     )

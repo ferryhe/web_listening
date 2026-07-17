@@ -1422,10 +1422,7 @@ def test_memory_error_during_bounded_read_fails_closed(
         def __init__(self, stream):
             self.stream = stream
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
+        def close(self):
             self.stream.close()
 
         def fileno(self):
@@ -1446,6 +1443,224 @@ def test_memory_error_during_bounded_read_fails_closed(
     result = validate_site_skill_package(package)
 
     assert "package.resource_exhausted" in diagnostic_codes(result)
+
+
+@pytest.mark.parametrize(
+    ("error", "diagnostic"),
+    [
+        (MemoryError(), "package.resource_exhausted"),
+        (OSError("fdopen failed"), "path.tree_changed"),
+    ],
+)
+def test_fdopen_preconstruction_failure_closes_raw_descriptor_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: BaseException,
+    diagnostic: str,
+) -> None:
+    package = copy_example(tmp_path)
+    original_fdopen = registry_module.os.fdopen
+    original_close = registry_module.os.close
+    opened_fd: int | None = None
+    target_active = False
+    target_close_count = 0
+
+    def failing_fdopen(fd, *args, **kwargs):
+        nonlocal opened_fd, target_active
+        if opened_fd is None:
+            opened_fd = fd
+            target_active = True
+            assert kwargs["closefd"] is False
+            raise error
+        return original_fdopen(fd, *args, **kwargs)
+
+    def recording_close(fd):
+        nonlocal target_active, target_close_count
+        if target_active and fd == opened_fd:
+            target_close_count += 1
+            target_active = False
+        original_close(fd)
+
+    monkeypatch.setattr(registry_module.os, "fdopen", failing_fdopen)
+    monkeypatch.setattr(registry_module.os, "close", recording_close)
+
+    result = validate_site_skill_package(package)
+
+    assert opened_fd is not None
+    assert diagnostic in diagnostic_codes(result)
+    assert target_close_count == 1
+    with pytest.raises(OSError):
+        os.fstat(opened_fd)
+
+
+def test_fdopen_post_construction_unwind_keeps_raw_ownership_with_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = copy_example(tmp_path)
+    original_fdopen = registry_module.os.fdopen
+    original_close = registry_module.os.close
+    adopted_fd: int | None = None
+    target_active = False
+    target_close_count = 0
+
+    def unwind_after_construction(fd, *args, **kwargs):
+        nonlocal adopted_fd, target_active
+        if adopted_fd is None:
+            assert kwargs["closefd"] is False
+            stream = original_fdopen(fd, *args, **kwargs)
+            adopted_fd = fd
+            target_active = True
+            stream.close()
+            assert os.fstat(fd)
+            raise MemoryError
+        return original_fdopen(fd, *args, **kwargs)
+
+    def recording_close(fd):
+        nonlocal target_active, target_close_count
+        if target_active and fd == adopted_fd:
+            target_close_count += 1
+            target_active = False
+        original_close(fd)
+
+    monkeypatch.setattr(registry_module.os, "fdopen", unwind_after_construction)
+    monkeypatch.setattr(registry_module.os, "close", recording_close)
+
+    result = validate_site_skill_package(package)
+
+    assert "package.resource_exhausted" in diagnostic_codes(result)
+    assert adopted_fd is not None
+    assert target_close_count == 1
+    with pytest.raises(OSError):
+        os.fstat(adopted_fd)
+
+
+def test_success_closes_stream_then_raw_descriptor_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = copy_example(tmp_path)
+    original_fdopen = registry_module.os.fdopen
+    original_close = registry_module.os.close
+    events: list[tuple[str, int]] = []
+    active_tokens: dict[int, int] = {}
+    next_token = 0
+
+    class TrackingStream:
+        def __init__(self, stream, fd, token):
+            self.stream = stream
+            self.fd = fd
+            self.token = token
+
+        def fileno(self):
+            return self.stream.fileno()
+
+        def read(self, size):
+            return self.stream.read(size)
+
+        def close(self):
+            self.stream.close()
+            assert os.fstat(self.fd)
+            events.append(("stream", self.token))
+
+    def recording_fdopen(fd, *args, **kwargs):
+        nonlocal next_token
+        assert kwargs["closefd"] is False
+        token = next_token
+        next_token += 1
+        active_tokens[fd] = token
+        return TrackingStream(original_fdopen(fd, *args, **kwargs), fd, token)
+
+    def recording_close(fd):
+        if fd in active_tokens:
+            events.append(("raw", active_tokens.pop(fd)))
+        original_close(fd)
+
+    monkeypatch.setattr(registry_module.os, "fdopen", recording_fdopen)
+    monkeypatch.setattr(registry_module.os, "close", recording_close)
+
+    result = validate_site_skill_package(package)
+
+    assert result["valid"] is True
+    assert next_token
+    assert active_tokens == {}
+    for token in range(next_token):
+        assert events.count(("stream", token)) == 1
+        assert events.count(("raw", token)) == 1
+        assert events.index(("stream", token)) < events.index(("raw", token))
+
+
+def test_repeated_fdopen_failures_do_not_leak_descriptors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fd_directory = Path("/proc/self/fd")
+    if not fd_directory.is_dir():
+        pytest.skip("descriptor count probe requires /proc/self/fd")
+    package = copy_example(tmp_path)
+
+    def failing_fdopen(fd, *args, **kwargs):
+        assert kwargs["closefd"] is False
+        raise MemoryError
+
+    monkeypatch.setattr(registry_module.os, "fdopen", failing_fdopen)
+    before = len(list(fd_directory.iterdir()))
+
+    for _ in range(50):
+        result = validate_site_skill_package(package)
+        assert "package.resource_exhausted" in diagnostic_codes(result)
+
+    assert len(list(fd_directory.iterdir())) == before
+
+
+def test_fdopen_failure_does_not_close_unrelated_reused_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = copy_example(tmp_path)
+    original_fdopen = registry_module.os.fdopen
+    original_close = registry_module.os.close
+    failed_fd: int | None = None
+    unrelated_fd: int | None = None
+    failed = False
+
+    def failing_fdopen(fd, *args, **kwargs):
+        nonlocal failed, failed_fd
+        if not failed:
+            failed = True
+            failed_fd = fd
+            assert kwargs["closefd"] is False
+            raise MemoryError
+        return original_fdopen(fd, *args, **kwargs)
+
+    def close_and_reuse(fd):
+        nonlocal unrelated_fd
+        original_close(fd)
+        if fd == failed_fd and unrelated_fd is None:
+            unrelated_fd = os.open(os.devnull, os.O_RDONLY)
+            assert unrelated_fd == failed_fd
+
+    monkeypatch.setattr(registry_module.os, "fdopen", failing_fdopen)
+    monkeypatch.setattr(registry_module.os, "close", close_and_reuse)
+    try:
+        result = validate_site_skill_package(package)
+        assert "package.resource_exhausted" in diagnostic_codes(result)
+        assert unrelated_fd is not None
+        assert os.fstat(unrelated_fd)
+    finally:
+        if unrelated_fd is not None:
+            original_close(unrelated_fd)
+
+
+def test_fdopen_programmer_error_is_not_hidden(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = copy_example(tmp_path)
+
+    def fail(fd, *args, **kwargs):
+        assert kwargs["closefd"] is False
+        raise RuntimeError("programmer error")
+
+    monkeypatch.setattr(registry_module.os, "fdopen", fail)
+
+    with pytest.raises(RuntimeError, match="programmer error"):
+        validate_site_skill_package(package)
 
 
 @pytest.mark.parametrize("parser", ["manifest", "profile"])

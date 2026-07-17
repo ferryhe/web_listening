@@ -48,6 +48,9 @@ web-listening-mcp = "web_listening.mcp.server:main"
 where = ["."]
 include = ["web_listening*"]
 
+[tool.setuptools.package-data]
+web_listening = ["skills/sites/**/*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

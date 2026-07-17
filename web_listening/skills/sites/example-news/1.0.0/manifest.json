@@ -1,0 +1,16 @@
+{
+  "schema_version": "site-skill.v1",
+  "skill_id": "example-news-static",
+  "site_key": "example-news",
+  "version": "1.0.0",
+  "status": "active",
+  "generated_at": "2026-07-17T00:00:00Z",
+  "runtime_requirements": [{"requirement_id": "python-312", "description": "Python 3.12 runtime.", "optional": false}],
+  "secret_policy": {"allow_secret_references": false, "forbid_secret_values": true, "allowed_reference_schemes": []},
+  "allowed_domains": ["example.com"],
+  "default_executor_id": "web_http",
+  "default_recipe_id": "news-http",
+  "executors": [{"executor_id": "web_http", "enabled": true, "config": {}, "script_path": "scripts/executor.py"}],
+  "recipes": [{"recipe_id": "news-http", "enabled": true, "executor_id": "web_http", "profile_ref": "profiles/default.yaml", "entrypoint": "scripts/recipe.py", "output_contract": "capture-result.v1", "required_capabilities": ["http_get"], "verification_rules": [{"rule_id": "status-ok", "description": "Require a successful status."}]}],
+  "metadata": {"purpose": "Packaged static registry example"}
+}

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import json
+import math
+import numbers
 import re
 import signal
 import subprocess
@@ -44,6 +46,9 @@ _CREDENTIAL_KEY = re.compile(
 _AUTHORIZATION_VALUE = re.compile(
     r"(?i)((?:authorization\s*[:=]\s*)?)(?:bearer|basic)\s+[^\s,;]+"
 )
+_COOKIE_HEADER_VALUE = re.compile(
+    r"(?im)^([ \t]*(?:cookie|set-cookie)[ \t]*:[ \t]*)[^\r\n]*"
+)
 _PEM_PRIVATE_KEY = re.compile(
     r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----",
     re.DOTALL,
@@ -60,9 +65,23 @@ class SubprocessLimits:
     kill_grace_seconds: float = 1.0
 
     def __post_init__(self) -> None:
-        if min(self.timeout_seconds, self.terminate_grace_seconds, self.kill_grace_seconds) <= 0:
+        time_limits = (
+            self.timeout_seconds,
+            self.terminate_grace_seconds,
+            self.kill_grace_seconds,
+        )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, numbers.Real)
+            or not math.isfinite(value)
+            or value <= 0
+            for value in time_limits
+        ):
             raise ValueError("time limits must be positive")
-        if min(self.stdout_bytes, self.stderr_bytes) <= 0:
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in (self.stdout_bytes, self.stderr_bytes)
+        ):
             raise ValueError("output limits must be positive")
 
 
@@ -151,8 +170,15 @@ class SubprocessAcquisitionExecutor:
             )
         wire = request.model_dump_json().encode("utf-8")
         env = {name: os.environ[name] for name in self._allowed_environment if name in os.environ}
-        with tempfile.TemporaryDirectory(prefix="web-listening-executor-") as cwd:
-            os.chmod(cwd, 0o700)
+        workspace: tempfile.TemporaryDirectory[str] | None = None
+        try:
+            workspace = tempfile.TemporaryDirectory(prefix="web-listening-executor-")
+            os.chmod(workspace.name, 0o700)
+        except OSError:
+            if workspace is not None:
+                workspace.cleanup()
+            return _failure(request, started, "executor_startup_error", "executor failed to start")
+        with workspace as cwd:
             try:
                 process = subprocess.Popen(
                     self._command,
@@ -352,6 +378,7 @@ def _sanitize_diagnostic(data: bytes, byte_limit: int) -> str:
     text = data.decode("utf-8", errors="replace")
     text = _PEM_PRIVATE_KEY.sub("[PRIVATE KEY REDACTED]", text)
     text = _URL_TOKEN.sub("[URL REDACTED]", text)
+    text = _COOKIE_HEADER_VALUE.sub(r"\1[REDACTED]", text)
     text = _AUTHORIZATION_VALUE.sub(r"\1[REDACTED]", text)
     text = _CREDENTIAL_KEY.sub(r"\1[REDACTED]", text)
     text = "".join(

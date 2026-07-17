@@ -38,6 +38,41 @@ def run(mode: str, *, timeout=.5, stdout=8192, stderr=8192, environment=()):
     return executor.execute(request())
 
 
+@pytest.mark.parametrize("field", [
+    "timeout_seconds", "terminate_grace_seconds", "kill_grace_seconds",
+])
+@pytest.mark.parametrize("value", [
+    float("nan"), float("inf"), float("-inf"), True, False, 0, -1, "1",
+])
+def test_subprocess_limits_reject_invalid_time_limits(field, value):
+    with pytest.raises(ValueError, match="time limits must be positive"):
+        SubprocessLimits(**{field: value})
+
+
+@pytest.mark.parametrize("field", ["stdout_bytes", "stderr_bytes"])
+@pytest.mark.parametrize("value", [
+    True, False, 0, -1, 1.0, float("nan"), float("inf"), float("-inf"), "1",
+])
+def test_subprocess_limits_reject_invalid_output_limits(field, value):
+    with pytest.raises(ValueError, match="output limits must be positive"):
+        SubprocessLimits(**{field: value})
+
+
+@pytest.mark.parametrize("value", [1, 0.5])
+def test_subprocess_limits_accept_finite_positive_time_limits(value):
+    limits = SubprocessLimits(
+        timeout_seconds=value,
+        terminate_grace_seconds=value,
+        kill_grace_seconds=value,
+    )
+    assert limits.timeout_seconds == value
+
+
+def test_subprocess_limits_accept_positive_integer_output_limits():
+    limits = SubprocessLimits(stdout_bytes=1, stderr_bytes=2)
+    assert (limits.stdout_bytes, limits.stderr_bytes) == (1, 2)
+
+
 def test_success_and_explicit_registry():
     executor = SubprocessAcquisitionExecutor("web_http", (sys.executable, str(FAKE), "success"))
     result = ExecutorRegistry({"web_http": executor}).execute(request())
@@ -76,6 +111,35 @@ def test_startup_error_is_structured():
     assert result.error.code == "executor_startup_error"
     assert result.error.message == "executor failed to start"
     assert secret not in result.model_dump_json()
+
+
+def test_temporary_workspace_creation_error_is_structured(monkeypatch):
+    monkeypatch.setattr(
+        subprocess_runner.tempfile,
+        "TemporaryDirectory",
+        lambda **kwargs: (_ for _ in ()).throw(OSError("workspace-secret")),
+    )
+    result = run("success")
+    assert result.error.code == "executor_startup_error"
+    assert result.error.message == "executor failed to start"
+    assert "workspace-secret" not in result.model_dump_json()
+
+
+def test_temporary_workspace_setup_error_is_structured_and_cleans_up(monkeypatch):
+    workspace_path = None
+
+    def fail_chmod(path, mode):
+        nonlocal workspace_path
+        workspace_path = Path(path)
+        raise OSError("chmod-secret")
+
+    monkeypatch.setattr(subprocess_runner.os, "chmod", fail_chmod)
+    result = run("success")
+    assert result.error.code == "executor_startup_error"
+    assert result.error.message == "executor failed to start"
+    assert "chmod-secret" not in result.model_dump_json()
+    assert workspace_path is not None
+    assert not workspace_path.exists()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process state assertion uses /proc")
@@ -295,6 +359,19 @@ def test_stderr_redaction_never_echoes_exact_secrets_and_stays_bounded():
         assert secret not in redacted
     assert "[REDACTED]" in redacted
     assert len(redacted.encode()) <= 512
+
+
+@pytest.mark.parametrize(("header", "secrets"), [
+    ("Cookie: session=first-secret; refresh=second-secret", ("first-secret", "second-secret")),
+    ("Set-Cookie: session=first-secret; refresh=second-secret", ("first-secret", "second-secret")),
+])
+def test_cookie_header_values_are_redacted_through_end_of_line(header, secrets):
+    diagnostic = f"before\n{header}\nafter"
+    redacted = subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512)
+
+    assert redacted == f"before\n{header.split(':', 1)[0]}: [REDACTED]\nafter"
+    for secret in secrets:
+        assert secret not in redacted
 
 
 def test_failed_child_result_error_message_is_sanitized_and_revalidated():

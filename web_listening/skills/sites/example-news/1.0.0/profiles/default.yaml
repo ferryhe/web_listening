@@ -1,0 +1,3 @@
+allowed_domains:
+  - example.com
+target_url: https://example.com/news

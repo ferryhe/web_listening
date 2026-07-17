@@ -36,6 +36,9 @@ What is production-usable now:
   - `web-listening get-job`
   - `web-listening create-monitor-task`
   - `web-listening export-tracking-report`
+  - `web-listening list-site-skills`
+  - `web-listening inspect-site-skill`
+  - `web-listening validate-site-skill`
 - staged planning artifacts:
   - `section_selection.yaml`
   - `monitor_scope.yaml`
@@ -258,6 +261,11 @@ Typical artifacts from the staged workflow:
   - `docs/testing/fixtures/capture-request-v1.sample.json`
   - `docs/testing/fixtures/capture-result-v1.sample.json`
   - `docs/testing/fixtures/acquisition-attempt-v2.sample.json`
+
+Packaged Site Skills are discovered and validated statically: registry commands
+perform no imports, script execution, network access, or DNS resolution. See
+`docs/contracts/site-skill-package-v1.md` for digest, path, URL, secret-reference,
+and explicit registry-root rules.
   - `docs/contracts/acquisition-tools-v1.md`
   - `docs/testing/fixtures/acquisition-tools-v1.sample.json`
   - `docs/contracts/acquisition-profile-v1.md`

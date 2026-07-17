@@ -1,18 +1,110 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Protocol
 from urllib.parse import urlparse
 
 import typer
+from click import UsageError as ClickUsageError
+from click.exceptions import Exit as ClickExit
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from typer.core import TyperGroup
 
-app = typer.Typer(help="Web Listening - monitor websites for changes")
+try:
+    from typer._click.exceptions import Exit as TyperExit
+    from typer._click.exceptions import UsageError as TyperUsageError
+except ImportError:  # pragma: no cover - depends on Typer's Click packaging.
+    TyperExit = ClickExit
+    TyperUsageError = ClickUsageError
+
+
+_SITE_SKILL_JSON_SCHEMAS = {
+    "list-site-skills": ("site-skill-list.v1", "skills"),
+    "inspect-site-skill": ("site-skill-inspect.v1", "skill"),
+    "validate-site-skill": ("site-skill-validation.v1", "skill"),
+}
+
+
+def _parser_failure(command: str, message: str) -> dict[str, object]:
+    schema, payload_key = _SITE_SKILL_JSON_SCHEMAS[command]
+    failure = {
+        "path": ".",
+        "valid": False,
+        "site_key": None,
+        "version": None,
+        "skill_id": None,
+        "manifest_sha256": None,
+        "package_digest_algorithm": "sha256:web-listening.site-skill-package.v1",
+        "package_sha256": None,
+        "script_sha256": {},
+        "diagnostics": [{"code": "parser.invalid", "path": ".", "message": message}],
+    }
+    return {
+        "schema_version": schema,
+        payload_key: [failure] if payload_key == "skills" else failure,
+    }
+
+
+class _SiteSkillJsonGroup(TyperGroup):
+    def main(
+        self,
+        args: list[str] | None = None,
+        prog_name: str | None = None,
+        complete_var: str | None = None,
+        standalone_mode: bool = True,
+        windows_expand_args: bool = True,
+        **extra: object,
+    ) -> object:
+        argv = list(sys.argv[1:] if args is None else args)
+        command = next((arg for arg in argv if not arg.startswith("-")), "")
+        json_requested = "--json" in argv
+        if command not in _SITE_SKILL_JSON_SCHEMAS or not json_requested:
+            return super().main(
+                args=args,
+                prog_name=prog_name,
+                complete_var=complete_var,
+                standalone_mode=standalone_mode,
+                windows_expand_args=windows_expand_args,
+                **extra,
+            )
+
+        try:
+            result = super().main(
+                args=args,
+                prog_name=prog_name,
+                complete_var=complete_var,
+                standalone_mode=False,
+                windows_expand_args=windows_expand_args,
+                **extra,
+            )
+        except (ClickExit, TyperExit) as exc:
+            if standalone_mode:
+                raise SystemExit(exc.exit_code) from None
+            return exc.exit_code
+        except (ClickUsageError, TyperUsageError) as exc:
+            _stable_json(_parser_failure(command, exc.format_message()))
+            if standalone_mode:
+                raise SystemExit(2) from None
+            return 2
+
+        if standalone_mode and isinstance(result, int):
+            raise SystemExit(result)
+        return result
+
+
+app = typer.Typer(help="Web Listening - monitor websites for changes", cls=_SiteSkillJsonGroup)
 console = Console(width=200, soft_wrap=True)
+
+
+def _stable_json(payload: object) -> None:
+    # ASCII escaping keeps filesystem surrogate-escaped names printable on every
+    # stdout encoding while retaining a deterministic, lossless JSON envelope.
+    typer.echo(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True))
 
 
 def _csv_list(value: str) -> list[str]:
@@ -47,6 +139,176 @@ def _emit_job(job: _DeliveryPayloadJob, *, json_output: bool, human_text: object
         typer.echo(json.dumps(job.to_delivery_payload(), ensure_ascii=False, indent=2))
     else:
         _print_job_result(human_text=human_text)
+
+
+@app.command("list-site-skills")
+def list_site_skills_command(
+    root: Optional[Path] = typer.Option(None, "--root", help="Optional Site Skill registry root."),
+    json_output: bool = typer.Option(False, "--json", help="Emit stable machine-readable JSON."),
+):
+    """List valid and invalid filesystem Site Skill candidates."""
+    from web_listening.site_skill_registry import list_site_skills
+
+    skills = list_site_skills(root)
+    payload = {"schema_version": "site-skill-list.v1", "skills": skills}
+    if json_output:
+        _stable_json(payload)
+    else:
+        table = Table(title="Site Skills")
+        for column in ("Site key", "Version", "Package SHA-256", "Valid", "Path"):
+            table.add_column(column)
+        for skill in skills:
+            table.add_row(str(skill["site_key"] or "-"), str(skill["version"] or "-"), str(skill["package_sha256"]), "yes" if skill["valid"] else "no", str(skill["path"]))
+        console.print(table)
+    if any(
+        item["code"].startswith("registry.")
+        for skill in skills
+        for item in skill["diagnostics"]
+    ):
+        raise typer.Exit(1)
+
+
+def _resolve_or_fail(site_key: str, version: str, package_sha256: str, root: Optional[Path]) -> dict[str, object]:
+    from web_listening.site_skill_registry import list_site_skills, resolve_site_skill
+
+    candidates = list_site_skills(root)
+    invalid_root = next(
+        (
+            candidate
+            for candidate in candidates
+            if any(
+                diagnostic["code"].startswith("registry.")
+                for diagnostic in candidate["diagnostics"]
+            )
+        ),
+        None,
+    )
+    if invalid_root is not None:
+        return invalid_root
+
+    try:
+        return resolve_site_skill(
+            site_key=site_key,
+            version=version,
+            package_sha256=package_sha256,
+            root=root,
+            _registry_snapshot=candidates,
+        )
+    except (ValueError, LookupError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+def _selector_failure(root: Optional[Path], message: str) -> dict[str, object]:
+    from web_listening.site_skill_registry import default_registry_root
+
+    return {
+        "path": str(root if root is not None else default_registry_root()),
+        "valid": False,
+        "site_key": None,
+        "version": None,
+        "skill_id": None,
+        "manifest_sha256": None,
+        "package_digest_algorithm": "sha256:web-listening.site-skill-package.v1",
+        "package_sha256": None,
+        "script_sha256": {},
+        "diagnostics": [
+            {
+                "code": "selector.invalid",
+                "path": ".",
+                "message": message,
+            }
+        ],
+    }
+
+
+def _resolve_for_output(
+    site_key: str,
+    version: str,
+    package_sha256: str,
+    root: Optional[Path],
+    *,
+    json_output: bool,
+) -> dict[str, object]:
+    try:
+        return _resolve_or_fail(site_key, version, package_sha256, root)
+    except typer.BadParameter as exc:
+        if not json_output:
+            raise
+        return _selector_failure(root, str(exc))
+
+
+@app.command("inspect-site-skill")
+def inspect_site_skill_command(
+    site_key: Optional[str] = typer.Option(None, "--site-key"),
+    version: Optional[str] = typer.Option(None, "--version"),
+    package_sha256: Optional[str] = typer.Option(None, "--package-digest", "--package-sha256"),
+    root: Optional[Path] = typer.Option(None, "--root"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Inspect one exactly selected Site Skill package."""
+    if not all(value is not None for value in (site_key, version, package_sha256)):
+        message = "provide all of --site-key, --version, --package-digest"
+        if not json_output:
+            raise typer.BadParameter(message)
+        skill = _selector_failure(root, message)
+    else:
+        skill = _resolve_for_output(
+            site_key or "", version or "", package_sha256 or "", root, json_output=json_output
+        )
+    payload = {"schema_version": "site-skill-inspect.v1", "skill": skill}
+    if json_output:
+        _stable_json(payload)
+    else:
+        console.print(Panel(json.dumps(skill, ensure_ascii=False, indent=2, sort_keys=True)))
+    if not skill["valid"]:
+        raise typer.Exit(1)
+
+
+@app.command("validate-site-skill")
+def validate_site_skill_command(
+    package_path: Optional[Path] = typer.Option(None, "--package-path", exists=False),
+    site_key: Optional[str] = typer.Option(None, "--site-key"),
+    version: Optional[str] = typer.Option(None, "--version"),
+    package_sha256: Optional[str] = typer.Option(None, "--package-digest", "--package-sha256"),
+    root: Optional[Path] = typer.Option(None, "--root"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Statically validate a package path or one exact registry selection."""
+    from web_listening.site_skill_registry import validate_site_skill_package
+
+    selectors = (site_key, version, package_sha256)
+    if package_path is not None and any(value is not None for value in selectors):
+        message = "--package-path cannot be combined with exact selectors"
+        if not json_output:
+            raise typer.BadParameter(message)
+        skill = _selector_failure(root, message)
+        _stable_json({"schema_version": "site-skill-validation.v1", "skill": skill})
+        raise typer.Exit(1)
+    if package_path is None and not all(value is not None for value in selectors):
+        message = "provide --package-path or all of --site-key, --version, --package-digest"
+        if not json_output:
+            raise typer.BadParameter(message)
+        skill = _selector_failure(root, message)
+        _stable_json({"schema_version": "site-skill-validation.v1", "skill": skill})
+        raise typer.Exit(1)
+    skill = (
+        validate_site_skill_package(package_path)
+        if package_path is not None
+        else _resolve_for_output(
+            site_key or "",
+            version or "",
+            package_sha256 or "",
+            root,
+            json_output=json_output,
+        )
+    )
+    payload = {"schema_version": "site-skill-validation.v1", "skill": skill}
+    if json_output:
+        _stable_json(payload)
+    else:
+        console.print(Panel(("VALID" if skill["valid"] else "INVALID") + f"\n{skill['path']}"))
+    if not skill["valid"]:
+        raise typer.Exit(1)
 
 
 @app.command("add-site")

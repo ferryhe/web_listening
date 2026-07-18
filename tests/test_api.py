@@ -68,6 +68,8 @@ def test_acquisition_tools_endpoint_returns_catalog():
     assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is True
     assert tools["cloakbrowser"]["optional_runtime"]["extra"] == "cloakbrowser"
     assert tools["cloakbrowser"]["frontend_control"]["selectable"] is True
+    assert tools["browseract"]["runtime_status"] == "optional_runtime_disabled"
+    assert tools["browseract"]["probe_capable"] is False
     assert tools["sitemap"]["runtime_status"] == "reserved"
 
 

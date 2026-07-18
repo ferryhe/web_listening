@@ -75,12 +75,12 @@ part of their build artifact.
 
 ## Environment boundaries
 
-The project virtual environment and the future BrowserAct tool virtual
-environment may share the same approved host Python 3.12 installation. They
+The project virtual environment and the BrowserAct tool virtual environment
+may share the same approved host Python 3.12 installation. They
 must have independent site-packages, console entrypoints, upgrades, and
 lifecycle management. A shared `uv` download/build cache is only an efficiency
 mechanism; it is not a runtime isolation or security boundary. BrowserAct
-installation and integration remain deferred to PR-4.
+installation remains optional and the inspected runtime stays isolated from the project.
 
 ## Rollback and change boundary
 
@@ -90,3 +90,6 @@ Python 3.12 virtual environment for rollback.
 
 This runtime-baseline change does not alter database schema, stored data
 formats, collection behavior, or business/API protocols.
+## Optional BrowserAct tool runtime
+
+BrowserAct must use a separate Python 3.12 tool environment and the exact runtime pin `browser-act-cli==1.0.6`. It must never be added to project dependencies or installed into the project `.venv`. See [BROWSERACT.md](BROWSERACT.md) for isolation and handshake requirements.

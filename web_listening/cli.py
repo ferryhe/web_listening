@@ -672,6 +672,28 @@ def build_acquisition_profile_command(
         console.print(Panel(f"Built acquisition profile for {profile.site_key}\nNo output path provided."))
 
 
+@app.command("inspect-browseract")
+def inspect_browseract_command(
+    executable: str = typer.Option("", "--executable", help="Explicit absolute BrowserAct executable."),
+    search_path: str = typer.Option("", "--path", help="Controlled caller-supplied executable search PATH."),
+    project_prefix: str = typer.Option("", "--project-prefix", help="Project environment prefix that the tool must not reuse."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable inspection JSON."),
+):
+    """Inspect an optional BrowserAct CLI without browser interaction or writes."""
+    from web_listening.executors.browseract import inspect_browseract
+
+    payload = inspect_browseract(
+        executable or None,
+        search_path=search_path or None,
+        project_prefix=project_prefix or sys.prefix,
+    )
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    status = "available" if payload["available"] else "unavailable"
+    console.print(Panel(f"BrowserAct: {status}\nExecutable: {payload['resolved_executable']}"))
+
+
 @app.command("probe-acquisition")
 def probe_acquisition_command(
     url: str = typer.Option(..., "--url", help="One http/https URL to probe."),

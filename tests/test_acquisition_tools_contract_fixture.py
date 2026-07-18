@@ -13,6 +13,7 @@ EXPECTED_ADAPTERS = [
     "sitemap",
     "rss",
     "cloakbrowser",
+    "browseract",
     "batch_python",
 ]
 
@@ -50,7 +51,7 @@ def test_acquisition_tools_v1_sample_fixture_has_frontend_agent_contract_shape()
         assert isinstance(tool["operator_inputs"], list)
         assert isinstance(tool["requires_profile_safety"], dict)
         assert isinstance(tool["output_contract"], dict)
-        assert tool["runtime_status"] in {"available", "optional_runtime", "reserved"}
+        assert tool["runtime_status"] in {"available", "optional_runtime", "optional_runtime_disabled", "reserved"}
         assert {"label", "picker_group", "control_kind", "selectable"} <= set(tool["frontend_control"])
 
     assert tools["web_http"]["recommended_when"][0] == "ordinary public HTML"
@@ -65,6 +66,9 @@ def test_acquisition_tools_v1_sample_fixture_has_frontend_agent_contract_shape()
         "allow_stealth_browser": True,
         "require_authorized_access": True,
     }
+    assert tools["browseract"]["runtime_status"] == "optional_runtime_disabled"
+    assert tools["browseract"]["optional_runtime"]["package"] == "browser-act-cli==1.0.6"
+    assert tools["browseract"]["probe_capable"] is False
     cloak_inputs = {item["name"]: item for item in tools["cloakbrowser"]["operator_inputs"]}
     assert cloak_inputs["site_key"]["required_when"] == "profile_path is not provided"
     assert cloak_inputs["allow_stealth_browser"]["required_when"] == "profile_path is not provided"

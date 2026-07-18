@@ -57,6 +57,37 @@ jobs:
         run: |
           web-listening --help > /dev/null
           web-listening list-acquisition-tools --json > /dev/null
+          web-listening inspect-browseract --executable /tmp/browseract-missing --json > /tmp/browseract-unavailable.json
+          python - <<'PY'
+          import json
+
+          with open("/tmp/browseract-unavailable.json", encoding="utf-8") as stream:
+              payload = json.load(stream)
+          assert payload["schema_version"] == "browseract-inspection.v1"
+          assert payload["available"] is False
+          PY
+
+      - name: Install isolated BrowserAct 1.0.6 tool
+        uses: astral-sh/setup-uv@v6
+
+      - name: Inspect real isolated BrowserAct CLI without browser activity
+        env:
+          UV_TOOL_DIR: /tmp/pr4-uv-tools
+          UV_TOOL_BIN_DIR: /tmp/pr4-uv-bin
+        run: |
+          uv tool install --python 3.12 --no-python-downloads browser-act-cli==1.0.6
+          /tmp/pr4-uv-bin/browser-act --version
+          web-listening inspect-browseract --executable /tmp/pr4-uv-bin/browser-act --json > /tmp/browseract-inspection.json
+          python - <<'PY'
+          import json
+
+          with open("/tmp/browseract-inspection.json", encoding="utf-8") as stream:
+              payload = json.load(stream)
+          assert payload["available"] is True, payload["errors"]
+          assert payload["browseract_version"] == "1.0.6"
+          assert payload["python_version"] == "3.12"
+          assert payload["capabilities"] == ["interactive_read", "stealth_extract"]
+          PY
 
       - name: Run tests
         env:

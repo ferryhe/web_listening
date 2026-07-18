@@ -1,4 +1,6 @@
 import json
+import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -105,6 +107,7 @@ def test_cli_help_registers_staged_workflow_commands():
         "list-acquisition-tools",
         "build-acquisition-profile",
         "probe-acquisition",
+        "inspect-browseract",
     ]:
         assert command_name in result.output
 
@@ -125,7 +128,46 @@ def test_list_acquisition_tools_json_lists_probe_capabilities():
     assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is True
     assert tools["cloakbrowser"]["optional_runtime"]["extra"] == "cloakbrowser"
     assert tools["cloakbrowser"]["requires_profile_safety"]["allow_stealth_browser"] is True
+    assert tools["browseract"]["runtime_status"] == "optional_runtime_disabled"
+    assert tools["browseract"]["probe_capable"] is False
     assert tools["batch_python"]["runtime_status"] == "reserved"
+
+
+def test_inspect_browseract_json_unavailable_is_read_only_and_structured(tmp_path: Path):
+    canary = "sk-secret-path-canary"
+    result = runner.invoke(app, ["inspect-browseract", "--executable", str(tmp_path / canary / "missing"), "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["schema_version"] == "browseract-inspection.v1"
+    assert payload["available"] is False
+    assert payload["errors"][0]["code"] == "executable_not_found"
+    assert canary not in result.output
+
+
+def test_inspect_browseract_json_accepts_fake_isolated_runtime(tmp_path: Path):
+    bin_dir = tmp_path / "browseract-tool" / "bin"
+    bin_dir.mkdir(parents=True)
+    executable = bin_dir / "browser-act"
+    fixture = (Path(__file__).parent / "fixtures" / "fake_browseract_cli.py").read_text(encoding="utf-8")
+    executable.write_text(fixture.replace("__TOOL_PYTHON__", str(bin_dir / "python")), encoding="utf-8")
+    executable.chmod(0o755)
+    prefix = bin_dir.parent
+    python = bin_dir / "python"
+    python.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"-I\" ]; then\n"
+        f"  printf '%s\\n' '{{\"python_version\":\"3.12\",\"sys_prefix\":\"{prefix}\",\"package_version\":\"1.0.6\"}}'\n"
+        "  exit 0\n"
+        "fi\n"
+        f"exec {sys.executable} \"$@\"\n",
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    result = runner.invoke(app, ["inspect-browseract", "--executable", str(executable), "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["available"] is True
+    assert payload["browseract_version"] == "1.0.6"
 
 
 def test_build_acquisition_profile_json_writes_yaml(tmp_path: Path):

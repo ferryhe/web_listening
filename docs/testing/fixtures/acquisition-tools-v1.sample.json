@@ -18,6 +18,11 @@
       "rationale": "Use only with explicit authorization and required profile safety gates."
     },
     {
+      "input_signal": "authorized fixed read-only stealth recipe",
+      "tool": "browseract",
+      "rationale": "Optional explicit selection only after isolated runtime inspection and profile authorization."
+    },
+    {
       "input_signal": "bulk structured/site-specific scrape",
       "tool": "batch_python",
       "rationale": "Reserved for reviewed custom extraction jobs rather than generic crawl probes."
@@ -327,6 +332,67 @@
         "Requires safety.allow_stealth_browser=true and safety.require_authorized_access=true in the active acquisition profile.",
         "Use only where the operator has explicit authorization for the target site and access context.",
         "Optional runtime is not installed by the core package."
+      ]
+    },
+    {
+      "adapter": "browseract",
+      "category": "authorized_browser",
+      "purpose": "Run one of two fixed read-only BrowserAct recipes through an isolated CLI runtime.",
+      "recommended_when": [
+        "authorized public reading where reviewed stealth extraction is required",
+        "authorized interactive reading limited to initial open, stable waits, scrolling, and content reads"
+      ],
+      "not_for": [
+        "automatic fallback or fixed staged bootstrap/run execution",
+        "forms, uploads, authentication or cookie mutation, CAPTCHA services, proxies, writes, or browser lifecycle control"
+      ],
+      "operator_inputs": [
+        {
+          "name": "executable",
+          "type": "absolute_path",
+          "required": true,
+          "description": "Explicit absolute executable, or provide a controlled PATH to runtime inspection."
+        },
+        {
+          "name": "recipe",
+          "type": "enum",
+          "required": true,
+          "values": [
+            "stealth_extract",
+            "interactive_read"
+          ],
+          "description": "One fixed read-only recipe."
+        }
+      ],
+      "requires_profile_safety": {
+        "allow_stealth_browser": true,
+        "require_authorized_access": true
+      },
+      "output_contract": {
+        "profile": "acquisition-profile.v1",
+        "probe": null,
+        "execution": "tool selection does not change bootstrap-scope or run-scope execution in this build"
+      },
+      "runtime_status": "optional_runtime_disabled",
+      "optional_runtime": {
+        "package": "browser-act-cli==1.0.6",
+        "python": "3.12",
+        "isolation": "dedicated tool environment required; never install into the project environment"
+      },
+      "frontend_control": {
+        "label": "BrowserAct (read-only)",
+        "picker_group": "Authorized acquisition",
+        "control_kind": "radio_option",
+        "selectable": false,
+        "sort_order": 35
+      },
+      "built_in_now": false,
+      "implemented_for_pr3_probing": false,
+      "probe_capable": false,
+      "safety_notes": [
+        "Disabled by default and absent from automatic fallback.",
+        "Only stealth_extract and interactive_read are accepted; the gateway never accepts arbitrary argv.",
+        "Runtime inspection must pass before constructing the trusted executor."
       ]
     },
     {

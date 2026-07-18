@@ -15,6 +15,7 @@ AdapterId = Literal[
     "sitemap",
     "rss",
     "cloakbrowser",
+    "browseract",
     "batch_python",
 ]
 AdapterRecommendation = AdapterId | Literal[""]
@@ -25,6 +26,7 @@ ALLOWED_ADAPTER_IDS: tuple[str, ...] = (
     "sitemap",
     "rss",
     "cloakbrowser",
+    "browseract",
     "batch_python",
 )
 ALLOWED_DOMAINS_ERROR = "allowed_domains must be a list of non-empty strings or a single string"
@@ -96,6 +98,10 @@ class AcquisitionSafetyPolicy(BaseModel):
     def permits_cloakbrowser(self) -> bool:
         return self.allow_stealth_browser and self.require_authorized_access
 
+    @property
+    def permits_browseract(self) -> bool:
+        return self.allow_stealth_browser and self.require_authorized_access
+
 
 class AcquisitionProfile(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
@@ -113,7 +119,7 @@ class AcquisitionProfile(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_cloakbrowser_safety(self) -> AcquisitionProfile:
+    def validate_stealth_browser_safety(self) -> AcquisitionProfile:
         cloakbrowser_is_default = self.default_adapter == "cloakbrowser"
         cloakbrowser_in_fallback = "cloakbrowser" in self.fallback_order
         cloakbrowser_enabled = any(
@@ -127,6 +133,21 @@ class AcquisitionProfile(BaseModel):
         ) and not self.safety.permits_cloakbrowser:
             raise ValueError(
                 "cloakbrowser requires safety.allow_stealth_browser=true "
+                "and safety.require_authorized_access=true"
+            )
+        browseract_is_default = self.default_adapter == "browseract"
+        browseract_in_fallback = "browseract" in self.fallback_order
+        browseract_enabled = any(
+            adapter.adapter == "browseract" and adapter.enabled
+            for adapter in self.adapters
+        )
+        if (
+            browseract_is_default
+            or browseract_in_fallback
+            or browseract_enabled
+        ) and not self.safety.permits_browseract:
+            raise ValueError(
+                "browseract requires safety.allow_stealth_browser=true "
                 "and safety.require_authorized_access=true"
             )
         return self
@@ -190,6 +211,12 @@ def build_default_acquisition_profile(
         AcquisitionAdapterConfig(
             adapter="batch_python",
             reason="Reserved for explicit site-specific batch acquisition scripts.",
+        ),
+        AcquisitionAdapterConfig(
+            adapter="browseract",
+            enabled=False,
+            reason="Optional isolated BrowserAct read-only recipes; explicit enablement only.",
+            safety={"requires_authorized_access": True, "read_only": True},
         ),
     ]
     if safety.permits_cloakbrowser:

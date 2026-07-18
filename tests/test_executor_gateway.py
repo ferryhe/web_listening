@@ -465,6 +465,56 @@ def test_credential_labelled_multi_member_object_is_redacted_end_to_end():
     assert secret not in result.model_dump_json()
 
 
+def test_prefixed_credential_labelled_object_fails_closed_directly():
+    secret = "SYNTHETIC-SECRET"
+    diagnostic = f'prefix {{"credentials": {{"username": "alice", "value": "{secret}"}}}}'
+
+    sanitized = subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512)
+
+    assert sanitized == "[invalid structured diagnostic redacted]"
+    assert secret not in sanitized
+
+
+def test_prefixed_credential_labelled_object_fails_closed_end_to_end():
+    secret = "SYNTHETIC-SECRET"
+    diagnostic = f'prefix {{"credentials": {{"username": "alice", "value": "{secret}"}}}}'
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.error.code == "executor_nonzero_exit"
+    assert result.metadata["stderr"] == "[invalid structured diagnostic redacted]"
+    assert secret not in result.model_dump_json()
+
+
+def test_prefixed_escaped_credential_label_fails_closed_directly():
+    secret = "ESCAPED-PREFIX-SECRET"
+    diagnostic = f'prefix {{"client\\u0053ecret":{{"value":"{secret}"}}}}'
+
+    sanitized = subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512)
+
+    assert sanitized == "[invalid structured diagnostic redacted]"
+    assert secret not in sanitized
+
+
+def test_prefixed_escaped_credential_label_fails_closed_end_to_end():
+    secret = "ESCAPED-PREFIX-SECRET"
+    diagnostic = f'prefix {{"client\\u0053ecret":{{"value":"{secret}"}}}}'
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.error.code == "executor_nonzero_exit"
+    assert result.metadata["stderr"] == "[invalid structured diagnostic redacted]"
+    assert secret not in result.model_dump_json()
+
+
 def test_deep_structured_stderr_fails_closed_end_to_end():
     diagnostic = "{\"safe\":" * 600 + "null" + "}" * 600
     executor = SubprocessAcquisitionExecutor(
@@ -788,6 +838,31 @@ def test_pem_private_key_stderr_is_redacted_from_serialized_result():
     assert "pem-private-secret" not in serialized
     assert "BEGIN RSA PRIVATE KEY" not in serialized
     assert "[PRIVATE KEY REDACTED]" in result.metadata["stderr"]
+
+
+def test_incomplete_pem_private_key_is_redacted_through_end_directly():
+    secret = "incomplete-pem-private-secret"
+    diagnostic = f"prefix\n-----BEGIN PRIVATE KEY-----\n{secret}"
+
+    sanitized = subprocess_runner._sanitize_diagnostic(diagnostic.encode(), 512)
+
+    assert sanitized == "prefix\n[PRIVATE KEY REDACTED]"
+    assert secret not in sanitized
+
+
+def test_incomplete_pem_private_key_is_redacted_through_end_end_to_end():
+    secret = "incomplete-pem-private-secret"
+    diagnostic = f"prefix\n-----BEGIN PRIVATE KEY-----\n{secret}"
+    executor = SubprocessAcquisitionExecutor(
+        "web_http",
+        (sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r}); sys.exit(1)"),
+    )
+
+    result = executor.execute(request())
+
+    assert result.error.code == "executor_nonzero_exit"
+    assert result.metadata["stderr"] == "prefix\n[PRIVATE KEY REDACTED]"
+    assert secret not in result.model_dump_json()
 
 
 def test_failed_child_arbitrary_diagnostic_is_sanitized_before_revalidation():

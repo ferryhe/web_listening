@@ -43,6 +43,14 @@ _CREDENTIAL_KEY = re.compile(
     r")[\"']?\s*[:=]\s*)"
     r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,;]+)"
 )
+_STRUCTURED_CREDENTIAL_VALUE = re.compile(
+    r"(?ix)[\"']?(?:"
+    r"authorization|cookie|password|token|credentials?|"
+    r"api[\s_-]*key|client[\s_-]*secret|private[\s_-]*key|"
+    r"(?:aws[\s_-]*)?access[\s_-]*key[\s_-]*id|"
+    r"(?:aws[\s_-]*)?secret[\s_-]*access[\s_-]*key"
+    r")[\"']?\s*[:=]\s*(?!\[REDACTED\])[\{\[]"
+)
 _AUTHORIZATION_VALUE = re.compile(
     r"(?i)((?:authorization\s*[:=]\s*)?)(?:bearer|basic)\s+[^\s,;]+"
 )
@@ -50,7 +58,8 @@ _COOKIE_HEADER_VALUE = re.compile(
     r"(?im)^([ \t]*(?:cookie|set-cookie)[ \t]*:[ \t]*)[^\r\n]*"
 )
 _PEM_PRIVATE_KEY = re.compile(
-    r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----",
+    r"-----BEGIN (?P<label>[^-\r\n]*PRIVATE KEY)-----.*?"
+    r"(?:-----END (?P=label)-----|\Z)",
     re.DOTALL,
 )
 _TRUSTED_EXECUTOR_IDS = frozenset(get_args(ExecutorId))
@@ -451,6 +460,10 @@ def _sanitize_diagnostic(data: bytes, byte_limit: int) -> str:
             except (RecursionError, TypeError, UnicodeEncodeError, ValueError):
                 return _bounded_marker(_INVALID_STRUCTURED_DIAGNOSTIC, byte_limit)
             return encoded[:byte_limit].decode("utf-8", errors="ignore")
+    if _JSON_STRING_ESCAPE.search(text) and ("{" in text or "[" in text):
+        return _bounded_marker(_INVALID_STRUCTURED_DIAGNOSTIC, byte_limit)
+    if _STRUCTURED_CREDENTIAL_VALUE.search(text):
+        return _bounded_marker(_INVALID_STRUCTURED_DIAGNOSTIC, byte_limit)
     text = _sanitize_unstructured_diagnostic(text)
     # Redaction placeholders may expand the input, so enforce the bound again.
     return text.encode("utf-8")[:byte_limit].decode("utf-8", errors="ignore")

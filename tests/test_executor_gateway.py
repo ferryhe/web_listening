@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import ctypes
 import os
 import re
 import sys
+import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -276,6 +279,27 @@ def _assert_dead_or_zombie(pid: int) -> None:
     pytest.fail("descendant survived executor cleanup")
 
 
+def _assert_gone(pid: int) -> None:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if not Path(f"/proc/{pid}").exists():
+            return
+        time.sleep(.02)
+    pytest.fail("descendant was not reaped")
+
+
+def _direct_children(pid: int) -> set[int]:
+    children = set()
+    for stat_path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat_path.read_text().rsplit(")", 1)[1].split()
+            if int(fields[1]) == pid:
+                children.add(int(stat_path.parent.name))
+        except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, IndexError):
+            pass
+    return children
+
+
 def test_leader_exit_with_inherited_pipes_remains_deadline_supervised():
     started = time.monotonic()
     result = run("leader_exit_pipes", timeout=.25)
@@ -290,6 +314,433 @@ def test_successful_leader_exit_cleans_devnull_descendant_without_corrupting_res
     assert result.state == "succeeded"
     assert result.content.text == "captured"
     _assert_dead_or_zombie(result.metadata["child_pid"])
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc lineage cleanup")
+@pytest.mark.parametrize(("mode", "code"), [
+    ("detached_success", None),
+    ("fast_detach", None),
+    ("detached_stopped", None),
+    ("detached_timeout", "executor_timeout"),
+    ("detached_nonzero", "executor_nonzero_exit"),
+    ("detached_protocol", "executor_protocol_error"),
+    ("detached_output_limit", "executor_stdout_limit"),
+])
+def test_detached_setsid_descendant_is_cleaned_on_success_and_timeout(mode, code):
+    result = run(mode, timeout=.3 if mode == "detached_timeout" else 2, stdout=64 if mode == "detached_output_limit" else 8192)
+    if code:
+        assert result.error.code == code
+        pid = int(re.search(r"child_pid=(\d+)", result.metadata["stderr"]).group(1))
+    else:
+        assert result.state == "succeeded"
+        pid = result.metadata["child_pid"]
+    _assert_gone(pid)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc lineage cleanup")
+@pytest.mark.parametrize(("outcome", "code"), [
+    ("success", None), ("timeout", "executor_timeout"),
+    ("nonzero", "executor_nonzero_exit"), ("protocol", "executor_protocol_error"),
+    ("output_limit", "executor_stdout_limit"),
+])
+def test_nested_detached_descendant_is_cleaned_and_reaped(outcome, code):
+    result = run(
+        f"nested_detached_{outcome}",
+        timeout=.3 if outcome == "timeout" else 2,
+        stdout=64 if outcome == "output_limit" else 8192,
+    )
+    if code is None:
+        assert result.state == "succeeded"
+        pids = (result.metadata["child_pid"], result.metadata["grandchild_pid"])
+    else:
+        assert result.error.code == code
+        pids = tuple(map(int, re.findall(r"(?m)^(?:child|grandchild)_pid=(\d+)", result.metadata["stderr"])))
+    for pid in pids:
+        _assert_gone(pid)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc lineage cleanup")
+def test_repeated_detached_runs_leave_no_survivors_or_zombies():
+    pids = []
+    for _ in range(5):
+        result = run("fast_detach", timeout=2)
+        assert result.state == "succeeded"
+        pids.append(result.metadata["child_pid"])
+    for pid in pids:
+        _assert_gone(pid)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc lineage cleanup")
+def test_concurrent_executors_overlap_and_neither_kills_the_other():
+    barrier = threading.Barrier(3)
+    results = []
+
+    def invoke():
+        barrier.wait()
+        results.append(run("detached_success", timeout=2))
+
+    workers = [threading.Thread(target=invoke) for _ in range(2)]
+    started = time.monotonic()
+    for worker in workers:
+        worker.start()
+    barrier.wait()
+    for worker in workers:
+        worker.join(5)
+
+    assert len(results) == 2
+    assert time.monotonic() - started < 1
+    assert all(result.state == "succeeded" for result in results)
+    for result in results:
+        _assert_gone(result.metadata["child_pid"])
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc lineage cleanup")
+@pytest.mark.parametrize("start_unrelated_after_executor", [False, True])
+@pytest.mark.parametrize("new_session", [False, True])
+def test_unrelated_application_child_is_never_signalled(start_unrelated_after_executor, new_session):
+    unrelated = None
+    result_holder = []
+    worker = None
+    try:
+        if not start_unrelated_after_executor:
+            unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=new_session)
+        else:
+            worker = threading.Thread(
+                target=lambda: result_holder.append(run("detached_timeout", timeout=.3))
+            )
+            worker.start()
+            time.sleep(.05)
+            unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=new_session)
+
+        result = run("detached_success", timeout=2) if worker is None else None
+        if worker is not None:
+            worker.join(5)
+            assert len(result_holder) == 1
+            result = result_holder[0]
+        assert result is not None
+        assert unrelated.poll() is None
+    finally:
+        if unrelated is not None and unrelated.poll() is None:
+            unrelated.terminate()
+            unrelated.wait(timeout=2)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc lineage cleanup")
+def test_supervisor_control_corruption_is_structured_and_bounded(monkeypatch):
+    monkeypatch.setattr(
+        subprocess_runner, "_SUPERVISOR_CODE",
+        "import os,sys; os.write(int(sys.argv[1]), b'corrupt')",
+    )
+    result = run("success")
+    assert result.state == "failed"
+    assert result.error.code == "executor_cleanup_error"
+    assert result.error.message == "executor process-lineage cleanup could not be completed"
+    assert len(result.error.message.encode()) < 128
+
+
+def test_supervisor_startup_failure_is_cleanup_error(monkeypatch):
+    monkeypatch.setattr(
+        subprocess_runner.subprocess, "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("helper-start-secret")),
+    )
+    result = run("success")
+    assert result.error.code == "executor_cleanup_error"
+    assert "helper-start-secret" not in result.model_dump_json()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc cleanup proof")
+def test_control_fdopen_failure_reaps_helper_and_target(monkeypatch):
+    helper_pid = None
+    target_pids: set[int] = set()
+    real_popen = subprocess_runner.subprocess.Popen
+    real_fdopen = subprocess_runner.os.fdopen
+
+    def recording_popen(*args, **kwargs):
+        nonlocal helper_pid
+        process = real_popen(*args, **kwargs)
+        helper_pid = process.pid
+        return process
+
+    def failing_fdopen(fd, *args, **kwargs):
+        deadline = time.monotonic() + 1
+        while helper_pid is not None and time.monotonic() < deadline:
+            target_pids.update(_direct_children(helper_pid))
+            if target_pids:
+                break
+            time.sleep(.005)
+        raise OSError("fdopen-secret")
+
+    monkeypatch.setattr(subprocess_runner.subprocess, "Popen", recording_popen)
+    monkeypatch.setattr(subprocess_runner.os, "fdopen", failing_fdopen)
+    result = run("timeout", timeout=2)
+    monkeypatch.setattr(subprocess_runner.os, "fdopen", real_fdopen)
+    assert result.error.code == "executor_startup_error"
+    assert helper_pid is not None and target_pids
+    _assert_gone(helper_pid)
+    for pid in target_pids:
+        _assert_gone(pid)
+
+
+def test_control_stream_keeps_raw_fd_owned_until_finally(monkeypatch):
+    real_fdopen = subprocess_runner.os.fdopen
+    adopted_fd = None
+    replacement_fd = None
+
+    class StreamProxy:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def read(self, *args, **kwargs):
+            return self.stream.read(*args, **kwargs)
+
+        def close(self):
+            nonlocal replacement_fd
+            self.stream.close()
+            replacement_fd = os.open("/dev/null", os.O_RDONLY)
+
+    def recording_fdopen(fd, *args, **kwargs):
+        nonlocal adopted_fd
+        adopted_fd = fd
+        assert kwargs["closefd"] is False
+        return StreamProxy(real_fdopen(fd, *args, **kwargs))
+
+    monkeypatch.setattr(subprocess_runner.os, "fdopen", recording_fdopen)
+    try:
+        assert run("success").state == "succeeded"
+        assert adopted_fd is not None and replacement_fd is not None
+        assert replacement_fd != adopted_fd
+        os.fstat(replacement_fd)
+    finally:
+        if replacement_fd is not None:
+            os.close(replacement_fd)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc cleanup proof")
+def test_keyboard_interrupt_reaps_helper_and_target_before_reraising(monkeypatch):
+    helper_pid = None
+    target_pids: set[int] = set()
+    raised = False
+    real_popen = subprocess_runner.subprocess.Popen
+    real_sleep = time.sleep
+
+    def recording_popen(*args, **kwargs):
+        nonlocal helper_pid
+        process = real_popen(*args, **kwargs)
+        helper_pid = process.pid
+        return process
+
+    def interrupt_once(seconds):
+        nonlocal raised
+        if threading.current_thread() is threading.main_thread() and helper_pid is not None and not raised:
+            target_pids.update(_direct_children(helper_pid))
+            if target_pids:
+                raised = True
+                raise KeyboardInterrupt
+        real_sleep(seconds)
+
+    monkeypatch.setattr(subprocess_runner.subprocess, "Popen", recording_popen)
+    monkeypatch.setattr(subprocess_runner.time, "sleep", interrupt_once)
+    with pytest.raises(KeyboardInterrupt):
+        run("timeout", timeout=2)
+    assert helper_pid is not None and target_pids
+    _assert_gone(helper_pid)
+    for pid in target_pids:
+        _assert_gone(pid)
+
+
+def test_supervisor_root_pid_reuse_replacement_is_not_tracked_or_signalled():
+    code = subprocess_runner._SUPERVISOR_CODE
+    function_source = "def update_tracked" + code.split("def update_tracked", 1)[1].split(
+        "def descendants_hold_output", 1
+    )[0]
+    replacement = (4100, 999, 1)
+    adopted = (4200, 300, 77)
+    namespace = {
+        "snapshot": lambda: {replacement[0]: replacement, adopted[0]: adopted},
+        "os": type("FakeOS", (), {"getpid": staticmethod(lambda: 77)}),
+    }
+    exec(function_source, namespace)
+    tracked = {(4100, 100)}
+    namespace["update_tracked"](tracked, False)
+    assert (4100, 999) not in tracked
+    assert (4200, 300) in tracked
+
+
+def test_unenrolled_supervisor_timeout_is_cleanup_failure(monkeypatch):
+    monkeypatch.setattr(
+        subprocess_runner, "_SUPERVISOR_CODE",
+        "import signal,time; signal.signal(signal.SIGTERM, lambda *_: None); time.sleep(.5)",
+    )
+    result = run("success", timeout=.05)
+    assert result.error.code == "executor_cleanup_error"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux pidfd /proc fallback")
+@pytest.mark.parametrize("helper_ignores_term", [False, True])
+def test_no_cgroup_fallback_reaps_exact_tree_without_term_race(
+    monkeypatch, tmp_path, helper_ignores_term
+):
+    real_popen = subprocess_runner.subprocess.Popen
+    for attempt in range(5):
+        ready = tmp_path / f"ready-{attempt}"
+        helper_pid = None
+        unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        def recording_popen(*args, **kwargs):
+            nonlocal helper_pid
+            process = real_popen(*args, **kwargs)
+            helper_pid = process.pid
+            return process
+
+        helper_signal_setup = (
+            "signal.signal(signal.SIGTERM,lambda *_:None); "
+            if helper_ignores_term else ""
+        )
+        supervisor_code = (
+            "import os,signal,subprocess,sys,time; "
+            f"{helper_signal_setup}"
+            "child=subprocess.Popen([sys.executable,'-c','import signal,time; "
+            "signal.signal(signal.SIGTERM,lambda *_:None); time.sleep(30)']); "
+            f"fd=os.open({str(ready)!r},os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600); "
+            "os.write(fd,str(child.pid).encode()); os.fsync(fd); os.close(fd); time.sleep(30)"
+        )
+        monkeypatch.setattr(subprocess_runner, "_create_owned_cgroup", lambda: None)
+        monkeypatch.setattr(subprocess_runner.subprocess, "Popen", recording_popen)
+        monkeypatch.setattr(subprocess_runner, "_SUPERVISOR_CODE", supervisor_code)
+        try:
+            result = run("success", timeout=1.0)
+            assert ready.exists(), "supervisor did not complete the PID readiness handshake"
+            target_pid = int(ready.read_text())
+            assert result.error.code == "executor_timeout"
+            assert helper_pid is not None
+            _assert_gone(helper_pid)
+            _assert_gone(target_pid)
+            assert unrelated.poll() is None
+        finally:
+            unrelated.terminate()
+            unrelated.wait(timeout=2)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux pidfd /proc enrollment cleanup")
+def test_unenrolled_supervisor_forged_cleanup_is_rejected_and_child_reaped(
+    monkeypatch, tmp_path
+):
+    cgroup_path = tmp_path / "owned-cgroup"
+    cgroup_path.mkdir()
+    (cgroup_path / "cgroup.procs").write_text("")
+    ready = tmp_path / "child-pid"
+
+    class FakeOwnedCgroup(subprocess_runner._OwnedCgroup):
+        def kill_and_remove(self, timeout):
+            if not self.removed:
+                (Path(self.path) / "cgroup.procs").unlink()
+                Path(self.path).rmdir()
+                self.removed = True
+            return True
+
+    owned = FakeOwnedCgroup(str(cgroup_path))
+    monkeypatch.setattr(subprocess_runner, "_create_owned_cgroup", lambda: owned)
+    monkeypatch.setattr(
+        subprocess_runner,
+        "_SUPERVISOR_CODE",
+        "import json,os,signal,subprocess,sys,time; "
+        "signal.signal(signal.SIGTERM,lambda *_:None); "
+        "child=subprocess.Popen([sys.executable,'-c','import signal,time; "
+        "signal.signal(signal.SIGTERM,lambda *_:None); time.sleep(30)']); "
+        f"fd=os.open({str(ready)!r},os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600); "
+        "os.write(fd,str(child.pid).encode()); os.fsync(fd); os.close(fd); "
+        "os.write(int(sys.argv[1]),json.dumps({'version':1,'startup':True,"
+        "'returncode':0,'cleanup':True}).encode()); time.sleep(30)",
+    )
+
+    result = run("success", timeout=2)
+
+    assert ready.exists()
+    child_pid = int(ready.read_text())
+    assert result.error.code == "executor_cleanup_error"
+    assert result.error.message == "executor process-lineage cleanup could not be completed"
+    _assert_gone(child_pid)
+    assert owned.removed
+    assert not cgroup_path.exists()
+
+
+def test_parent_fallback_rejects_reused_helper_identity_without_signalling(monkeypatch):
+    helper = subprocess_runner._ProcessIdentity(4100, 100, 9)
+    monkeypatch.setattr(
+        subprocess_runner, "_proc_identity", lambda pid: (4100, 999, 1, "S")
+    )
+    signalled = []
+    monkeypatch.setattr(
+        subprocess_runner.signal, "pidfd_send_signal",
+        lambda *args: signalled.append(args), raising=False,
+    )
+    process = type("Process", (), {})()
+    assert not subprocess_runner._kill_exact_helper_tree(process, helper, .1)
+    assert signalled == []
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux cgroup-v2 escalation")
+def test_writable_cgroup_escalation_reaps_ignore_term_helper_and_target(monkeypatch):
+    probe = subprocess_runner._create_owned_cgroup()
+    if probe is None:
+        pytest.skip("current delegated cgroup is not writable")
+    assert probe.kill_and_remove(.2)
+    helper_pid = None
+    real_popen = subprocess_runner.subprocess.Popen
+
+    def recording_popen(*args, **kwargs):
+        nonlocal helper_pid
+        process = real_popen(*args, **kwargs)
+        helper_pid = process.pid
+        return process
+
+    monkeypatch.setattr(subprocess_runner.subprocess, "Popen", recording_popen)
+    monkeypatch.setattr(
+        subprocess_runner,
+        "_SUPERVISOR_CODE",
+        "import os,signal,subprocess,sys,time; "
+        "fd=int(sys.argv[6]); p=os.open('cgroup.procs',os.O_WRONLY,dir_fd=fd); "
+        "os.write(p,str(os.getpid()).encode()); os.close(p); os.close(fd); "
+        "signal.signal(signal.SIGTERM,lambda *_:None); "
+        "child=subprocess.Popen([sys.executable,'-c','import signal,time; "
+        "signal.signal(signal.SIGTERM,lambda *_:None); time.sleep(30)']); "
+        "sys.stderr.write(f'child_pid={child.pid}\\n'); sys.stderr.flush(); time.sleep(30)",
+    )
+    result = run("success", timeout=.1)
+    target_pid = int(re.search(r"child_pid=(\d+)", result.metadata["stderr"]).group(1))
+    assert result.error.code == "executor_timeout"
+    assert helper_pid is not None
+    _assert_gone(helper_pid)
+    _assert_gone(target_pid)
+
+
+def test_supervisor_reports_cleanup_failure_as_cleanup_error(monkeypatch):
+    monkeypatch.setattr(
+        subprocess_runner, "_SUPERVISOR_CODE",
+        "import json,os,sys; os.write(int(sys.argv[1]), json.dumps({\"version\":1,\"startup\":True,\"returncode\":0,\"cleanup\":False}).encode())",
+    )
+    result = run("success")
+    assert result.error.code == "executor_cleanup_error"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux subreaper state")
+def test_gateway_subreaper_state_is_unchanged():
+    libc = ctypes.CDLL(None)
+    def state():
+        value = ctypes.c_int()
+        assert libc.prctl(37, ctypes.byref(value), 0, 0, 0) == 0
+        return value.value
+    before = state()
+    assert run("detached_success", timeout=2).state == "succeeded"
+    assert state() == before
+
+
+def test_no_gateway_tracker_threads_or_fd_leak_after_repeated_runs():
+    before_threads = {thread.ident for thread in threading.enumerate()}
+    before_fds = len(tuple(Path("/proc/self/fd").iterdir()))
+    for _ in range(10):
+        assert run("fast_detach", timeout=2).state == "succeeded"
+    assert {thread.ident for thread in threading.enumerate()} == before_threads
+    assert len(tuple(Path("/proc/self/fd").iterdir())) == before_fds
 
 
 @pytest.mark.parametrize(("mode", "code"), [

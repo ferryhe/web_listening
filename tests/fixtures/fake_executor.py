@@ -59,6 +59,64 @@ elif mode == "success_with_devnull_descendant":
         stderr=subprocess.DEVNULL,
     )
     sys.stdout.write(json.dumps(result(request, metadata={"child_pid": child.pid})))
+elif mode in {
+    "detached_success", "detached_timeout", "fast_detach", "detached_nonzero",
+    "detached_protocol", "detached_output_limit", "detached_stopped",
+}:
+    child_code = (
+        "import os,signal,time; os.setsid(); os.kill(os.getpid(),signal.SIGSTOP); time.sleep(30)"
+        if mode == "detached_stopped" else
+        "import os,time; os.setsid(); time.sleep(30)"
+    )
+    child = subprocess.Popen(
+        [sys.executable, "-c", child_code],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    sys.stderr.write(f"child_pid={child.pid}\n")
+    sys.stderr.flush()
+    if mode == "detached_timeout":
+        time.sleep(30)
+    elif mode == "detached_nonzero":
+        raise SystemExit(7)
+    elif mode == "detached_protocol":
+        sys.stdout.write("not json")
+    elif mode == "detached_output_limit":
+        sys.stdout.write("x" * 100_000)
+    else:
+        if mode != "fast_detach":
+            time.sleep(.05)
+        sys.stdout.write(json.dumps(result(request, metadata={"child_pid": child.pid})))
+elif mode.startswith("nested_detached_"):
+    code = (
+        "import os,subprocess,sys; os.setsid(); "
+        "child=subprocess.Popen([sys.executable,'-c','import os,time; os.setsid(); time.sleep(30)'],"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
+        "sys.stdout.write(f'grandchild_pid={child.pid}\\n'); sys.stdout.flush()"
+    )
+    child = subprocess.Popen(
+        [sys.executable, "-c", code],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        text=True,
+    )
+    sys.stderr.write(f"child_pid={child.pid}\n")
+    sys.stderr.flush()
+    child_output, _ = child.communicate()
+    grandchild_pid = int(child_output.rsplit("=", 1)[1])
+    sys.stderr.write(f"grandchild_pid={grandchild_pid}\n")
+    sys.stderr.flush()
+    outcome = mode.removeprefix("nested_detached_")
+    if outcome == "timeout":
+        time.sleep(30)
+    elif outcome == "nonzero":
+        raise SystemExit(7)
+    elif outcome == "protocol":
+        sys.stdout.write("not json")
+    elif outcome == "output_limit":
+        sys.stdout.write("x" * 100_000)
+    else:
+        sys.stdout.write(json.dumps(result(
+            request, metadata={"child_pid": child.pid, "grandchild_pid": grandchild_pid}
+        )))
 elif mode in {"late_stdout_large", "late_stderr_large"}:
     stream = "stdout" if mode == "late_stdout_large" else "stderr"
     code = (

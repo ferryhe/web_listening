@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import ctypes
+import io
 import os
 import re
 import sys
@@ -13,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from web_listening.contracts import CaptureRequest
+from web_listening.contracts import CaptureRequest, CaptureResult
 from web_listening.executors import ExecutorRegistry, SubprocessAcquisitionExecutor, SubprocessLimits
 from web_listening.executors import subprocess_runner
 from web_listening.executors.wrapper_protocol import run_stdio_wrapper
@@ -1433,14 +1434,47 @@ def test_sanitized_diagnostic_metadata_key_collision_fails_closed():
         assert secret not in serialized
 
 
-def test_wrapper_exception_does_not_echo_secret(monkeypatch, capsys):
+def test_wrapper_exception_does_not_echo_secret_and_records_handler_duration(monkeypatch):
     secret = "handler-secret-value"
-    monkeypatch.setattr(sys, "stdin", type("Input", (), {"buffer": __import__("io").BytesIO(request().model_dump_json().encode())})())
+    output = io.BytesIO()
+    monkeypatch.setattr(sys, "stdin", type("Input", (), {"buffer": io.BytesIO(request().model_dump_json().encode())})())
+    monkeypatch.setattr(sys, "stdout", type("Output", (), {"buffer": output})())
 
     def fail(_request):
+        time.sleep(0.02)
         raise RuntimeError(secret)
 
     run_stdio_wrapper(fail)
-    output = capsys.readouterr().out
-    assert secret not in output
-    assert "executor handler failed" in output
+    result = CaptureResult.model_validate_json(output.getvalue())
+    assert secret not in output.getvalue().decode("utf-8")
+    assert result.error.message == "executor handler failed"
+    assert (result.finished_at - result.started_at).total_seconds() >= 0.02
+
+
+def test_wrapper_emits_one_utf8_json_value_via_binary_stdout(monkeypatch):
+    output = io.BytesIO()
+
+    class NonUtf8TextStdout:
+        buffer = output
+        encoding = "ascii"
+
+        def write(self, value):
+            value.encode("ascii")
+            raise AssertionError("wrapper must not write through text stdout")
+
+        def flush(self):
+            raise AssertionError("wrapper must flush binary stdout")
+
+    monkeypatch.setattr(sys, "stdin", type("Input", (), {"buffer": io.BytesIO(request().model_dump_json().encode())})())
+    monkeypatch.setattr(sys, "stdout", NonUtf8TextStdout())
+
+    def fail(_request):
+        raise RuntimeError("failure")
+
+    assert run_stdio_wrapper(fail) == 0
+    raw = output.getvalue()
+    assert raw.decode("utf-8")
+    decoder = json.JSONDecoder()
+    value, end = decoder.raw_decode(raw.decode("utf-8"))
+    assert end == len(raw.decode("utf-8"))
+    assert value["error"]["message"] == "executor handler failed"

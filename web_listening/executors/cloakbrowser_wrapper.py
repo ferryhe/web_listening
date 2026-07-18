@@ -46,7 +46,16 @@ class CloakBrowserAcquisitionAdapter:
         normalized = normalize_html(html, base_url=final_url or url)
         metadata = dict(normalized.metadata)
         metadata.update(driver="cloakbrowser", request_user_agent=request_user_agent, wait_until=wait_until, wait_for=wait_for_selector or "", humanize=bool(config.get("humanize", False)))
-        return FetchResult(normalized.raw_html, normalized.cleaned_html, normalized.content_text, normalized.markdown, normalized.fit_markdown, metadata, final_url or url, status_code)
+        return FetchResult(
+            raw_html=normalized.raw_html,
+            cleaned_html=normalized.cleaned_html,
+            content_text=normalized.content_text,
+            markdown=normalized.markdown,
+            fit_markdown=normalized.fit_markdown,
+            metadata_json=metadata,
+            final_url=final_url or url,
+            status_code=status_code,
+        )
 
 
 def _launch_kwargs(config: dict[str, Any]) -> dict[str, Any]:

@@ -27,22 +27,23 @@ def run_stdio_wrapper(handler: Callable[[CaptureRequest], CaptureResult]) -> int
     """Consume exactly one request value and emit exactly one result value."""
     raw = sys.stdin.buffer.read()
     request = CaptureRequest.model_validate_json(raw)
+    started_at = datetime.now(timezone.utc)
     try:
         result = handler(request)
     except Exception:
-        now = datetime.now(timezone.utc)
+        finished_at = datetime.now(timezone.utc)
         result = CaptureResult(
             **request.model_dump(include={
                 "site_key", "site_skill_id", "site_skill_version", "site_skill_digest",
                 "recipe_id", "run_id", "scope_id", "request_id", "executor_id",
             }),
             state="failed",
-            started_at=now,
-            finished_at=now,
+            started_at=started_at,
+            finished_at=finished_at,
             error=CaptureError(code="executor_exception", message="executor handler failed"),
         )
-    sys.stdout.write(result.model_dump_json())
-    sys.stdout.flush()
+    sys.stdout.buffer.write(result.model_dump_json().encode("utf-8"))
+    sys.stdout.buffer.flush()
     return 0
 
 

@@ -35,7 +35,16 @@ class HttpAcquisitionAdapter:
                 "User-Agent", resolve_request_headers(config).get("User-Agent", settings.user_agent)
             )
             metadata["http_status_error"] = True
-            return FetchResult(page.raw_html, page.cleaned_html, page.content_text, page.markdown, page.fit_markdown, metadata, final_url, response.status_code)
+            return FetchResult(
+                raw_html=page.raw_html,
+                cleaned_html=page.cleaned_html,
+                content_text=page.content_text,
+                markdown=page.markdown,
+                fit_markdown=page.fit_markdown,
+                metadata_json=metadata,
+                final_url=final_url,
+                status_code=response.status_code,
+            )
 
 
 def execute(request: CaptureRequest) -> CaptureResult:

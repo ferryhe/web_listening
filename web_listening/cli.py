@@ -762,7 +762,7 @@ def preview_execution_plan_command(
     from web_listening.site_skill_registry import resolve_site_skill_contract
 
     try:
-        scope = load_monitor_scope_plan(scope_path)
+        scope = load_monitor_scope_plan(scope_path, strict_limits=True)
         governed = any(str(scope.based_on.get(key, "")).strip() for key in (
             "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
             "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",

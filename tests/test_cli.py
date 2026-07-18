@@ -16,7 +16,11 @@ from web_listening.blocks.acquisition_profile import (
     render_acquisition_profile_yaml,
 )
 from web_listening.blocks.crawler import FetchResult
-from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text as render_scope_yaml_text
+from web_listening.blocks.monitor_scope_planner import (
+    build_monitor_scope,
+    load_monitor_scope_plan,
+    render_yaml_text as render_scope_yaml_text,
+)
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
 from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, Job, PageSnapshot, Site
@@ -79,6 +83,15 @@ based_on: {{}}
         "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
     }
     assert "SECRET-CANARY" not in result.stdout
+
+
+def test_default_scope_loader_preserves_numeric_string_limits_for_bootstrap_callers(tmp_path: Path):
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("max_depth: '3'\nmax_pages: '25'\nmax_files: '10'\n", encoding="utf-8")
+
+    loaded = load_monitor_scope_plan(scope)
+
+    assert (loaded.max_depth, loaded.max_pages, loaded.max_files) == (3, 25, 10)
 
 
 def test_preview_json_missing_path_parser_error_is_redacted_and_stdout_only():

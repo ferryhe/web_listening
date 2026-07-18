@@ -214,7 +214,11 @@ def load_section_selection(path: str | Path) -> SectionSelection:
     )
 
 
-def _load_positive_scope_limit(payload: dict[str, Any], key: str, default: int) -> int:
+def _load_scope_limit(
+    payload: dict[str, Any], key: str, default: int, *, strict: bool
+) -> int:
+    if not strict:
+        return int(payload.get(key, default) or default)
     if key not in payload:
         return default
     value = payload[key]
@@ -223,7 +227,9 @@ def _load_positive_scope_limit(payload: dict[str, Any], key: str, default: int) 
     return value
 
 
-def load_monitor_scope_plan(path: str | Path) -> MonitorScopePlan:
+def load_monitor_scope_plan(
+    path: str | Path, *, strict_limits: bool = False
+) -> MonitorScopePlan:
     payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     fetch_config_json = payload.get("fetch_config_json", {}) or {}
     if not isinstance(fetch_config_json, dict):
@@ -263,9 +269,9 @@ def load_monitor_scope_plan(path: str | Path) -> MonitorScopePlan:
         excluded_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("excluded_page_prefixes"))],
         deferred_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("deferred_page_prefixes"))],
         excluded_categories=_as_string_list(payload.get("excluded_categories")),
-        max_depth=_load_positive_scope_limit(payload, "max_depth", PRODUCTION_TREE_LIMITS.max_depth),
-        max_pages=_load_positive_scope_limit(payload, "max_pages", PRODUCTION_TREE_LIMITS.max_pages),
-        max_files=_load_positive_scope_limit(payload, "max_files", PRODUCTION_TREE_LIMITS.max_files),
+        max_depth=_load_scope_limit(payload, "max_depth", PRODUCTION_TREE_LIMITS.max_depth, strict=strict_limits),
+        max_pages=_load_scope_limit(payload, "max_pages", PRODUCTION_TREE_LIMITS.max_pages, strict=strict_limits),
+        max_files=_load_scope_limit(payload, "max_files", PRODUCTION_TREE_LIMITS.max_files, strict=strict_limits),
         based_on={str(key): str(value) for key, value in based_on.items()},
         selection_summary={str(key): int(value) for key, value in selection_summary.items() if str(key).strip()},
         notes=_as_string_list(payload.get("notes")),

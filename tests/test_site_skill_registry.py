@@ -71,6 +71,33 @@ def test_runtime_bytecode_caches_do_not_change_package_digest_or_typed_resolutio
     assert resolved.package_sha256 == clean["package_sha256"]
 
 
+def test_cache_source_replacement_before_package_hash_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = copy_example(tmp_path)
+    for cache in package.rglob("__pycache__"):
+        shutil.rmtree(cache)
+    assert compileall.compile_dir(package / "scripts", quiet=1)
+    replacement = package / "scripts" / "replacement.py"
+    replacement.write_text("VALUE = 'replacement'\n", encoding="utf-8")
+    original_stat = registry_module.os.stat
+    source_stat_calls = 0
+
+    def replace_between_cache_and_walk(path, *args, **kwargs):
+        nonlocal source_stat_calls
+        if path == "recipe.py" and kwargs.get("dir_fd") is not None:
+            source_stat_calls += 1
+            if source_stat_calls == 2:
+                os.replace(replacement, package / "scripts" / "recipe.py")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(registry_module.os, "stat", replace_between_cache_and_walk)
+    result = validate_site_skill_package(package)
+
+    assert result["valid"] is False
+    assert "path.tree_changed" in diagnostic_codes(result)
+
+
 @pytest.mark.parametrize("cache_entry", ["evil.txt", "nested"])
 def test_runtime_cache_name_abuse_is_rejected(tmp_path: Path, cache_entry: str):
     package = copy_example(tmp_path)

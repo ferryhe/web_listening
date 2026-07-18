@@ -244,6 +244,7 @@ def _read_tree(
         return files
 
     seen: dict[str, str] = {}
+    cached_source_identities: dict[str, tuple[int, int, int, int, int, int]] = {}
 
     def inspect_runtime_cache(directory_fd: int, relative: str, before: os.stat_result) -> None:
         """Validate but exclude canonical interpreter cache artifacts from authority."""
@@ -341,6 +342,15 @@ def _read_tree(
                         continue
                     if pyc[16:] != marshal.dumps(expected_code):
                         diagnostics.append(_diagnostic("cache.invalid", child_relative, "runtime cache content does not match its sibling source"))
+                        continue
+                    source_prefix = relative.rsplit("/", 1)[0] if "/" in relative else ""
+                    source_relative = f"{source_prefix}/{source}" if source_prefix else source
+                    source_identity = _identity(source_info)
+                    previous_identity = cached_source_identities.get(source_relative)
+                    if previous_identity is not None and previous_identity != source_identity:
+                        diagnostics.append(_diagnostic("path.tree_changed", source_relative, "runtime cache sources changed during validation"))
+                        continue
+                    cached_source_identities[source_relative] = source_identity
             if _identity(os.fstat(cache_fd)) != _identity(before):
                 diagnostics.append(_diagnostic("path.tree_changed", relative, "runtime cache changed during validation"))
         except OSError:
@@ -458,6 +468,16 @@ def _read_tree(
                 finally:
                     os.close(child_fd)
             elif stat.S_ISREG(entry_before.st_mode):
+                cached_source_identity = cached_source_identities.get(relative)
+                if cached_source_identity is not None and _identity(entry_before) != cached_source_identity:
+                    diagnostics.append(
+                        _diagnostic(
+                            "path.tree_changed",
+                            relative,
+                            "cached source changed during validation",
+                        )
+                    )
+                    continue
                 file_count += 1
                 if file_count > _MAX_PACKAGE_FILES:
                     traversal_stopped = True
@@ -559,9 +579,16 @@ def _read_tree(
                         )
                     )
                     continue
-                if _identity(opened) != _identity(after_read) or _identity(
-                    opened
-                ) != _identity(entry_after):
+                identities = (
+                    _identity(entry_before),
+                    _identity(opened),
+                    _identity(after_read),
+                    _identity(entry_after),
+                )
+                if len(set(identities)) != 1 or (
+                    cached_source_identity is not None
+                    and any(identity != cached_source_identity for identity in identities)
+                ):
                     diagnostics.append(
                         _diagnostic(
                             "path.tree_changed",

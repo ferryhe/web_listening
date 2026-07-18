@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from web_listening.blocks.acquisition_profile import (
     AcquisitionProfile,
+    AcquisitionQualityGates,
     AcquisitionSafetyPolicy,
     CaptureAttempt,
     build_default_acquisition_profile,
@@ -18,6 +19,55 @@ def test_legacy_profile_without_recipe_mappings_or_limits_remains_valid():
     profile = AcquisitionProfile(profile_id="legacy", site_key="demo", generated_at="2026-01-01T00:00:00Z")
     assert profile.recipe_mappings == []
     assert profile.resource_limits.timeout_seconds is None
+
+
+@pytest.mark.parametrize("field", ["allow_stealth_browser", "require_authorized_access"])
+@pytest.mark.parametrize("bad_value", ["true", "false"])
+def test_safety_authorization_flags_reject_string_booleans(field, bad_value):
+    with pytest.raises(ValidationError, match="booleans without coercion") as exc_info:
+        AcquisitionSafetyPolicy(**{field: bad_value})
+
+    assert bad_value not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("bad_value", ["true", "false"])
+def test_require_status_ok_rejects_string_booleans(bad_value):
+    with pytest.raises(ValidationError, match="boolean without coercion") as exc_info:
+        AcquisitionQualityGates(require_status_ok=bad_value)
+
+    assert bad_value not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("field", ["min_words", "min_links", "min_document_links"])
+def test_quality_gate_counts_reject_numeric_strings(field):
+    with pytest.raises(ValidationError, match="integers without coercion") as exc_info:
+        AcquisitionQualityGates(**{field: "7"})
+
+    assert "7" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("field", ["min_words", "min_links", "min_document_links"])
+def test_quality_gate_counts_reject_booleans(field):
+    with pytest.raises(ValidationError, match="integers without coercion"):
+        AcquisitionQualityGates(**{field: True})
+
+
+def test_governed_quality_and_authorization_scalars_accept_exact_types():
+    quality = AcquisitionQualityGates(
+        min_words=0,
+        min_links=1,
+        min_document_links=2,
+        require_status_ok=False,
+    )
+    safety = AcquisitionSafetyPolicy(
+        allow_stealth_browser=True,
+        require_authorized_access=False,
+    )
+
+    assert (quality.min_words, quality.min_links, quality.min_document_links) == (0, 1, 2)
+    assert quality.require_status_ok is False
+    assert safety.allow_stealth_browser is True
+    assert safety.require_authorized_access is False
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

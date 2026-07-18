@@ -12,8 +12,9 @@ from pathlib import Path
 import pytest
 
 from web_listening.contracts import CaptureRequest
+from web_listening.executors import browseract as browseract_executor
 from web_listening.executors import browseract_wrapper
-from web_listening.executors.browseract import discover_browseract, inspect_browseract
+from web_listening.executors.browseract import BROWSERACT_VERSION, discover_browseract, inspect_browseract
 from web_listening.executors.browseract_wrapper import execute
 from web_listening.executors.browseract_wrapper import run_bounded_browseract_command
 
@@ -57,6 +58,49 @@ def test_discovery_requires_explicit_absolute_or_controlled_path(tmp_path: Path)
     assert discover_browseract() is None
     with pytest.raises(ValueError, match="absolute"):
         discover_browseract("browser-act")
+
+
+def test_discovery_ignores_exe_only_search_path(tmp_path: Path):
+    executable = tmp_path / "browser-act.exe"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    assert discover_browseract(search_path=str(tmp_path)) is None
+
+
+def test_version_pattern_is_derived_from_pinned_version():
+    assert browseract_executor._VERSION_RE.fullmatch(f"browser-act {BROWSERACT_VERSION}")
+    assert browseract_executor._VERSION_RE.fullmatch(f"browser-act {BROWSERACT_VERSION}0") is None
+
+
+def test_read_shebang_closes_executable_promptly(tmp_path: Path, monkeypatch):
+    executable, _ = _tool(tmp_path)
+    real_open = Path.open
+    closed = False
+
+    class TrackedFile:
+        def __init__(self, source):
+            self.source = source
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            nonlocal closed
+            self.source.close()
+            closed = True
+
+        def readline(self, size: int):
+            return self.source.readline(size)
+
+    def tracked_open(path: Path, *args, **kwargs):
+        return TrackedFile(real_open(path, *args, **kwargs))
+
+    monkeypatch.setattr(Path, "open", tracked_open)
+
+    browseract_executor._read_shebang(executable)
+
+    assert closed is True
 
 
 def test_inspection_accepts_isolated_fake_runtime(tmp_path: Path):

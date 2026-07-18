@@ -16,7 +16,7 @@ BROWSERACT_VERSION = "1.0.6"
 PYTHON_VERSION = "3.12"
 REQUIRED_CAPABILITIES = frozenset({"stealth_extract", "interactive_read"})
 INSPECTION_CONTRACT = "browseract-inspection.v1"
-_VERSION_RE = re.compile(r"^browser-act 1\.0\.6$")
+_VERSION_RE = re.compile(rf"^browser-act {re.escape(BROWSERACT_VERSION)}$")
 _RUNTIME_PROBE = (
     "import importlib.metadata,json,sys;"
     "print(json.dumps({'python_version':f'{sys.version_info.major}.{sys.version_info.minor}',"
@@ -62,10 +62,9 @@ def discover_browseract(executable: str | Path | None = None, *, search_path: st
         directory = Path(entry)
         if not entry or not directory.is_absolute():
             continue
-        for name in ("browser-act", "browser-act.exe"):
-            candidate = directory / name
-            if _is_executable(candidate):
-                return candidate.resolve(strict=True)
+        candidate = directory / "browser-act"
+        if _is_executable(candidate):
+            return candidate.resolve(strict=True)
     return None
 
 
@@ -118,7 +117,8 @@ def inspect_browseract(executable: str | Path | None = None, *, search_path: str
 
 
 def _read_shebang(executable: Path) -> Path:
-    first = executable.open("rb").readline(4096)
+    with executable.open("rb") as source:
+        first = source.readline(4096)
     if not first.startswith(b"#!"):
         raise ValueError
     value = first[2:].decode("utf-8").strip()

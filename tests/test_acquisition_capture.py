@@ -19,6 +19,7 @@ from web_listening.blocks.acquisition_profile import (
     CaptureAttempt,
 )
 from web_listening.blocks.crawler import FetchResult, HttpCrawler
+from web_listening.executors.http_wrapper import HttpAcquisitionAdapter as HttpWrapperAdapter
 
 
 def make_fetch_result(
@@ -70,6 +71,23 @@ def make_profile(**updates) -> AcquisitionProfile:
     }
     payload.update(updates)
     return AcquisitionProfile(**payload)
+
+
+def test_http_wrapper_status_error_uses_exception_request_when_response_is_unattached():
+    request = httpx.Request("GET", "https://example.com/missing", headers={"User-Agent": "Exception UA"})
+    response = httpx.Response(404, text="<html><main>missing</main></html>")
+
+    class StatusErrorCrawler:
+        def fetch_page(self, url, *, fetch_config_json=None):
+            raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+    result = HttpWrapperAdapter(StatusErrorCrawler()).capture(
+        "https://example.com/missing",
+        config={"headers": {"User-Agent": "Configured UA"}},
+    )
+
+    assert result.status_code == 404
+    assert result.metadata_json["request_user_agent"] == "Exception UA"
 
 
 class FakeAdapter:

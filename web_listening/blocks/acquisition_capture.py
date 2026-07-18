@@ -6,8 +6,6 @@ import json
 import re
 from typing import Any, Protocol
 
-import httpx
-
 from web_listening.blocks.acquisition_profile import (
     AdapterId,
     AcquisitionProfile,
@@ -16,14 +14,13 @@ from web_listening.blocks.acquisition_profile import (
     recommend_next_adapter,
 )
 from web_listening.blocks.crawler import (
-    BrowserCrawler,
     FetchResult,
-    HttpCrawler,
-    resolve_request_headers,
-    resolve_user_agent,
 )
-from web_listening.blocks.normalizer import normalize_html
-from web_listening.config import settings
+from web_listening.executors.http_wrapper import HttpAcquisitionAdapter
+from web_listening.executors.playwright_wrapper import BrowserAcquisitionAdapter
+from web_listening.executors.cloakbrowser_wrapper import (
+    CloakBrowserAcquisitionAdapter as _CloakBrowserAcquisitionAdapter,
+)
 
 
 @dataclass(slots=True)
@@ -45,81 +42,11 @@ class AcquisitionAdapter(Protocol):
         ...
 
 
-class HttpAcquisitionAdapter:
-    adapter_id: AdapterId = "web_http"
+class CloakBrowserAcquisitionAdapter(_CloakBrowserAcquisitionAdapter):
+    """Compatibility export retaining the historical monkeypatch seam."""
 
-    def __init__(self, crawler: HttpCrawler | None = None):
-        self.crawler = crawler or HttpCrawler()
-
-    def capture(self, url: str, *, config: dict[str, Any] | None = None) -> FetchResult:
-        try:
-            return self.crawler.fetch_page(url, fetch_config_json=config)
-        except httpx.HTTPStatusError as exc:
-            return _fetch_result_from_http_status_error(exc, config)
-
-
-class BrowserAcquisitionAdapter:
-    adapter_id: AdapterId = "browser_rendered"
-
-    def __init__(self, crawler: BrowserCrawler | None = None):
-        self.crawler = crawler or BrowserCrawler()
-
-    def capture(self, url: str, *, config: dict[str, Any] | None = None) -> FetchResult:
-        return self.crawler.fetch_page(url, fetch_config_json=config)
-
-
-class CloakBrowserAcquisitionAdapter:
-    adapter_id: AdapterId = "cloakbrowser"
-
-    def capture(self, url: str, *, config: dict[str, Any] | None = None) -> FetchResult:
-        try:
-            launch = import_module("cloakbrowser").launch
-        except ImportError as exc:  # pragma: no cover - optional dependency
-            raise RuntimeError(
-                "CloakBrowser acquisition probing requires the optional cloakbrowser runtime. "
-                "Install it with `pip install -e .[cloakbrowser]`. First launch may download "
-                "a browser binary."
-            ) from exc
-
-        config = config or {}
-        timeout_ms = int(config.get("timeout_ms", settings.request_timeout * 1000))
-        wait_until = config.get("wait_until", "load")
-        wait_for_selector = config.get("wait_for")
-        extra_wait_ms = int(config.get("extra_wait_ms", 0))
-        launch_kwargs = _cloakbrowser_launch_kwargs(config)
-        request_user_agent = resolve_user_agent(config)
-
-        browser = launch(**launch_kwargs)
-        try:
-            page = browser.new_page(user_agent=request_user_agent)
-            response = page.goto(url, wait_until=wait_until, timeout=timeout_ms)
-            if wait_for_selector:
-                page.wait_for_selector(wait_for_selector, timeout=timeout_ms)
-            if extra_wait_ms > 0:
-                page.wait_for_timeout(extra_wait_ms)
-            html = page.content()
-            final_url = page.url
-            status_code = response.status if response else None
-        finally:
-            browser.close()
-
-        normalized = normalize_html(html, base_url=final_url or url)
-        metadata = dict(normalized.metadata)
-        metadata["driver"] = "cloakbrowser"
-        metadata["request_user_agent"] = request_user_agent
-        metadata["wait_until"] = wait_until
-        metadata["wait_for"] = wait_for_selector or ""
-        metadata["humanize"] = bool(config.get("humanize", False))
-        return FetchResult(
-            raw_html=normalized.raw_html,
-            cleaned_html=normalized.cleaned_html,
-            content_text=normalized.content_text,
-            markdown=normalized.markdown,
-            fit_markdown=normalized.fit_markdown,
-            metadata_json=metadata,
-            final_url=final_url or url,
-            status_code=status_code,
-        )
+    def __init__(self):
+        super().__init__(importer=lambda name: import_module(name))
 
 
 def build_builtin_adapters() -> dict[AdapterId, AcquisitionAdapter]:
@@ -281,19 +208,6 @@ def _adapter_config(profile: AcquisitionProfile, adapter_id: AdapterId) -> dict[
     return None
 
 
-def _cloakbrowser_launch_kwargs(config: dict[str, Any]) -> dict[str, Any]:
-    allowed_keys = (
-        "headless",
-        "proxy",
-        "timezone",
-        "locale",
-        "geoip",
-        "humanize",
-        "human_preset",
-    )
-    return {key: config[key] for key in allowed_keys if key in config}
-
-
 def _validate_capture_safety(adapter_id: AdapterId, profile: AcquisitionProfile) -> None:
     if adapter_id != "cloakbrowser":
         return
@@ -302,40 +216,6 @@ def _validate_capture_safety(adapter_id: AdapterId, profile: AcquisitionProfile)
             "CloakBrowser capture requires safety.allow_stealth_browser=true "
             "and safety.require_authorized_access=true in the active acquisition profile."
         )
-
-
-def _fetch_result_from_http_status_error(
-    exc: httpx.HTTPStatusError,
-    config: dict[str, Any] | None,
-) -> FetchResult:
-    response = exc.response
-    normalized = normalize_html(response.text, base_url=str(response.url))
-    metadata = dict(normalized.metadata)
-    metadata["driver"] = "http"
-    metadata["request_user_agent"] = _response_request_user_agent(response, config)
-    metadata["http_status_error"] = True
-    return FetchResult(
-        raw_html=normalized.raw_html,
-        cleaned_html=normalized.cleaned_html,
-        content_text=normalized.content_text,
-        markdown=normalized.markdown,
-        fit_markdown=normalized.fit_markdown,
-        metadata_json=metadata,
-        final_url=str(response.url),
-        status_code=response.status_code,
-    )
-
-
-def _response_request_user_agent(
-    response: httpx.Response,
-    config: dict[str, Any] | None,
-) -> str:
-    request = response.request
-    if request is not None:
-        user_agent = request.headers.get("User-Agent")
-        if user_agent:
-            return user_agent
-    return resolve_request_headers(config).get("User-Agent", settings.user_agent)
 
 
 def _status_is_ok(status_code: int | None) -> bool:

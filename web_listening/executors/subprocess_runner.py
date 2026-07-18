@@ -582,6 +582,11 @@ class SubprocessAcquisitionExecutor:
             process: subprocess.Popen[bytes] | None = None
             helper_identity: _ProcessIdentity | None = None
             cgroup = _create_owned_cgroup()
+            # A writable delegated cgroup v2 is a runtime safety prerequisite.
+            if cgroup is None:
+                return _failure(
+                    request, started, "executor_cleanup_error", _CLEANUP_DIAGNOSTIC
+                )
             streams: list[BinaryIO] = []
             workers: list[threading.Thread] = []
             started_workers: list[threading.Thread] = []
@@ -590,12 +595,11 @@ class SubprocessAcquisitionExecutor:
             interrupted: BaseException | None = None
             cancel_ok = True
             cancel_attempted = False
-            enrollment_proved = cgroup is None
+            enrollment_proved = False
             enrollment_failed = False
             try:
                 control_read, control_write = os.pipe()
-                if cgroup is not None:
-                    cgroup_fd = os.open(cgroup.path, os.O_RDONLY | os.O_DIRECTORY)
+                cgroup_fd = os.open(cgroup.path, os.O_RDONLY | os.O_DIRECTORY)
                 process = subprocess.Popen(
                     (
                         sys.executable, "-c", _SUPERVISOR_CODE, str(control_write),
@@ -611,24 +615,23 @@ class SubprocessAcquisitionExecutor:
                     cwd=cwd,
                     env=env,
                     start_new_session=(os.name == "posix"),
-                    pass_fds=(control_write,) if cgroup_fd < 0 else (control_write, cgroup_fd),
+                    pass_fds=(control_write, cgroup_fd),
                 )
                 helper_identity = _bind_process(process.pid)
                 if helper_identity is None:
                     raise OSError("supervisor identity could not be bound")
-                if cgroup is not None:
-                    enrollment_proved = cgroup.wait_contains_exact(
-                        helper_identity.pid,
-                        helper_identity.start_time,
-                        _CGROUP_ENROLLMENT_SECONDS,
+                enrollment_proved = cgroup.wait_contains_exact(
+                    helper_identity.pid,
+                    helper_identity.start_time,
+                    _CGROUP_ENROLLMENT_SECONDS,
+                )
+                if not enrollment_proved:
+                    enrollment_failed = True
+                    cancel_attempted = True
+                    cancel_ok = _cancel_supervisor(
+                        process, self._limits, cgroup, helper_identity
                     )
-                    if not enrollment_proved:
-                        enrollment_failed = True
-                        cancel_attempted = True
-                        cancel_ok = _cancel_supervisor(
-                            process, self._limits, None, helper_identity
-                        )
-                        raise OSError("supervisor cgroup enrollment was not proved")
+                    raise OSError("supervisor cgroup enrollment was not proved")
                 os.close(control_write)
                 control_write = -1
                 if cgroup_fd >= 0:
@@ -707,7 +710,7 @@ class SubprocessAcquisitionExecutor:
                     control_read = -1
                 if helper_identity is not None:
                     helper_identity.close()
-                cgroup_ok = cgroup is None or cgroup.kill_and_remove(self._limits.kill_grace_seconds)
+                cgroup_ok = cgroup.kill_and_remove(self._limits.kill_grace_seconds)
 
             stdout_data = bytes(stdout.data) if "stdout" in locals() else b""
             stderr_data = bytes(stderr.data) if "stderr" in locals() else b""
@@ -724,7 +727,7 @@ class SubprocessAcquisitionExecutor:
             cleanup_proved = (
                 cancel_ok
                 and cgroup_ok
-                and (cgroup is None or enrollment_proved)
+                and enrollment_proved
                 and supervisor_cleanup_ok
             )
             if enrollment_failed:
@@ -766,15 +769,9 @@ class SubprocessAcquisitionExecutor:
 def _cancel_supervisor(
     process: subprocess.Popen[bytes],
     limits: SubprocessLimits,
-    cgroup: _OwnedCgroup | None = None,
+    cgroup: _OwnedCgroup,
     helper_identity: _ProcessIdentity | None = None,
 ) -> bool:
-    if cgroup is None:
-        if helper_identity is None:
-            return False
-        return _kill_exact_helper_tree(
-            process, helper_identity, limits.kill_grace_seconds
-        )
     # Enrollment is the ownership proof for cgroup-wide cleanup. A malformed
     # helper may never join; freeze its exact tree before signalling it so an
     # unenrolled descendant cannot be orphaned by the helper's early exit.

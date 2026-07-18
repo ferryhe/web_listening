@@ -88,6 +88,25 @@ def compute_scope_fingerprint(
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+def compute_semantic_scope_fingerprint(plan: MonitorScopePlan) -> str:
+    """Execution-planning identity, explicitly separate from persisted legacy v1."""
+    payload = {
+        "algorithm": "monitor-scope-semantic.v2",
+        "site_key": plan.site_key,
+        "seed_url": plan.seed_url.rstrip("/"),
+        "homepage_url": plan.homepage_url.rstrip("/"),
+        "allowed_page_prefixes": sorted(set(plan.allowed_page_prefixes)),
+        "allowed_file_prefixes": sorted(set(plan.allowed_file_prefixes)),
+        "tree_strategy": plan.tree_strategy,
+        "file_scope_mode": plan.file_scope_mode,
+        "max_depth": plan.max_depth,
+        "max_pages": plan.max_pages,
+        "max_files": plan.max_files,
+    }
+    wire = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(wire.encode("utf-8")).hexdigest()
+
+
 def _normalize_prefix(value: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
@@ -195,6 +214,15 @@ def load_section_selection(path: str | Path) -> SectionSelection:
     )
 
 
+def _load_positive_scope_limit(payload: dict[str, Any], key: str, default: int) -> int:
+    if key not in payload:
+        return default
+    value = payload[key]
+    if type(value) is not int or value <= 0:
+        raise ValueError("monitor_scope limits must be positive integers")
+    return value
+
+
 def load_monitor_scope_plan(path: str | Path) -> MonitorScopePlan:
     payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     fetch_config_json = payload.get("fetch_config_json", {}) or {}
@@ -235,9 +263,9 @@ def load_monitor_scope_plan(path: str | Path) -> MonitorScopePlan:
         excluded_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("excluded_page_prefixes"))],
         deferred_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("deferred_page_prefixes"))],
         excluded_categories=_as_string_list(payload.get("excluded_categories")),
-        max_depth=int(payload.get("max_depth", PRODUCTION_TREE_LIMITS.max_depth) or PRODUCTION_TREE_LIMITS.max_depth),
-        max_pages=int(payload.get("max_pages", PRODUCTION_TREE_LIMITS.max_pages) or PRODUCTION_TREE_LIMITS.max_pages),
-        max_files=int(payload.get("max_files", PRODUCTION_TREE_LIMITS.max_files) or PRODUCTION_TREE_LIMITS.max_files),
+        max_depth=_load_positive_scope_limit(payload, "max_depth", PRODUCTION_TREE_LIMITS.max_depth),
+        max_pages=_load_positive_scope_limit(payload, "max_pages", PRODUCTION_TREE_LIMITS.max_pages),
+        max_files=_load_positive_scope_limit(payload, "max_files", PRODUCTION_TREE_LIMITS.max_files),
         based_on={str(key): str(value) for key, value in based_on.items()},
         selection_summary={str(key): int(value) for key, value in selection_summary.items() if str(key).strip()},
         notes=_as_string_list(payload.get("notes")),

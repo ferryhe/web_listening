@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
+import pytest
 from typer.testing import CliRunner
 
 import web_listening.blocks.acquisition_tools as acquisition_tools
@@ -22,6 +23,79 @@ from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation
 
 
 runner = CliRunner()
+
+
+def test_preview_execution_plan_json_legacy_is_byte_identical(tmp_path: Path):
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("""site_key: demo
+seed_url: https://example.com/news
+homepage_url: https://example.com/
+allowed_page_prefixes: [/news]
+allowed_file_prefixes: [/]
+max_depth: 3
+max_pages: 25
+max_files: 10
+based_on: {}
+""", encoding="utf-8")
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+    assert first.exit_code == second.exit_code == 0
+    assert first.stdout == second.stdout
+    payload = json.loads(first.stdout)
+    assert payload["plan"]["mode"] == "legacy_compatibility"
+    assert len(payload["plan"]["warnings"]) == 1
+
+
+def test_preview_execution_plan_json_parser_and_compiler_errors_are_structured(tmp_path: Path):
+    missing = runner.invoke(app, ["preview-execution-plan", "--json"])
+    assert missing.exit_code != 0
+    assert json.loads(missing.stdout)["error"]["code"] == "parser.invalid"
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {site_skill_version: 1.0.0}\n", encoding="utf-8")
+    failed = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope), "--json"])
+    assert failed.exit_code != 0
+    assert json.loads(failed.stdout)["error"]["code"] == "input.invalid"
+    assert str(tmp_path) not in failed.stdout
+
+
+@pytest.mark.parametrize("limit_yaml", ["true", '"25"'])
+def test_preview_execution_plan_json_rejects_coerced_scope_limits(tmp_path: Path, limit_yaml: str):
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(f"""site_key: demo
+seed_url: https://example.com/news
+homepage_url: https://example.com/
+allowed_page_prefixes: [/news]
+allowed_file_prefixes: [/]
+max_depth: 3
+max_pages: {limit_yaml}
+max_files: 10
+based_on: {{}}
+""", encoding="utf-8")
+    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope), "--json"])
+    assert result.exit_code != 0
+    assert json.loads(result.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "SECRET-CANARY" not in result.stdout
+
+
+def test_preview_json_missing_path_parser_error_is_redacted_and_stdout_only():
+    canary = "/tmp/SECRET-CANARY-scope.yaml"
+    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", canary, "--json"])
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["error"] == {"code": "parser.invalid", "field": ".", "message": "invalid command arguments"}
+    assert "SECRET-CANARY" not in result.output
+    assert result.stderr == ""
+
+
+def test_preview_execution_plan_human_parser_error_is_normal_human_output():
+    result = runner.invoke(app, ["preview-execution-plan"])
+    assert result.exit_code != 0
+    assert "Usage:" in result.output
+    assert not result.output.lstrip().startswith("{")
 
 
 class FakeProbeAdapter:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 from typing import Any, Literal
 
@@ -103,6 +104,50 @@ class AcquisitionSafetyPolicy(BaseModel):
         return self.allow_stealth_browser and self.require_authorized_access
 
 
+class AcquisitionRecipeMapping(BaseModel):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    adapter: AdapterId
+    recipe_id: str = Field(min_length=1)
+
+
+class AcquisitionResourceLimits(BaseModel):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    timeout_seconds: float | None = None
+    stdout_bytes: int | None = None
+    stderr_bytes: int | None = None
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def strict_timeout(cls, value: Any) -> Any:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int | float)):
+            raise ValueError("timeout_seconds must be a number without coercion")
+        return value
+
+    @field_validator("stdout_bytes", "stderr_bytes", mode="before")
+    @classmethod
+    def strict_bytes(cls, value: Any) -> Any:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise ValueError("byte limits must be integers without coercion")
+        return value
+
+    @model_validator(mode="after")
+    def validate_bounded_limits(self) -> AcquisitionResourceLimits:
+        if self.timeout_seconds is not None and (
+            isinstance(self.timeout_seconds, bool) or not math.isfinite(self.timeout_seconds)
+            or self.timeout_seconds <= 0 or self.timeout_seconds > 300
+        ):
+            raise ValueError("timeout_seconds must be finite and in (0, 300]")
+        for name, value, ceiling in (
+            ("stdout_bytes", self.stdout_bytes, 16 * 1024 * 1024),
+            ("stderr_bytes", self.stderr_bytes, 1024 * 1024),
+        ):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0 or value > ceiling):
+                raise ValueError(f"{name} must be a positive integer no greater than {ceiling}")
+        return self
+
+
 class AcquisitionProfile(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
@@ -116,6 +161,9 @@ class AcquisitionProfile(BaseModel):
     quality_gates: AcquisitionQualityGates = Field(default_factory=AcquisitionQualityGates)
     safety: AcquisitionSafetyPolicy = Field(default_factory=AcquisitionSafetyPolicy)
     adapters: list[AcquisitionAdapterConfig] = Field(default_factory=list)
+    recipe_mappings: list[AcquisitionRecipeMapping] = Field(default_factory=list)
+    resource_limits: AcquisitionResourceLimits = Field(default_factory=AcquisitionResourceLimits)
+    adapter_resource_limits: dict[AdapterId, AcquisitionResourceLimits] = Field(default_factory=dict)
     notes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -150,6 +198,12 @@ class AcquisitionProfile(BaseModel):
                 "browseract requires safety.allow_stealth_browser=true "
                 "and safety.require_authorized_access=true"
             )
+        adapter_ids = [item.adapter for item in self.adapters]
+        if len(adapter_ids) != len(set(adapter_ids)):
+            raise ValueError("adapters must have unique adapter values")
+        mapped = [item.adapter for item in self.recipe_mappings]
+        if len(mapped) != len(set(mapped)):
+            raise ValueError("recipe_mappings must have unique adapter values")
         return self
 
 

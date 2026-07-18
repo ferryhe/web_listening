@@ -27,11 +27,17 @@ _SITE_SKILL_JSON_SCHEMAS = {
     "list-site-skills": ("site-skill-list.v1", "skills"),
     "inspect-site-skill": ("site-skill-inspect.v1", "skill"),
     "validate-site-skill": ("site-skill-validation.v1", "skill"),
+    "preview-execution-plan": ("acquisition-execution-plan-preview.v1", "plan"),
 }
 
 
 def _parser_failure(command: str, message: str) -> dict[str, object]:
     schema, payload_key = _SITE_SKILL_JSON_SCHEMAS[command]
+    if command == "preview-execution-plan":
+        return {
+            "schema_version": schema, "ok": False, "plan": None,
+            "error": {"code": "parser.invalid", "field": ".", "message": "invalid command arguments"},
+        }
     failure = {
         "path": ".",
         "valid": False,
@@ -737,6 +743,55 @@ def probe_acquisition_command(
         f"words={attempt['word_count']} links={attempt['link_count']}\n"
         f"next_action={payload['next_action']}"
     )
+
+
+@app.command("preview-execution-plan")
+def preview_execution_plan_command(
+    scope_path: Path = typer.Option(..., "--scope-path", exists=True, file_okay=True, dir_okay=False, readable=True),
+    profile_path: Optional[Path] = typer.Option(None, "--profile-path", exists=True, file_okay=True, dir_okay=False, readable=True),
+    site_skill_root: Optional[Path] = typer.Option(None, "--site-skill-root", exists=True, file_okay=False, dir_okay=True, readable=True),
+    json_output: bool = typer.Option(False, "--json", help="Emit stable machine-readable JSON."),
+):
+    """Compile a read-only acquisition execution preview without probing runtimes."""
+    from web_listening.blocks.acquisition_execution_plan import (
+        AcquisitionExecutionPlanError, compile_acquisition_execution_plan, failure_envelope, preview_envelope,
+    )
+    from web_listening.blocks.acquisition_profile import load_acquisition_profile
+    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
+    from web_listening.executors.registry import default_preview_registry
+    from web_listening.site_skill_registry import resolve_site_skill_contract
+
+    try:
+        scope = load_monitor_scope_plan(scope_path)
+        governed = any(str(scope.based_on.get(key, "")).strip() for key in (
+            "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
+            "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",
+        ))
+        profile = load_acquisition_profile(profile_path) if profile_path else None
+        skill = None
+        if governed:
+            skill = resolve_site_skill_contract(site_key=scope.site_key,
+                version=str(scope.based_on.get("site_skill_version", "")),
+                package_sha256=str(scope.based_on.get("site_skill_package_sha256", "")), root=site_skill_root)
+        payload = preview_envelope(compile_acquisition_execution_plan(scope, profile, skill, default_preview_registry()))
+    except AcquisitionExecutionPlanError as exc:
+        payload = failure_envelope(exc)
+        if json_output:
+            _stable_json(payload)
+        else:
+            raise typer.BadParameter(str(exc)) from exc
+        raise typer.Exit(2)
+    except (OSError, ValueError, LookupError) as exc:
+        error = AcquisitionExecutionPlanError("input.invalid", f"preview input is invalid: {type(exc).__name__}")
+        if json_output:
+            _stable_json(failure_envelope(error))
+        else:
+            raise typer.BadParameter(str(error)) from exc
+        raise typer.Exit(2)
+    if json_output:
+        _stable_json(payload)
+    else:
+        console.print(Panel(f"Execution plan preview: {payload['plan']['mode']}"))
 
 
 @app.command("serve")

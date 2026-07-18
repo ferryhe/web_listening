@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import compileall
 import os
 import shutil
 import tomllib
 from pathlib import Path
 
 import pytest
+import sys
 import typer
 import yaml
 from typer.testing import CliRunner
@@ -16,6 +18,7 @@ from web_listening.cli import app
 from web_listening.site_skill_registry import (
     list_site_skills,
     resolve_site_skill,
+    resolve_site_skill_contract,
     validate_site_skill_package,
 )
 
@@ -32,6 +35,73 @@ def copy_example(tmp_path: Path) -> Path:
 
 def diagnostic_codes(result: dict[str, object]) -> set[str]:
     return {item["code"] for item in result["diagnostics"]}  # type: ignore[index, union-attr]
+
+
+def test_typed_resolution_uses_one_pinned_descriptor_snapshot_during_replacement(tmp_path: Path, monkeypatch):
+    package = copy_example(tmp_path)
+    expected = validate_site_skill_package(package)["package_sha256"]
+    original = registry_module._validate_site_skill_package
+    moved = package.with_name("1.0.0-pinned")
+
+    def replace_path_before_snapshot(path, **kwargs):
+        package.rename(moved)
+        shutil.copytree(EXAMPLE, package)
+        (package / "scripts/recipe.py").write_text("raise RuntimeError('replacement')\n", encoding="utf-8")
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(registry_module, "_validate_site_skill_package", replace_path_before_snapshot)
+    resolved = resolve_site_skill_contract(site_key="example-news", version="1.0.0",
+        package_sha256=str(expected), root=tmp_path / "sites")
+    monkeypatch.setattr(registry_module, "_validate_site_skill_package", original)
+    assert resolved.package_sha256 == expected
+    assert resolved.script_sha256["scripts/recipe.py"] != validate_site_skill_package(package)["script_sha256"]["scripts/recipe.py"]
+
+
+def test_runtime_bytecode_caches_do_not_change_package_digest_or_typed_resolution(tmp_path: Path):
+    package = copy_example(tmp_path)
+    for cache in package.rglob("__pycache__"):
+        shutil.rmtree(cache)
+    clean = validate_site_skill_package(package)
+    assert compileall.compile_dir(package / "scripts", quiet=1)
+    cached = validate_site_skill_package(package)
+    assert cached["valid"] is True
+    assert cached["package_sha256"] == clean["package_sha256"]
+    resolved = resolve_site_skill_contract(site_key="example-news", version="1.0.0",
+        package_sha256=str(clean["package_sha256"]), root=tmp_path / "sites")
+    assert resolved.package_sha256 == clean["package_sha256"]
+
+
+@pytest.mark.parametrize("cache_entry", ["evil.txt", "nested"])
+def test_runtime_cache_name_abuse_is_rejected(tmp_path: Path, cache_entry: str):
+    package = copy_example(tmp_path)
+    cache = package / "scripts" / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    target = cache / cache_entry
+    target.mkdir() if cache_entry == "nested" else target.write_text("evil", encoding="utf-8")
+    result = validate_site_skill_package(package)
+    assert "cache.invalid" in diagnostic_codes(result)
+
+
+@pytest.mark.parametrize("cache_entry", [
+    "evil.pyc", "evil.cpython-311.pyc", "recipe.cpython-311.pyc", "evil.cpython-312.pyc", "recipe.pyo",
+])
+def test_noncanonical_or_source_unbound_bytecode_cache_is_rejected(tmp_path: Path, cache_entry: str):
+    package = copy_example(tmp_path)
+    cache = package / "scripts" / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    (cache / cache_entry).write_bytes(b"evil")
+    result = validate_site_skill_package(package)
+    assert "cache.invalid" in diagnostic_codes(result)
+
+
+@pytest.mark.parametrize("suffix", ["", ".opt-999"])
+def test_current_tag_arbitrary_bytecode_is_rejected(tmp_path: Path, suffix: str):
+    package = copy_example(tmp_path)
+    cache = package / "scripts" / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    (cache / f"recipe.{sys.implementation.cache_tag}{suffix}.pyc").write_bytes(b"arbitrary hidden bytes")
+    result = validate_site_skill_package(package)
+    assert "cache.invalid" in diagnostic_codes(result)
 
 
 def set_secret_policy(package: Path, *, allowed: list[str]) -> None:
@@ -1264,7 +1334,10 @@ def test_package_file_count_limit_is_stable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     package = copy_example(tmp_path)
-    existing_count = sum(path.is_file() for path in package.rglob("*"))
+    existing_count = sum(
+        path.is_file() and "__pycache__" not in path.parts
+        for path in package.rglob("*")
+    )
     monkeypatch.setattr(registry_module, "_MAX_PACKAGE_FILES", existing_count)
     (package / "scripts" / "overflow.txt").write_text("x", encoding="utf-8")
 

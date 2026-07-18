@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import pytest
 
 from web_listening.api import routes
 from web_listening.api.app import create_app
@@ -29,6 +30,116 @@ class FakeProbeAdapter:
             final_url=url,
             status_code=200,
         )
+
+
+def test_execution_plan_preview_plural_api_uses_stable_compatibility_envelope(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("""site_key: demo
+seed_url: https://example.com/news
+homepage_url: https://example.com/
+allowed_page_prefixes: [/news]
+allowed_file_prefixes: [/]
+max_depth: 3
+max_pages: 25
+max_files: 10
+based_on: {}
+""", encoding="utf-8")
+    client = TestClient(create_app())
+    response = client.post("/api/v1/acquisition/execution-plans/preview", json={"scope_path": "scope.yaml"})
+    assert response.status_code == 200
+    assert response.json()["schema_version"] == "acquisition-execution-plan-preview.v1"
+    assert response.json()["plan"]["mode"] == "legacy_compatibility"
+    assert client.post("/api/v1/acquisition/execution-plan/preview", json={"scope_path": "scope.yaml"}).status_code == 404
+
+
+def test_execution_plan_preview_api_structured_redacted_failure(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {site_skill_version: 1.0.0}\n", encoding="utf-8")
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": "scope.yaml"})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "input.invalid"
+    assert str(tmp_path) not in response.text
+
+
+def test_execution_plan_preview_api_missing_path_is_redacted_envelope(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    response = TestClient(create_app()).post("/api/v1/acquisition/execution-plans/preview",
+        json={"scope_path": "SECRET-CANARY-missing.yaml"})
+    assert response.status_code == 422
+    assert response.json()["schema_version"] == "acquisition-execution-plan-preview.v1"
+    assert response.json()["error"] == {"code": "input.invalid", "field": ".", "message": "preview input is invalid"}
+    assert "SECRET-CANARY" not in response.text
+    assert str(tmp_path) not in response.text
+
+
+@pytest.mark.parametrize("limit_yaml", ["true", '"25"'])
+def test_execution_plan_preview_api_rejects_coerced_scope_limits(tmp_path: Path, monkeypatch, limit_yaml: str):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(f"""site_key: demo
+seed_url: https://example.com/news
+homepage_url: https://example.com/
+allowed_page_prefixes: [/news]
+allowed_file_prefixes: [/]
+max_depth: 3
+max_pages: {limit_yaml}
+max_files: 10
+based_on: {{}}
+""", encoding="utf-8")
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-CANARY" not in response.text
+
+
+def test_execution_plan_preview_route_owns_all_request_validation(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    client = TestClient(create_app())
+    cases = [
+        ({}, None),
+        ({"profile_path": "SECRET-CANARY.yaml"}, None),
+        ({"scope_path": "SECRET-CANARY.yaml", "extra": "SECRET-CANARY"}, None),
+        ({"scope_path": 12345}, None),
+    ]
+    for payload, _ in cases:
+        response = client.post("/api/v1/acquisition/execution-plans/preview", json=payload)
+        assert response.status_code == 422
+        assert response.json() == {
+            "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+            "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+        }
+        assert "SECRET-CANARY" not in response.text
+    missing = client.post("/api/v1/acquisition/execution-plans/preview")
+    assert missing.status_code == 422
+    assert missing.json()["schema_version"] == "acquisition-execution-plan-preview.v1"
+    assert "detail" not in missing.json()
+
+
+def test_execution_plan_preview_owns_malformed_json_and_openapi_schema():
+    client = TestClient(create_app())
+    response = client.post("/api/v1/acquisition/execution-plans/preview",
+        content=b'{"scope_path":', headers={"content-type": "application/json"})
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    operation = client.get("/openapi.json").json()["paths"]["/api/v1/acquisition/execution-plans/preview"]["post"]
+    request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
+    assert request_schema["type"] == "object"
+    assert request_schema["required"] == ["scope_path"]
+    assert set(request_schema["properties"]) == {"scope_path", "profile_path"}
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/AcquisitionExecutionPreviewResponse")
+    assert operation["responses"]["422"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/AcquisitionExecutionPreviewResponse")
 
 
 class FakeCloakProbeAdapter(FakeProbeAdapter):
@@ -138,6 +249,19 @@ def test_acquisition_probe_endpoint_uses_helper_network_free(monkeypatch):
     assert payload["attempt"]["adapter"] == "browser_rendered"
     assert payload["attempt"]["status"] == "failed_quality_gate"
     assert payload["next_action"] == "try_adapter:sitemap"
+
+
+def test_acquisition_probe_endpoint_translates_helper_value_error(monkeypatch):
+    def fail_probe(**kwargs):
+        raise ValueError("invalid probe input")
+
+    monkeypatch.setattr(routes, "probe_acquisition_url", fail_probe)
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/probe",
+        json={"url": "https://example.com/", "site_key": "demo"},
+    )
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid probe input"}
 
 
 def test_acquisition_probe_endpoint_loads_profile_path_without_site_key(tmp_path, monkeypatch):

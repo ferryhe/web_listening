@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import importlib.util
+import io
 import json
+import marshal
 import os
 import re
 import stat
+import sys
+import types
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -63,6 +69,13 @@ class Diagnostic:
 
     def to_dict(self) -> dict[str, str]:
         return {"code": self.code, "path": self.path, "message": self.message}
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedSiteSkill:
+    manifest: SiteSkill
+    package_sha256: str
+    script_sha256: Mapping[str, str]
 
 
 class _DiagnosticCollector(list[Diagnostic]):
@@ -232,6 +245,109 @@ def _read_tree(
 
     seen: dict[str, str] = {}
 
+    def inspect_runtime_cache(directory_fd: int, relative: str, before: os.stat_result) -> None:
+        """Validate but exclude canonical interpreter cache artifacts from authority."""
+        cache_tag = sys.implementation.cache_tag
+        cache_name = re.compile(
+            rf"^(?P<stem>[A-Za-z0-9_]+)\.{re.escape(cache_tag)}(?:\.opt-(?P<optimization>[012]))?\.pyc$"
+        )
+        file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+        def read_bound_file(parent_fd: int, name: str, expected: os.stat_result) -> bytes | None:
+            fd = None
+            try:
+                fd = os.open(name, file_flags, dir_fd=parent_fd)
+                opened = os.fstat(fd)
+                if (_identity(opened) != _identity(expected) or not stat.S_ISREG(opened.st_mode)
+                        or opened.st_size > _MAX_FILE_BYTES):
+                    return None
+                chunks = []
+                remaining = opened.st_size
+                while remaining:
+                    chunk = os.read(fd, min(remaining, 64 * 1024))
+                    if not chunk:
+                        return None
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                if os.read(fd, 1) or _identity(os.fstat(fd)) != _identity(opened):
+                    return None
+                return b"".join(chunks)
+            except OSError:
+                return None
+            finally:
+                if fd is not None:
+                    os.close(fd)
+        try:
+            cache_fd = os.open("__pycache__", flags, dir_fd=directory_fd)
+        except OSError:
+            diagnostics.append(_diagnostic("path.tree_changed", relative, "runtime cache changed during validation"))
+            return
+        try:
+            if _identity(os.fstat(cache_fd)) != _identity(before):
+                diagnostics.append(_diagnostic("path.tree_changed", relative, "runtime cache changed during validation"))
+                return
+            with os.scandir(cache_fd) as entries:
+                names = []
+                for entry in entries:
+                    if len(names) >= _MAX_PACKAGE_FILES:
+                        diagnostics.append(_diagnostic("cache.invalid", relative, "runtime cache contains too many entries"))
+                        return
+                    names.append(entry.name)
+            for child in sorted(names):
+                child_relative = f"{relative}/{child}"
+                try:
+                    info = os.stat(child, dir_fd=cache_fd, follow_symlinks=False)
+                except OSError:
+                    diagnostics.append(_diagnostic("path.tree_changed", child_relative, "runtime cache changed during validation"))
+                    continue
+                if stat.S_ISLNK(info.st_mode):
+                    diagnostics.append(_diagnostic("path.symlink", child_relative, "symlinks are forbidden"))
+                elif not stat.S_ISREG(info.st_mode) or not _safe_relative(child_relative):
+                    diagnostics.append(_diagnostic("cache.invalid", child_relative, "runtime cache may contain only canonical interpreter artifacts"))
+                else:
+                    match = cache_name.fullmatch(child)
+                    source = f"{match.group('stem')}.py" if match else ""
+                    try:
+                        source_info = os.stat(source, dir_fd=directory_fd, follow_symlinks=False) if source else None
+                    except OSError:
+                        source_info = None
+                    if source_info is None or not stat.S_ISREG(source_info.st_mode):
+                        diagnostics.append(_diagnostic("cache.invalid", child_relative, "runtime cache artifact must match a sibling Python source file"))
+                        continue
+                    pyc = read_bound_file(cache_fd, child, info)
+                    source_bytes = read_bound_file(directory_fd, source, source_info)
+                    if pyc is None or source_bytes is None:
+                        diagnostics.append(_diagnostic("path.tree_changed", child_relative, "runtime cache or source changed during validation"))
+                        continue
+                    optimization = int(match.group("optimization") or 0)
+                    expected_header = (
+                        importlib.util.MAGIC_NUMBER
+                        + (0).to_bytes(4, "little")
+                        + (int(source_info.st_mtime) & 0xFFFFFFFF).to_bytes(4, "little")
+                        + (source_info.st_size & 0xFFFFFFFF).to_bytes(4, "little")
+                    )
+                    if len(pyc) < 16 or pyc[:16] != expected_header:
+                        diagnostics.append(_diagnostic("cache.invalid", child_relative, "runtime cache content does not match its sibling source"))
+                        continue
+                    try:
+                        payload_stream = io.BytesIO(pyc[16:])
+                        cached_code = marshal.load(payload_stream)
+                        if not isinstance(cached_code, types.CodeType) or payload_stream.tell() != len(pyc) - 16:
+                            raise ValueError("cache payload is not one complete code object")
+                        expected_code = compile(source_bytes, cached_code.co_filename, "exec",
+                                                dont_inherit=True, optimize=optimization)
+                    except (EOFError, SyntaxError, ValueError, TypeError, OverflowError):
+                        diagnostics.append(_diagnostic("cache.invalid", child_relative, "runtime cache source cannot be compiled deterministically"))
+                        continue
+                    if pyc[16:] != marshal.dumps(expected_code):
+                        diagnostics.append(_diagnostic("cache.invalid", child_relative, "runtime cache content does not match its sibling source"))
+            if _identity(os.fstat(cache_fd)) != _identity(before):
+                diagnostics.append(_diagnostic("path.tree_changed", relative, "runtime cache changed during validation"))
+        except OSError:
+            diagnostics.append(_diagnostic("path.unreadable", relative, "runtime cache cannot be inspected"))
+        finally:
+            os.close(cache_fd)
+
     def walk(directory_fd: int, prefix: str, depth: int) -> None:
         nonlocal aggregate_bytes, entry_count, file_count, traversal_stopped
         if traversal_stopped:
@@ -242,17 +358,18 @@ def _read_tree(
             entry_limit = _MAX_PACKAGE_FILES * _PACKAGE_ENTRY_MULTIPLIER
             with os.scandir(directory_fd) as entries:
                 for entry in entries:
-                    entry_count += 1
-                    if entry_count > entry_limit:
-                        traversal_stopped = True
-                        diagnostics.append(
-                            _diagnostic(
-                                "package.file_count_limit",
-                                ".",
-                                f"package contains more than {_MAX_PACKAGE_FILES} files",
+                    if entry.name != "__pycache__":
+                        entry_count += 1
+                        if entry_count > entry_limit:
+                            traversal_stopped = True
+                            diagnostics.append(
+                                _diagnostic(
+                                    "package.file_count_limit",
+                                    ".",
+                                    f"package contains more than {_MAX_PACKAGE_FILES} files",
+                                )
                             )
-                        )
-                        return
+                            return
                     names.append(entry.name)
             names.sort()
         except OSError:
@@ -299,6 +416,12 @@ def _read_tree(
                 diagnostics.append(
                     _diagnostic("path.symlink", relative, "symlinks are forbidden")
                 )
+                continue
+            if name == "__pycache__":
+                if not stat.S_ISDIR(entry_before.st_mode):
+                    diagnostics.append(_diagnostic("cache.invalid", relative, "__pycache__ must be a real directory"))
+                else:
+                    inspect_runtime_cache(directory_fd, relative, entry_before)
                 continue
             if stat.S_ISDIR(entry_before.st_mode):
                 if depth >= _MAX_PACKAGE_DEPTH:
@@ -1013,7 +1136,7 @@ def _structured_absolute_path(value: object) -> bool:
 
 
 def _validate_site_skill_package(
-    package_path: str | Path, *, _package_fd: int | None = None
+    package_path: str | Path, *, _package_fd: int | None = None, _include_contract: bool = False
 ) -> dict[str, object]:
     package = Path(package_path)
     diagnostics = _DiagnosticCollector()
@@ -1305,7 +1428,7 @@ def _validate_site_skill_package(
                 )
 
     diagnostics.sort(key=lambda item: (item.code, item.path, item.message))
-    return {
+    result: dict[str, object] = {
         "path": str(package),
         "valid": not diagnostics,
         "site_key": manifest.site_key if manifest else None,
@@ -1317,6 +1440,9 @@ def _validate_site_skill_package(
         "script_sha256": dict(sorted(script_digests.items())),
         "diagnostics": [item.to_dict() for item in diagnostics],
     }
+    if _include_contract:
+        result["_manifest_contract"] = manifest
+    return result
 
 
 def validate_site_skill_package(
@@ -1523,9 +1649,48 @@ def resolve_site_skill(
     return matches[0]
 
 
+def resolve_site_skill_contract(*, site_key: str, version: str, package_sha256: str, root: str | Path | None = None) -> ResolvedSiteSkill:
+    """Resolve one exact contract from a single pinned descriptor snapshot."""
+    if not _canonical_component(site_key):
+        raise ValueError("site_key must be a portable NFC directory component")
+    if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
+        raise ValueError("version must be canonical MAJOR.MINOR.PATCH")
+    if not _SHA256_RE.fullmatch(package_sha256):
+        raise ValueError("package digest must be exact lowercase SHA-256")
+    registry = Path(root) if root is not None else default_registry_root()
+    package = registry / site_key / version
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        registry_fd = os.open(registry, flags)
+    except OSError as exc:
+        raise LookupError("Site Skill registry is unavailable") from exc
+    try:
+        site_fd = os.open(site_key, flags, dir_fd=registry_fd)
+        try:
+            package_fd = os.open(version, flags, dir_fd=site_fd)
+        finally:
+            os.close(site_fd)
+        try:
+            verified = _validate_site_skill_package(package, _package_fd=package_fd, _include_contract=True)
+        finally:
+            os.close(package_fd)
+        if verified["valid"] is not True or verified["package_sha256"] != package_sha256:
+            raise LookupError("exact Site Skill resolution found no valid match")
+        manifest = verified.get("_manifest_contract")
+        if not isinstance(manifest, SiteSkill):
+            raise LookupError("exact Site Skill manifest is unavailable")
+        if manifest.site_key != site_key or manifest.version != version:
+            raise LookupError("exact Site Skill identity does not match")
+        return ResolvedSiteSkill(manifest, package_sha256, MappingProxyType(dict(verified["script_sha256"])))
+    finally:
+        os.close(registry_fd)
+
+
 __all__ = [
     "default_registry_root",
     "list_site_skills",
     "resolve_site_skill",
+    "resolve_site_skill_contract",
+    "ResolvedSiteSkill",
     "validate_site_skill_package",
 ]

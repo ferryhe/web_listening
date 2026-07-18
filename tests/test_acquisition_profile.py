@@ -14,6 +14,12 @@ from web_listening.blocks.acquisition_profile import (
 )
 
 
+def test_legacy_profile_without_recipe_mappings_or_limits_remains_valid():
+    profile = AcquisitionProfile(profile_id="legacy", site_key="demo", generated_at="2026-01-01T00:00:00Z")
+    assert profile.recipe_mappings == []
+    assert profile.resource_limits.timeout_seconds is None
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_PATH = REPO_ROOT / "docs/testing/fixtures/acquisition-profile-v1.sample.yaml"
 

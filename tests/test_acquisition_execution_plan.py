@@ -290,6 +290,33 @@ def test_exact_governed_binding_mismatch_fails_closed(key):
         compile_acquisition_execution_plan(scope, profile, skill, registry)
 
 
+@pytest.mark.parametrize("based_on", [
+    {"acquisition_profile_id": 123},
+    {123: "example-profile"},
+])
+def test_governed_binding_types_are_exact_and_redacted(based_on):
+    scope, profile, skill, registry = inputs()
+    scope.based_on.update(based_on)
+    with pytest.raises(AcquisitionExecutionPlanError) as caught:
+        compile_acquisition_execution_plan(scope, profile, skill, registry)
+    assert caught.value.code == "bindings.type_invalid"
+    assert caught.value.field == "based_on"
+    assert "123" not in str(caught.value)
+
+
+@pytest.mark.parametrize("key", [
+    "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
+    "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",
+])
+def test_governed_binding_values_reject_whitespace_normalization(key):
+    scope, profile, skill, registry = inputs()
+    scope.based_on[key] = f" {scope.based_on[key]} "
+    with pytest.raises(AcquisitionExecutionPlanError) as caught:
+        compile_acquisition_execution_plan(scope, profile, skill, registry)
+    assert caught.value.code == "bindings.value_invalid"
+    assert caught.value.field == f"based_on.{key}"
+
+
 def test_legacy_mode_has_exactly_one_warning_and_partial_rejected():
     scope, _, _, _ = inputs()
     scope.based_on = {}

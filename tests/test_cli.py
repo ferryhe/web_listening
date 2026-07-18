@@ -85,6 +85,22 @@ based_on: {{}}
     assert "SECRET-CANARY" not in result.stdout
 
 
+def test_preview_execution_plan_json_rejects_non_string_governed_identity_deterministically(tmp_path: Path):
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {acquisition_profile_id: 123}\n", encoding="utf-8")
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+    assert first.exit_code == second.exit_code != 0
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "123" not in first.stdout
+    assert "SECRET-CANARY" not in first.stdout
+
+
 def test_default_scope_loader_preserves_numeric_string_limits_for_bootstrap_callers(tmp_path: Path):
     scope = tmp_path / "scope.yaml"
     scope.write_text("max_depth: '3'\nmax_pages: '25'\nmax_files: '10'\n", encoding="utf-8")

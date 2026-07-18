@@ -138,7 +138,12 @@ def _allowed(host: str, domains: set[str]) -> bool:
 def compile_acquisition_execution_plan(scope: MonitorScopePlan, profile: AcquisitionProfile | None,
                                        site_skill: ResolvedSiteSkill | None,
                                        registry: ExecutorRegistry | None) -> AcquisitionExecutionPlan:
-    values = {key: str(scope.based_on.get(key, "")).strip() for key in _BINDINGS}
+    for key, value in scope.based_on.items():
+        if type(key) is not str or (key in _BINDINGS and type(value) is not str):
+            _fail("bindings.type_invalid", "governed acquisition binding keys and values must be strings", "based_on")
+        if key in _BINDINGS and value != value.strip():
+            _fail("bindings.value_invalid", "governed acquisition binding values must use exact canonical strings", f"based_on.{key}")
+    values = {key: scope.based_on.get(key, "") for key in _BINDINGS}
     present = {key for key, value in values.items() if value}
     scope_fp = compute_semantic_scope_fingerprint(scope)
     budgets = {"max_depth": scope.max_depth, "max_files": scope.max_files, "max_pages": scope.max_pages}

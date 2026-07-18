@@ -237,6 +237,16 @@ def load_monitor_scope_plan(
     based_on = payload.get("based_on", {}) or {}
     if not isinstance(based_on, dict):
         based_on = {}
+    if strict_limits:
+        governed_bindings = {
+            "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
+            "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",
+        }
+        if any(
+            type(key) is not str or (key in governed_bindings and type(value) is not str)
+            for key, value in based_on.items()
+        ):
+            raise ValueError("monitor_scope governed binding keys and values must be strings")
     selection_summary = payload.get("selection_summary", {}) or {}
     if not isinstance(selection_summary, dict):
         selection_summary = {}

@@ -218,6 +218,22 @@ def test_recommend_next_adapter_skips_explicitly_disabled_adapters():
     assert recommend_next_adapter(profile, [first_attempt]) == "sitemap"
 
 
+def test_default_profile_keeps_browseract_disabled_and_out_of_fallback():
+    profile = build_default_acquisition_profile("example-site", allowed_domains=["example.com"])
+    browseract = next(item for item in profile.adapters if item.adapter == "browseract")
+    assert browseract.enabled is False
+    assert "browseract" not in profile.fallback_order
+
+
+def test_enabled_browseract_requires_both_authorization_gates():
+    with pytest.raises(ValidationError, match="browseract requires"):
+        AcquisitionProfile(
+            profile_id="example-site-acquisition", site_key="example-site",
+            generated_at="2026-07-18T00:00:00Z", default_adapter="web_http",
+            adapters=[{"adapter": "browseract", "enabled": True}],
+        )
+
+
 def test_contract_models_reject_unknown_top_level_fields():
     with pytest.raises(ValidationError, match="extra"):
         AcquisitionProfile(

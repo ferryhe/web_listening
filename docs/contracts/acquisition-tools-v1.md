@@ -10,13 +10,15 @@ The authoritative runtime surfaces are:
 - CLI: `web-listening list-acquisition-tools --json`
 - Python helper: `web_listening.blocks.acquisition_tools.acquisition_tools_catalog()`
 
+The catalog includes `browseract` as `optional_runtime_disabled`. It is not probe-capable and is absent from automatic fallback. Its only supported execution surface is the trusted read-only gateway described in [BrowserAct runtime policy](../operations/BROWSERACT.md).
+
 The catalog describes what a frontend or agent may present to an operator before building or probing an `acquisition-profile.v1`. It does not change the fixed staged crawl execution path:
 
 ```text
 discover -> classify -> select -> task -> bootstrap -> run -> report -> manifest
 ```
 
-In this build, only `web_http`, `browser_rendered`, and `cloakbrowser` are probe-capable. `sitemap`, `rss`, and `batch_python` are stable reserved choices for planning and future integrations.
+In this build, only `web_http`, `browser_rendered`, and `cloakbrowser` are probe-capable. `browseract` is an explicit disabled runtime choice; `sitemap`, `rss`, and `batch_python` are stable reserved choices for planning and future integrations.
 
 ## Top-Level Object
 
@@ -34,6 +36,7 @@ In this build, only `web_http`, `browser_rendered`, and `cloakbrowser` are probe
 | ordinary public HTML | `web_http` |
 | dynamic JS | `browser_rendered` |
 | authorized stealth browser/CDP-like context | `cloakbrowser` |
+| authorized fixed read-only stealth recipe | `browseract` |
 | bulk structured/site-specific scrape | `batch_python` |
 | sitemap discovery | `sitemap` |
 | RSS/feed discovery | `rss` |
@@ -78,7 +81,7 @@ Frontend/agent-ready fields:
 | `operator_inputs` | array | Non-secret inputs a picker may request before profile/probe calls. |
 | `requires_profile_safety` | object | Required `acquisition-profile.v1` safety gates for this tool. |
 | `output_contract` | object | Related contracts and the explicit no-execution-change boundary. |
-| `runtime_status` | string | One of `available`, `optional_runtime`, or `reserved`. |
+| `runtime_status` | string | One of `available`, `optional_runtime`, `optional_runtime_disabled`, or `reserved`. |
 | `frontend_control` | object | Picker label, grouping, control kind, selectability, and sort order. |
 
 Operator input entries use:
@@ -95,6 +98,7 @@ Operator input entries use:
 
 - `available`: selectable and probe-capable with the installed core/runtime prerequisites for this build.
 - `optional_runtime`: selectable and probe-capable only when the named optional runtime is installed and safety gates pass.
+- `optional_runtime_disabled`: implemented behind an optional runtime gateway, but deliberately not selectable or probe-capable in this build.
 - `reserved`: visible in the picker contract but not executable as a probe adapter in this build.
 
 ## Safety Boundary

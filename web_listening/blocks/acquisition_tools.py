@@ -323,6 +323,40 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             ],
         },
         {
+            "adapter": "browseract",
+            "category": "authorized_browser",
+            "purpose": "Run one of two fixed read-only BrowserAct recipes through an isolated CLI runtime.",
+            "recommended_when": [
+                "authorized public reading where reviewed stealth extraction is required",
+                "authorized interactive reading limited to initial open, stable waits, scrolling, and content reads",
+            ],
+            "not_for": [
+                "automatic fallback or fixed staged bootstrap/run execution",
+                "forms, uploads, authentication or cookie mutation, CAPTCHA services, proxies, writes, or browser lifecycle control",
+            ],
+            "operator_inputs": [
+                {"name": "executable", "type": "absolute_path", "required": True, "description": "Explicit absolute executable, or provide a controlled PATH to runtime inspection."},
+                {"name": "recipe", "type": "enum", "required": True, "values": ["stealth_extract", "interactive_read"], "description": "One fixed read-only recipe."},
+            ],
+            "requires_profile_safety": {"allow_stealth_browser": True, "require_authorized_access": True},
+            "output_contract": {"profile": "acquisition-profile.v1", "probe": None, "execution": unchanged_execution},
+            "runtime_status": "optional_runtime_disabled",
+            "optional_runtime": {
+                "package": "browser-act-cli==1.0.6",
+                "python": "3.12",
+                "isolation": "dedicated tool environment required; never install into the project environment",
+            },
+            "frontend_control": {"label": "BrowserAct (read-only)", "picker_group": "Authorized acquisition", "control_kind": "radio_option", "selectable": False, "sort_order": 35},
+            "built_in_now": False,
+            "implemented_for_pr3_probing": False,
+            "probe_capable": False,
+            "safety_notes": [
+                "Disabled by default and absent from automatic fallback.",
+                "Only stealth_extract and interactive_read are accepted; the gateway never accepts arbitrary argv.",
+                "Runtime inspection must pass before constructing the trusted executor.",
+            ],
+        },
+        {
             "adapter": "batch_python",
             "category": "site_specific_batch",
             "purpose": "Reserved contract for reviewed site-specific batch acquisition scripts.",
@@ -392,6 +426,11 @@ def acquisition_tools_catalog() -> dict[str, Any]:
                 "input_signal": "authorized stealth browser/CDP-like context",
                 "tool": "cloakbrowser",
                 "rationale": "Use only with explicit authorization and required profile safety gates.",
+            },
+            {
+                "input_signal": "authorized fixed read-only stealth recipe",
+                "tool": "browseract",
+                "rationale": "Optional explicit selection only after isolated runtime inspection and profile authorization.",
             },
             {
                 "input_signal": "bulk structured/site-specific scrape",

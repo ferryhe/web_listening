@@ -37,6 +37,7 @@ Allowed adapter IDs are:
 | `sitemap` | Sitemap-driven discovery or capture. |
 | `rss` | Feed-driven discovery or capture. |
 | `cloakbrowser` | Authorized stealth-browser capture for approved access contexts only. |
+| `browseract` | Optional isolated CLI with fixed read-only recipes; disabled by default. |
 | `batch_python` | Explicit site-specific batch acquisition script or job. |
 
 PR1 defines IDs and validation only. It does not install or invoke CloakBrowser.
@@ -147,3 +148,6 @@ Later PRs may:
 - add more acquisition tool runtimes behind explicit contracts and safety rules
 
 Those changes must preserve the fixed staged workflow and keep site-specific acquisition variation in this profile layer.
+## BrowserAct profile metadata
+
+`browseract` is a valid optional adapter id. Default profiles include it as disabled metadata only; it is never added to `fallback_order`. Enabling or selecting it requires both `safety.allow_stealth_browser=true` and `safety.require_authorized_access=true`. Runtime inspection and fixed-recipe validation are separate executor concerns.

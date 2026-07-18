@@ -15,6 +15,7 @@ These are the long-lived docs that describe the current system:
   - [TREE_MONITORING_DESIGN.md](design/TREE_MONITORING_DESIGN.md)
 - operations:
   - [PYTHON_RUNTIME.md](operations/PYTHON_RUNTIME.md)
+  - [BROWSERACT.md](operations/BROWSERACT.md)
   - [DEV_TEST_TARGETS.md](operations/DEV_TEST_TARGETS.md)
   - [SMOKE_SITE_MANAGEMENT.md](operations/SMOKE_SITE_MANAGEMENT.md)
   - [TREE_BUDGET_RULES.md](operations/TREE_BUDGET_RULES.md)
@@ -115,3 +116,8 @@ These legacy commands still work for site-level monitoring, while the staged tre
 ## Archive
 
 - [2026-04-roadmap-history/README.md](archive/2026-04-roadmap-history/README.md)
+## Optional BrowserAct adapter
+
+- [BrowserAct runtime policy](operations/BROWSERACT.md)
+- [Acquisition tools contract](contracts/acquisition-tools-v1.md)
+- [Acquisition profile contract](contracts/acquisition-profile-v1.md)

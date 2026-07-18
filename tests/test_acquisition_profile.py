@@ -21,35 +21,14 @@ def test_legacy_profile_without_recipe_mappings_or_limits_remains_valid():
     assert profile.resource_limits.timeout_seconds is None
 
 
-@pytest.mark.parametrize("field", ["allow_stealth_browser", "require_authorized_access"])
-@pytest.mark.parametrize("bad_value", ["true", "false"])
-def test_safety_authorization_flags_reject_string_booleans(field, bad_value):
-    with pytest.raises(ValidationError, match="booleans without coercion") as exc_info:
-        AcquisitionSafetyPolicy(**{field: bad_value})
+def test_shared_quality_and_safety_models_preserve_legacy_scalar_coercion():
+    quality = AcquisitionQualityGates(min_words="7", require_status_ok="true")
+    safety = AcquisitionSafetyPolicy(allow_stealth_browser="true", require_authorized_access="false")
 
-    assert bad_value not in str(exc_info.value)
-
-
-@pytest.mark.parametrize("bad_value", ["true", "false"])
-def test_require_status_ok_rejects_string_booleans(bad_value):
-    with pytest.raises(ValidationError, match="boolean without coercion") as exc_info:
-        AcquisitionQualityGates(require_status_ok=bad_value)
-
-    assert bad_value not in str(exc_info.value)
-
-
-@pytest.mark.parametrize("field", ["min_words", "min_links", "min_document_links"])
-def test_quality_gate_counts_reject_numeric_strings(field):
-    with pytest.raises(ValidationError, match="integers without coercion") as exc_info:
-        AcquisitionQualityGates(**{field: "7"})
-
-    assert "7" not in str(exc_info.value)
-
-
-@pytest.mark.parametrize("field", ["min_words", "min_links", "min_document_links"])
-def test_quality_gate_counts_reject_booleans(field):
-    with pytest.raises(ValidationError, match="integers without coercion"):
-        AcquisitionQualityGates(**{field: True})
+    assert quality.min_words == 7
+    assert quality.require_status_ok is True
+    assert safety.allow_stealth_browser is True
+    assert safety.require_authorized_access is False
 
 
 def test_governed_quality_and_authorization_scalars_accept_exact_types():
@@ -205,6 +184,60 @@ def test_load_acquisition_profile_rejects_non_mapping_yaml_roots(
 
     with pytest.raises(ValueError, match="YAML root must be a mapping"):
         load_acquisition_profile(profile_path)
+
+
+def test_load_acquisition_profile_normalizes_malformed_yaml_without_canaries(tmp_path: Path):
+    profile_path = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
+    profile_path.write_text("profile_id: [SECRET-CONTENT-CANARY\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_acquisition_profile(profile_path)
+
+    assert str(exc_info.value) == "acquisition profile YAML is invalid"
+    assert "SECRET-PATH-CANARY" not in str(exc_info.value)
+    assert "SECRET-CONTENT-CANARY" not in str(exc_info.value)
+
+
+def test_default_loader_coerces_legacy_quality_and_safety_scalars(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text("""profile_id: legacy
+site_key: demo
+generated_at: "2026-01-01T00:00:00Z"
+quality_gates:
+  min_words: "120"
+  require_status_ok: "true"
+safety:
+  allow_stealth_browser: "false"
+  require_authorized_access: "true"
+""", encoding="utf-8")
+
+    profile = load_acquisition_profile(profile_path)
+
+    assert profile.quality_gates.min_words == 120
+    assert profile.quality_gates.require_status_ok is True
+    assert profile.safety.allow_stealth_browser is False
+    assert profile.safety.require_authorized_access is True
+
+
+@pytest.mark.parametrize("yaml_line", [
+    'quality_gates: {min_words: "120"}',
+    'quality_gates: {min_links: true}',
+    'quality_gates: {require_status_ok: "true"}',
+    'safety: {allow_stealth_browser: "false"}',
+    'safety: {require_authorized_access: "true"}',
+])
+def test_strict_loader_rejects_coercible_quality_and_safety_scalars(tmp_path: Path, yaml_line: str):
+    profile_path = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
+    profile_path.write_text(
+        'profile_id: legacy\nsite_key: demo\ngenerated_at: "2026-01-01T00:00:00Z"\n' + yaml_line + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_acquisition_profile(profile_path, strict=True)
+
+    assert "SECRET-PATH-CANARY" not in str(exc_info.value)
+    assert "120" not in str(exc_info.value)
 
 
 def test_recommend_next_adapter_walks_fallback_order_and_stops_after_passed_attempt():

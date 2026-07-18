@@ -230,7 +230,10 @@ def _load_scope_limit(
 def load_monitor_scope_plan(
     path: str | Path, *, strict_limits: bool = False
 ) -> MonitorScopePlan:
-    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    try:
+        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError("monitor scope YAML is invalid") from exc
     fetch_config_json = payload.get("fetch_config_json", {}) or {}
     if not isinstance(fetch_config_json, dict):
         raise ValueError("monitor_scope.fetch_config_json must be an object")

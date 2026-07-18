@@ -356,7 +356,7 @@ async def preview_acquisition_execution_plan_endpoint(request: Request):
         raw_body = await request.json()
         body = AcquisitionExecutionPreviewRequest.model_validate(raw_body)
         scope = load_monitor_scope_plan(_safe_input_path(body.scope_path), strict_limits=True)
-        profile = load_acquisition_profile(_safe_input_path(body.profile_path)) if body.profile_path else None
+        profile = load_acquisition_profile(_safe_input_path(body.profile_path), strict=True) if body.profile_path else None
         governed = any(str(scope.based_on.get(key, "")).strip() for key in (
             "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
             "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",

@@ -60,34 +60,12 @@ class AcquisitionQualityGates(BaseModel):
         ]
     )
 
-    @field_validator("min_words", "min_links", "min_document_links", mode="before")
-    @classmethod
-    def validate_exact_counts(cls, value: Any) -> Any:
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError("quality gate counts must be integers without coercion")
-        return value
-
-    @field_validator("require_status_ok", mode="before")
-    @classmethod
-    def validate_exact_status_policy(cls, value: Any) -> Any:
-        if not isinstance(value, bool):
-            raise ValueError("require_status_ok must be a boolean without coercion")
-        return value
-
-
 class AcquisitionSafetyPolicy(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid", hide_input_in_errors=True)
 
     allowed_domains: list[str] = Field(default_factory=list)
     allow_stealth_browser: bool = False
     require_authorized_access: bool = False
-
-    @field_validator("allow_stealth_browser", "require_authorized_access", mode="before")
-    @classmethod
-    def validate_exact_authorization_flags(cls, value: Any) -> Any:
-        if not isinstance(value, bool):
-            raise ValueError("safety authorization flags must be booleans without coercion")
-        return value
 
     @field_validator("allowed_domains", mode="before")
     @classmethod
@@ -317,12 +295,29 @@ def build_default_acquisition_profile(
     )
 
 
-def load_acquisition_profile(path: str | Path) -> AcquisitionProfile:
-    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+def load_acquisition_profile(path: str | Path, *, strict: bool = False) -> AcquisitionProfile:
+    try:
+        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError("acquisition profile YAML is invalid") from exc
     if payload is None:
         payload = {}
     if not isinstance(payload, Mapping):
         raise ValueError("acquisition profile YAML root must be a mapping/object")
+    if strict:
+        quality_gates = payload.get("quality_gates")
+        if isinstance(quality_gates, Mapping):
+            for field in ("min_words", "min_links", "min_document_links"):
+                value = quality_gates.get(field)
+                if field in quality_gates and (isinstance(value, bool) or not isinstance(value, int)):
+                    raise ValueError("acquisition profile has an invalid quality gate count")
+            if "require_status_ok" in quality_gates and not isinstance(quality_gates["require_status_ok"], bool):
+                raise ValueError("acquisition profile has an invalid quality status policy")
+        safety = payload.get("safety")
+        if isinstance(safety, Mapping):
+            for field in ("allow_stealth_browser", "require_authorized_access"):
+                if field in safety and not isinstance(safety[field], bool):
+                    raise ValueError("acquisition profile has an invalid safety authorization flag")
     return AcquisitionProfile(**payload)
 
 

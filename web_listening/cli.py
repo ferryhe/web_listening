@@ -767,7 +767,7 @@ def preview_execution_plan_command(
             "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
             "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",
         ))
-        profile = load_acquisition_profile(profile_path) if profile_path else None
+        profile = load_acquisition_profile(profile_path, strict=True) if profile_path else None
         skill = None
         if governed:
             skill = resolve_site_skill_contract(site_key=scope.site_key,

@@ -63,6 +63,24 @@ def test_preview_execution_plan_json_parser_and_compiler_errors_are_structured(t
     assert str(tmp_path) not in failed.stdout
 
 
+def test_preview_execution_plan_json_malformed_scope_yaml_is_stable_and_redacted(tmp_path: Path):
+    scope = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
+    scope.write_text("site_key: [SECRET-CONTENT-CANARY\n", encoding="utf-8")
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code != 0
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "SECRET-PATH-CANARY" not in first.stdout
+    assert "SECRET-CONTENT-CANARY" not in first.stdout
+
+
 @pytest.mark.parametrize("limit_yaml", ["true", '"25"'])
 def test_preview_execution_plan_json_rejects_coerced_scope_limits(tmp_path: Path, limit_yaml: str):
     scope = tmp_path / "SECRET-CANARY-scope.yaml"
@@ -83,6 +101,27 @@ based_on: {{}}
         "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
     }
     assert "SECRET-CANARY" not in result.stdout
+
+
+def test_preview_execution_plan_json_rejects_coerced_profile_authority(tmp_path: Path):
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {}\n", encoding="utf-8")
+    profile = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
+    profile.write_text("""profile_id: demo
+site_key: demo
+generated_at: "2026-01-01T00:00:00Z"
+quality_gates: {min_words: "SECRET-VALUE-CANARY"}
+""", encoding="utf-8")
+
+    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope),
+        "--profile-path", str(profile), "--json"])
+
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"] == {
+        "code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError",
+    }
+    assert "SECRET-PATH-CANARY" not in result.stdout
+    assert "SECRET-VALUE-CANARY" not in result.stdout
 
 
 def test_preview_execution_plan_json_rejects_non_string_governed_identity_deterministically(tmp_path: Path):

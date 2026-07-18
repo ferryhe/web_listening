@@ -64,6 +64,23 @@ def test_execution_plan_preview_api_structured_redacted_failure(tmp_path: Path, 
     assert str(tmp_path) not in response.text
 
 
+def test_execution_plan_preview_api_malformed_scope_yaml_is_redacted_422(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
+    scope.write_text("site_key: [SECRET-CONTENT-CANARY\n", encoding="utf-8")
+
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-PATH-CANARY" not in response.text
+    assert "SECRET-CONTENT-CANARY" not in response.text
+
+
 def test_execution_plan_preview_api_missing_path_is_redacted_envelope(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
     response = TestClient(create_app()).post("/api/v1/acquisition/execution-plans/preview",
@@ -97,6 +114,29 @@ based_on: {{}}
         "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
     }
     assert "SECRET-CANARY" not in response.text
+
+
+def test_execution_plan_preview_api_rejects_coerced_profile_authority(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {}\n", encoding="utf-8")
+    profile = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
+    profile.write_text("""profile_id: demo
+site_key: demo
+generated_at: "2026-01-01T00:00:00Z"
+safety: {require_authorized_access: "SECRET-VALUE-CANARY"}
+""", encoding="utf-8")
+
+    response = TestClient(create_app()).post("/api/v1/acquisition/execution-plans/preview", json={
+        "scope_path": scope.name, "profile_path": profile.name,
+    })
+
+    assert response.status_code == 422
+    assert response.json()["error"] == {
+        "code": "input.invalid", "field": ".", "message": "preview input is invalid",
+    }
+    assert "SECRET-PATH-CANARY" not in response.text
+    assert "SECRET-VALUE-CANARY" not in response.text
 
 
 def test_execution_plan_preview_route_owns_all_request_validation(tmp_path: Path, monkeypatch):

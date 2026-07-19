@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import compileall
 import os
+import py_compile
 import shutil
 import tomllib
 from pathlib import Path
@@ -94,6 +95,49 @@ def test_cache_source_replacement_before_package_hash_fails_closed(
     monkeypatch.setattr(registry_module.os, "stat", replace_between_cache_and_walk)
     result = validate_site_skill_package(package)
 
+    assert result["valid"] is False
+    assert "path.tree_changed" in diagnostic_codes(result)
+
+
+def test_cache_source_same_inode_rewrite_after_package_hash_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = copy_example(tmp_path)
+    scripts = package / "scripts"
+    source = scripts / "Upper.py"
+    cache = scripts / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    pyc = cache / f"Upper.{sys.implementation.cache_tag}.pyc"
+    prepared_pyc = tmp_path / "Upper.pyc"
+    timestamp = 1_700_000_000
+
+    source.write_text("VALUE = 'B'\n", encoding="utf-8")
+    os.utime(source, (timestamp, timestamp))
+    py_compile.compile(str(source), cfile=str(prepared_pyc), doraise=True)
+    source.write_text("VALUE = 'A'\n", encoding="utf-8")
+    os.utime(source, (timestamp, timestamp))
+    py_compile.compile(str(source), cfile=str(pyc), doraise=True)
+    source_inode = source.stat().st_ino
+    pyc_inode = pyc.stat().st_ino
+    replacement_pyc = prepared_pyc.read_bytes()
+    original_open = registry_module.os.open
+    rewritten = False
+
+    def rewrite_before_cache_inspection(path, flags, *args, **kwargs):
+        nonlocal rewritten
+        if path == "__pycache__" and kwargs.get("dir_fd") is not None and not rewritten:
+            rewritten = True
+            source.write_text("VALUE = 'B'\n", encoding="utf-8")
+            os.utime(source, (timestamp, timestamp))
+            pyc.write_bytes(replacement_pyc)
+            assert source.stat().st_ino == source_inode
+            assert pyc.stat().st_ino == pyc_inode
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(registry_module.os, "open", rewrite_before_cache_inspection)
+    result = validate_site_skill_package(package)
+
+    assert rewritten is True
     assert result["valid"] is False
     assert "path.tree_changed" in diagnostic_codes(result)
 

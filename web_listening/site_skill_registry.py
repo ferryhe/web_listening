@@ -245,6 +245,7 @@ def _read_tree(
 
     seen: dict[str, str] = {}
     cached_source_identities: dict[str, tuple[int, int, int, int, int, int]] = {}
+    hashed_file_identities: dict[str, tuple[int, int, int, int, int, int]] = {}
 
     def inspect_runtime_cache(directory_fd: int, relative: str, before: os.stat_result) -> None:
         """Validate but exclude canonical interpreter cache artifacts from authority."""
@@ -346,6 +347,10 @@ def _read_tree(
                     source_prefix = relative.rsplit("/", 1)[0] if "/" in relative else ""
                     source_relative = f"{source_prefix}/{source}" if source_prefix else source
                     source_identity = _identity(source_info)
+                    hashed_identity = hashed_file_identities.get(source_relative)
+                    if hashed_identity is not None and hashed_identity != source_identity:
+                        diagnostics.append(_diagnostic("path.tree_changed", source_relative, "runtime cache source changed after hashing"))
+                        continue
                     previous_identity = cached_source_identities.get(source_relative)
                     if previous_identity is not None and previous_identity != source_identity:
                         diagnostics.append(_diagnostic("path.tree_changed", source_relative, "runtime cache sources changed during validation"))
@@ -599,6 +604,7 @@ def _read_tree(
                     continue
                 aggregate_bytes += len(data)
                 files.append((relative, data))
+                hashed_file_identities[relative] = identities[-1]
             else:
                 diagnostics.append(
                     _diagnostic(

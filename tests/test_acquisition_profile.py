@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from web_listening.blocks.acquisition_profile import (
+    AcquisitionAdapterConfig,
     AcquisitionProfile,
     AcquisitionQualityGates,
     AcquisitionSafetyPolicy,
@@ -238,6 +239,38 @@ def test_strict_loader_rejects_coercible_quality_and_safety_scalars(tmp_path: Pa
 
     assert "SECRET-PATH-CANARY" not in str(exc_info.value)
     assert "120" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("enabled_yaml", ['"true"', "1"])
+def test_strict_loader_rejects_coercible_adapter_enabled_scalars(tmp_path: Path, enabled_yaml: str):
+    profile_path = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
+    profile_path.write_text(
+        'profile_id: legacy\nsite_key: demo\ngenerated_at: "2026-01-01T00:00:00Z"\n'
+        f'adapters: [{{adapter: web_http, enabled: {enabled_yaml}, reason: "SECRET-CONTENT-CANARY"}}]\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_acquisition_profile(profile_path, strict=True)
+
+    assert str(exc_info.value) == "acquisition profile has an invalid adapter enabled flag"
+    assert "SECRET-PATH-CANARY" not in str(exc_info.value)
+    assert "SECRET-CONTENT-CANARY" not in str(exc_info.value)
+
+
+def test_default_loader_and_direct_adapter_model_preserve_enabled_coercion(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text(
+        'profile_id: legacy\nsite_key: demo\ngenerated_at: "2026-01-01T00:00:00Z"\n'
+        'adapters: [{adapter: web_http, enabled: "true"}]\n',
+        encoding="utf-8",
+    )
+
+    profile = load_acquisition_profile(profile_path)
+    adapter = AcquisitionAdapterConfig(adapter="web_http", enabled=1)
+
+    assert profile.adapters[0].enabled is True
+    assert adapter.enabled is True
 
 
 def test_recommend_next_adapter_walks_fallback_order_and_stops_after_passed_attempt():

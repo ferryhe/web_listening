@@ -231,13 +231,20 @@ def load_monitor_scope_plan(
     path: str | Path, *, strict_limits: bool = False
 ) -> MonitorScopePlan:
     try:
-        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise ValueError("monitor scope YAML is invalid") from exc
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise ValueError("monitor scope YAML root must be an object")
     fetch_config_json = payload.get("fetch_config_json", {}) or {}
     if not isinstance(fetch_config_json, dict):
         raise ValueError("monitor_scope.fetch_config_json must be an object")
-    based_on = payload.get("based_on", {}) or {}
+    based_on = payload.get("based_on", {})
+    if strict_limits and not isinstance(based_on, dict):
+        raise ValueError("monitor_scope.based_on must be an object")
+    based_on = based_on or {}
     if not isinstance(based_on, dict):
         based_on = {}
     if strict_limits:

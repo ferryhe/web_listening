@@ -81,6 +81,38 @@ def test_preview_execution_plan_json_malformed_scope_yaml_is_stable_and_redacted
     assert "SECRET-CONTENT-CANARY" not in first.stdout
 
 
+def test_preview_execution_plan_json_sequence_scope_root_is_stable_and_redacted(tmp_path: Path):
+    scope = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
+    scope.write_text("- SECRET-CONTENT-CANARY\n", encoding="utf-8")
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code != 0
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "SECRET-PATH-CANARY" not in first.stdout
+    assert "SECRET-CONTENT-CANARY" not in first.stdout
+
+
+def test_preview_execution_plan_json_rejects_explicit_empty_governed_binding(tmp_path: Path):
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {acquisition_profile_id: ''}\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope), "--json"])
+
+    assert result.exit_code != 0
+    assert json.loads(result.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "bindings.partial", "field": "based_on", "message": "governed acquisition bindings must be all present or all absent"},
+    }
+    assert "SECRET-CANARY" not in result.stdout
+
+
 @pytest.mark.parametrize("limit_yaml", ["true", '"25"'])
 def test_preview_execution_plan_json_rejects_coerced_scope_limits(tmp_path: Path, limit_yaml: str):
     scope = tmp_path / "SECRET-CANARY-scope.yaml"
@@ -138,6 +170,41 @@ def test_preview_execution_plan_json_rejects_non_string_governed_identity_determ
     }
     assert "123" not in first.stdout
     assert "SECRET-CANARY" not in first.stdout
+
+
+@pytest.mark.parametrize("based_on_yaml", ["[]", "[acquisition_profile_id]"])
+def test_preview_execution_plan_json_rejects_non_mapping_based_on_deterministically(
+    tmp_path: Path, based_on_yaml: str
+):
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(
+        f"site_key: demo\nseed_url: https://example.com/\nbased_on: {based_on_yaml}\n",
+        encoding="utf-8",
+    )
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code != 0
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "SECRET-CANARY" not in first.stdout
+
+
+@pytest.mark.parametrize("based_on_yaml", ["[]", "[acquisition_profile_id]"])
+def test_default_scope_loader_preserves_non_mapping_based_on_compatibility(
+    tmp_path: Path, based_on_yaml: str
+):
+    scope = tmp_path / "scope.yaml"
+    scope.write_text(f"based_on: {based_on_yaml}\n", encoding="utf-8")
+
+    loaded = load_monitor_scope_plan(scope)
+
+    assert loaded.based_on == {}
 
 
 def test_default_scope_loader_preserves_numeric_string_limits_for_bootstrap_callers(tmp_path: Path):

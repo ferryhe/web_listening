@@ -81,6 +81,23 @@ def test_execution_plan_preview_api_malformed_scope_yaml_is_redacted_422(tmp_pat
     assert "SECRET-CONTENT-CANARY" not in response.text
 
 
+def test_execution_plan_preview_api_sequence_scope_root_is_redacted_422(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
+    scope.write_text("- SECRET-CONTENT-CANARY\n", encoding="utf-8")
+
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-PATH-CANARY" not in response.text
+    assert "SECRET-CONTENT-CANARY" not in response.text
+
+
 def test_execution_plan_preview_api_missing_path_is_redacted_envelope(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
     response = TestClient(create_app()).post("/api/v1/acquisition/execution-plans/preview",
@@ -114,6 +131,32 @@ based_on: {{}}
         "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
     }
     assert "SECRET-CANARY" not in response.text
+
+
+@pytest.mark.parametrize("based_on_yaml", ["[]", "[acquisition_profile_id]"])
+def test_execution_plan_preview_api_rejects_non_mapping_based_on_deterministically(
+    tmp_path: Path, monkeypatch, based_on_yaml: str
+):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(
+        f"site_key: demo\nseed_url: https://example.com/\nbased_on: {based_on_yaml}\n",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app())
+
+    first = client.post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+    second = client.post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+
+    assert first.status_code == second.status_code == 422
+    assert first.content == second.content
+    assert first.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-CANARY" not in first.text
 
 
 def test_execution_plan_preview_api_rejects_coerced_profile_authority(tmp_path: Path, monkeypatch):

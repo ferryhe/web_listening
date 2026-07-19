@@ -144,7 +144,7 @@ def compile_acquisition_execution_plan(scope: MonitorScopePlan, profile: Acquisi
         if key in _BINDINGS and value != value.strip():
             _fail("bindings.value_invalid", "governed acquisition binding values must use exact canonical strings", f"based_on.{key}")
     values = {key: scope.based_on.get(key, "") for key in _BINDINGS}
-    present = {key for key, value in values.items() if value}
+    present = {key for key in _BINDINGS if key in scope.based_on}
     scope_fp = compute_semantic_scope_fingerprint(scope)
     budgets = {"max_depth": scope.max_depth, "max_files": scope.max_files, "max_pages": scope.max_pages}
     if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in budgets.values()):

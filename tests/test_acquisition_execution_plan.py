@@ -329,6 +329,15 @@ def test_legacy_mode_has_exactly_one_warning_and_partial_rejected():
     assert caught.value.code == "bindings.partial"
 
 
+def test_explicit_empty_governed_binding_is_partial_not_legacy():
+    scope, _, _, _ = inputs()
+    scope.based_on = {"acquisition_profile_id": ""}
+    with pytest.raises(AcquisitionExecutionPlanError) as caught:
+        compile_acquisition_execution_plan(scope, None, None, None)
+    assert caught.value.code == "bindings.partial"
+    assert caught.value.field == "based_on"
+
+
 def test_fixture_matches_contract():
     scope, profile, skill, registry = inputs()
     actual = preview_envelope(compile_acquisition_execution_plan(scope, profile, skill, registry))

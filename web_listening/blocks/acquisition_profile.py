@@ -318,6 +318,11 @@ def load_acquisition_profile(path: str | Path, *, strict: bool = False) -> Acqui
             for field in ("allow_stealth_browser", "require_authorized_access"):
                 if field in safety and not isinstance(safety[field], bool):
                     raise ValueError("acquisition profile has an invalid safety authorization flag")
+        adapters = payload.get("adapters")
+        if isinstance(adapters, list):
+            for adapter in adapters:
+                if isinstance(adapter, Mapping) and "enabled" in adapter and not isinstance(adapter["enabled"], bool):
+                    raise ValueError("acquisition profile has an invalid adapter enabled flag")
     return AcquisitionProfile(**payload)
 
 

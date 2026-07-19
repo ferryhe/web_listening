@@ -5,13 +5,16 @@ import math
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, get_type_hints
 
 import pytest
 
 from web_listening.blocks.acquisition_execution_plan import (
-    AcquisitionExecutionPlanError, canonical_json, compile_acquisition_execution_plan, preview_envelope,
+    AcquisitionExecutionPlan, AcquisitionExecutionPlanError, canonical_json, compile_acquisition_execution_plan,
+    preview_envelope,
 )
 from web_listening.blocks.acquisition_profile import (
     AcquisitionAdapterConfig, AcquisitionProfile, AcquisitionRecipeMapping,
@@ -91,6 +94,15 @@ def test_plan_nested_authority_is_deeply_immutable_and_serialization_stays_consi
     with pytest.raises((AttributeError, TypeError)):
         plan.steps[0]["required_capabilities"].append("evil")
     assert plan.to_json() == wire
+
+
+def test_plan_nested_authority_type_hints_are_immutable_mappings():
+    hints = get_type_hints(AcquisitionExecutionPlan)
+    assert hints["quality_gates"] == Mapping[str, Any]
+    assert hints["limits"] == Mapping[str, Any]
+    assert hints["scope_budgets"] == Mapping[str, int]
+    assert hints["steps"] == tuple[Mapping[str, Any], ...]
+    assert hints["warnings"] == tuple[Mapping[str, str], ...]
 
 
 @pytest.mark.parametrize("url", [

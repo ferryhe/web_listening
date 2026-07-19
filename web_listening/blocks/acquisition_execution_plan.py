@@ -53,11 +53,11 @@ class AcquisitionExecutionPlan:
     entrypoint: str | None
     script_sha256: str | None
     required_capabilities: tuple[str, ...]
-    quality_gates: dict[str, Any]
-    limits: dict[str, Any]
-    scope_budgets: dict[str, int]
-    steps: tuple[dict[str, Any], ...]
-    warnings: tuple[dict[str, str], ...]
+    quality_gates: Mapping[str, Any]
+    limits: Mapping[str, Any]
+    scope_budgets: Mapping[str, int]
+    steps: tuple[Mapping[str, Any], ...]
+    warnings: tuple[Mapping[str, str], ...]
 
     def to_dict(self) -> dict[str, Any]:
         return {name: _thaw(getattr(self, name)) for name in self.__dataclass_fields__}

@@ -239,13 +239,30 @@ def load_monitor_scope_plan(
         payload = {}
     if not isinstance(payload, dict):
         raise ValueError("monitor scope YAML root must be an object")
+    if strict_limits:
+        for field in ("fetch_config_json", "based_on", "selection_summary"):
+            if field in payload and type(payload[field]) is not dict:
+                raise ValueError(f"monitor_scope.{field} must be an object")
+        list_fields = (
+            "allowed_page_prefixes",
+            "allowed_file_prefixes",
+            "selected_focus_prefixes",
+            "excluded_page_prefixes",
+            "deferred_page_prefixes",
+            "excluded_categories",
+            "notes",
+        )
+        if any(
+            type(payload[field]) is not list
+            or any(type(item) is not str for item in payload[field])
+            for field in list_fields
+            if field in payload
+        ):
+            raise ValueError("monitor_scope list fields must be lists of strings")
     fetch_config_json = payload.get("fetch_config_json", {}) or {}
     if not isinstance(fetch_config_json, dict):
         raise ValueError("monitor_scope.fetch_config_json must be an object")
-    based_on = payload.get("based_on", {})
-    if strict_limits and not isinstance(based_on, dict):
-        raise ValueError("monitor_scope.based_on must be an object")
-    based_on = based_on or {}
+    based_on = payload.get("based_on", {}) or {}
     if not isinstance(based_on, dict):
         based_on = {}
     if strict_limits:
@@ -261,6 +278,13 @@ def load_monitor_scope_plan(
     selection_summary = payload.get("selection_summary", {}) or {}
     if not isinstance(selection_summary, dict):
         selection_summary = {}
+    if strict_limits and any(
+        type(key) is not str or type(value) is not int or value < 0
+        for key, value in selection_summary.items()
+    ):
+        raise ValueError(
+            "monitor_scope.selection_summary keys must be strings and values must be non-negative integers"
+        )
     return MonitorScopePlan(
         scope_fingerprint=str(payload.get("scope_fingerprint", "")).strip()
         or compute_scope_fingerprint(

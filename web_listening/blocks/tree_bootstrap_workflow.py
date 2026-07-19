@@ -4,11 +4,13 @@ import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 
 from web_listening.blocks.document import DocumentProcessor
 from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan, monitor_scope_to_tree_target
 from web_listening.blocks.storage import Storage
 from web_listening.blocks.tree_crawler import TreeCrawler, build_scope_from_site
+from web_listening.blocks.acquisition_gateway import AcquisitionGateway
 from web_listening.config import settings
 from web_listening.models import CrawlScope, Site
 from web_listening.tree_defaults import PRODUCTION_TREE_LIMITS
@@ -116,14 +118,24 @@ def run_bootstrap(
     download_files: bool = False,
     refresh_existing: bool = False,
     targets: list[TreeTarget] | None = None,
+    acquisition_gateway: AcquisitionGateway | None = None,
 ) -> list[BootstrapResult]:
-    resolved_targets = targets if targets is not None else filter_tree_targets(load_tree_targets(catalog), site_keys)
-    storage = Storage(settings.db_path)
-    processor = DocumentProcessor(storage=storage) if download_files else None
+    storage = None
+    processor = None
+    tree = None
     results: list[BootstrapResult] = []
+    target_failure_recorded = False
 
     try:
-        with TreeCrawler(storage=storage, document_processor=processor) as tree:
+        resolved_targets = targets if targets is not None else filter_tree_targets(load_tree_targets(catalog), site_keys)
+        storage = Storage(settings.db_path)
+        processor = DocumentProcessor(storage=storage) if download_files else None
+        tree = TreeCrawler(
+            storage=storage, document_processor=processor,
+            acquisition_gateway=acquisition_gateway,
+        )
+        tree.__enter__()
+        try:
             for target in resolved_targets:
                 effective_max_depth = target.tree_max_depth or max_depth
                 effective_max_pages = target.tree_max_pages or max_pages
@@ -189,6 +201,7 @@ def run_bootstrap(
                         )
                     )
                 except Exception as exc:  # pragma: no cover - live failure path
+                    target_failure_recorded = True
                     results.append(
                         BootstrapResult(
                             catalog=target.catalog,
@@ -210,8 +223,30 @@ def run_bootstrap(
                             notes=f"{target.notes} {type(exc).__name__}: {exc}".strip(),
                         )
                     )
+        finally:
+            # The workflow owns passed resources; TreeCrawler retains ownership only
+            # of a crawler it constructed internally.
+            if hasattr(tree, "acquisition_gateway"):
+                tree.acquisition_gateway = None
+            if hasattr(tree, "document_processor"):
+                tree.document_processor = None
     finally:
-        storage.close()
+        cleanup_failures: list[BaseException] = []
+        active_failure = sys.exc_info()[0] is not None
+        if tree is not None:
+            if hasattr(tree, "acquisition_gateway"):
+                tree.acquisition_gateway = None
+            if hasattr(tree, "document_processor"):
+                tree.document_processor = None
+        for resource in (tree, acquisition_gateway, processor, storage):
+            close = getattr(resource, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except BaseException as exc:
+                    cleanup_failures.append(exc)
+        if cleanup_failures and not active_failure and not target_failure_recorded:
+            raise cleanup_failures[0]
 
     return results
 

@@ -96,6 +96,20 @@ def test_plan_nested_authority_is_deeply_immutable_and_serialization_stays_consi
     assert plan.to_json() == wire
 
 
+def test_plan_freezes_effective_adapter_config_for_capture_requests():
+    scope, profile, skill, registry = inputs()
+    profile = profile.model_copy(update={
+        "adapters": [AcquisitionAdapterConfig(
+            adapter="web_http", config={"headers": {"Accept": "text/html"}}
+        )]
+    })
+    plan = compile_acquisition_execution_plan(scope, profile, skill, registry)
+
+    assert plan.steps[0]["config"]["headers"]["Accept"] == "text/html"
+    with pytest.raises(TypeError):
+        plan.steps[0]["config"]["headers"]["Accept"] = "application/json"
+
+
 def test_plan_nested_authority_type_hints_are_immutable_mappings():
     hints = get_type_hints(AcquisitionExecutionPlan)
     assert hints["quality_gates"] == Mapping[str, Any]

@@ -249,6 +249,9 @@ def compile_acquisition_execution_plan(scope: MonitorScopePlan, profile: Acquisi
             "verification_rules": [item.model_dump(mode="json") for item in recipe.verification_rules],
             "limits": limits,
         }
+        effective_config = {**declaration.config, **adapters[adapter_id].config}
+        if effective_config:
+            step["config"] = effective_config
         steps.append(step)
     first = steps[0]
     if values["site_skill_recipe_id"] != first["recipe_id"]:

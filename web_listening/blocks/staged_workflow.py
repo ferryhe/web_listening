@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import base64
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +38,156 @@ from web_listening.config import settings
 from web_listening.models import CrawlScope
 from web_listening.tree_defaults import PRODUCTION_TREE_LIMITS
 from web_listening.tree_targets import filter_tree_targets, load_tree_targets
+
+
+def _portable_json(value):
+    """Convert adapter metadata containers into plain JSON-compatible values."""
+    def plain(item):
+        if isinstance(item, dict):
+            return {str(key): plain(child) for key, child in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [plain(child) for child in item]
+        if item is None or isinstance(item, (str, int, float, bool)):
+            return item
+        return str(item)
+
+    normalized = plain(value)
+    if not isinstance(normalized, dict):
+        raise TypeError("adapter metadata must be a mapping")
+    # Nested governed contract models freeze JSON containers before the parent
+    # revalidates them. Canonical strings retain their complete portable value.
+    return {
+        key: (json.dumps(child, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+              if isinstance(child, (dict, list)) else child)
+        for key, child in normalized.items()
+    }
+
+
+def _compile_acquisition_gateway(plan, *, acquisition_profile_path=None, site_skill_root=None):
+    """Resolve all governed authority before Storage (and therefore mutation) exists."""
+    from web_listening.blocks.acquisition_execution_plan import compile_acquisition_execution_plan
+    from web_listening.blocks.acquisition_gateway import GovernedAcquisitionGateway
+    from web_listening.blocks.acquisition_profile import load_acquisition_profile
+    from web_listening.executors.registry import ExecutorRegistry, default_preview_registry
+    from datetime import datetime, timezone
+    from web_listening.executors.http_wrapper import HttpAcquisitionAdapter
+    from web_listening.executors.playwright_wrapper import BrowserAcquisitionAdapter
+    from web_listening.executors.cloakbrowser_wrapper import CloakBrowserAcquisitionAdapter
+    from web_listening.executors.browseract import BrowserActExecutor
+    from web_listening.executors.subprocess_runner import SubprocessLimits
+    from web_listening.executors.wrapper_protocol import result_from_fetch
+    from web_listening.blocks.crawler import resolve_request_headers
+    from web_listening.contracts import CaptureContent, CaptureResult
+    from web_listening.site_skill_registry import resolve_site_skill_contract
+
+    bindings = {"acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
+                "site_skill_recipe_id", "site_skill_script_sha256", "executor_version"}
+    based_on = getattr(plan, "based_on", {})
+    if not any(key in based_on for key in bindings):
+        return None
+    if acquisition_profile_path is None:
+        raise ValueError("governed scope requires --acquisition-profile-path")
+    profile = load_acquisition_profile(acquisition_profile_path, strict=True)
+    skill = resolve_site_skill_contract(
+        site_key=plan.site_key, version=str(based_on.get("site_skill_version", "")),
+        package_sha256=str(based_on.get("site_skill_package_sha256", "")),
+        root=site_skill_root)
+    preview = default_preview_registry()
+    compiled = compile_acquisition_execution_plan(plan, profile, skill, preview)
+
+    class _Executor:
+        def __init__(self, executor_id, adapter):
+            self.executor_id, self._adapter = executor_id, adapter
+            self._closed = False
+
+        def execute(self, request):
+            started = datetime.now(timezone.utc)
+            if (
+                self.executor_id == "web_http"
+                and request.metadata.get("content_kind") == "document"
+            ):
+                crawler = getattr(self._adapter, "crawler", None)
+                client = getattr(crawler, "client", None)
+                if client is None:
+                    raise RuntimeError("governed HTTP document executor is not byte-capable")
+                response = client.get(
+                    str(request.url), headers=resolve_request_headers(dict(request.config))
+                )
+                payload = response.content
+                digest = hashlib.sha256(payload).hexdigest()
+                return CaptureResult(
+                    **request.model_dump(include={
+                        "site_key", "site_skill_id", "site_skill_version",
+                        "site_skill_digest", "recipe_id", "run_id", "scope_id",
+                        "request_id", "executor_id",
+                    }),
+                    state="succeeded", started_at=started,
+                    finished_at=datetime.now(timezone.utc), final_url=str(response.url),
+                    status_code=response.status_code,
+                    content=CaptureContent(
+                        media_type=response.headers.get("content-type", "application/octet-stream"),
+                        text=base64.b64encode(payload).decode("ascii"), sha256=digest,
+                        metadata={"representation": "base64", "sha256_scope": "decoded-bytes"},
+                    ),
+                )
+            page = self._adapter.capture(str(request.url), config=dict(request.config))
+            page = replace(page, metadata_json=_portable_json(page.metadata_json))
+            return result_from_fetch(request, page, started)
+
+        def close(self):
+            if self._closed:
+                return
+            self._closed = True
+            crawler = getattr(self._adapter, "crawler", None)
+            close = getattr(crawler, "close", None)
+            if close is not None:
+                close()
+
+    adapters = {"web_http": HttpAcquisitionAdapter, "browser_rendered": BrowserAcquisitionAdapter,
+                "cloakbrowser": CloakBrowserAcquisitionAdapter}
+    planned = {str(step["executor_id"]) for step in compiled.steps}
+    unavailable = planned - adapters.keys() - {"browseract"}
+    if unavailable:
+        raise ValueError(f"governed executor runtime unavailable: {', '.join(sorted(unavailable))}")
+    executors = {}
+    try:
+        for executor_id in planned:
+            if executor_id == "browseract":
+                step = next(item for item in compiled.steps if item["executor_id"] == executor_id)
+                config = dict(step.get("config", {}))
+                executable = config.pop("executable", None)
+                if not isinstance(executable, str) or not executable:
+                    raise ValueError("governed browseract runtime requires an executable")
+                runtime = BrowserActExecutor(
+                    executable, limits=SubprocessLimits(**dict(step["limits"])),
+                )
+
+                class _BrowserActRuntime:
+                    executor_id = "browseract"
+
+                    def execute(self, request):
+                        return runtime.execute(request.model_copy(update={"config": config}))
+
+                    def close(self):
+                        close = getattr(runtime, "close", None)
+                        if close is not None:
+                            close()
+
+                executors[executor_id] = _BrowserActRuntime()
+            else:
+                executors[executor_id] = _Executor(executor_id, adapters[executor_id]())
+        registry = ExecutorRegistry(
+            executors,
+            metadata={executor_id: preview.metadata[executor_id] for executor_id in planned},
+        )
+        return GovernedAcquisitionGateway(compiled, registry)
+    except BaseException:
+        for executor in executors.values():
+            try:
+                executor.close()
+            except BaseException:
+                pass
+        raise
 
 
 def _safe_key(value: str) -> str:
@@ -347,12 +500,22 @@ def bootstrap_scope(
     report_path: str | Path | None = None,
     summary_path: str | Path | None = None,
     include_summary: bool = False,
+    acquisition_profile_path: str | Path | None = None,
+    site_skill_root: str | Path | None = None,
 ) -> ScopeBootstrapArtifacts:
     plan = load_monitor_scope_plan(scope_path)
     report_catalog = f"scope_{plan.site_key}"
     effective_max_depth = _first_defined(max_depth, plan.max_depth, PRODUCTION_TREE_LIMITS.max_depth)
     effective_max_pages = _first_defined(max_pages, plan.max_pages, PRODUCTION_TREE_LIMITS.max_pages)
     effective_max_files = _first_defined(max_files, plan.max_files, PRODUCTION_TREE_LIMITS.max_files)
+    effective_plan = replace(
+        plan, max_depth=effective_max_depth, max_pages=effective_max_pages,
+        max_files=effective_max_files,
+    )
+    target = monitor_scope_to_tree_target(effective_plan)
+    acquisition_gateway = _compile_acquisition_gateway(
+        effective_plan, acquisition_profile_path=acquisition_profile_path,
+        site_skill_root=site_skill_root)
     results = run_bootstrap(
         catalog=plan.catalog or "scope",
         max_depth=effective_max_depth,
@@ -360,7 +523,8 @@ def bootstrap_scope(
         max_files=effective_max_files,
         download_files=download_files,
         refresh_existing=refresh_existing,
-        targets=[monitor_scope_to_tree_target(plan)],
+        targets=[target],
+        acquisition_gateway=acquisition_gateway,
     )
     markdown = render_bootstrap_run_markdown(
         results,
@@ -397,14 +561,27 @@ def run_scope(
     max_pages: int | None = None,
     max_files: int | None = None,
     report_path: str | Path | None = None,
+    acquisition_profile_path: str | Path | None = None,
+    site_skill_root: str | Path | None = None,
 ) -> ScopeRunArtifacts:
     plan = load_monitor_scope_plan(scope_path)
     effective_max_depth = _first_defined(max_depth, plan.max_depth)
     effective_max_pages = _first_defined(max_pages, plan.max_pages)
     effective_max_files = _first_defined(max_files, plan.max_files)
-    storage = Storage(settings.db_path)
-    processor = DocumentProcessor(storage=storage) if download_files else None
+    effective_plan = replace(
+        plan,
+        max_depth=_first_defined(effective_max_depth, plan.max_depth),
+        max_pages=_first_defined(effective_max_pages, plan.max_pages),
+        max_files=_first_defined(effective_max_files, plan.max_files),
+    )
+    acquisition_gateway = _compile_acquisition_gateway(
+        effective_plan, acquisition_profile_path=acquisition_profile_path,
+        site_skill_root=site_skill_root)
+    storage = None
+    processor = None
     try:
+        storage = Storage(settings.db_path)
+        processor = DocumentProcessor(storage=storage) if download_files else None
         _, stored_scope = find_scope_for_plan(storage, plan)
         scoped_run = CrawlScope(
             **{
@@ -414,7 +591,10 @@ def run_scope(
                 "max_files": _first_defined(effective_max_files, stored_scope.max_files),
             }
         )
-        with TreeCrawler(storage=storage, document_processor=processor) as tree:
+        tree_kwargs = {"storage": storage, "document_processor": processor}
+        if acquisition_gateway is not None:
+            tree_kwargs["acquisition_gateway"] = acquisition_gateway
+        with TreeCrawler(**tree_kwargs) as tree:
             crawl = tree.run_scope(scoped_run, institution=plan.display_name, download_files=download_files)
         result = RunResult(
             catalog=plan.catalog,
@@ -437,7 +617,17 @@ def run_scope(
             notes="",
         )
     finally:
-        storage.close()
+        cleanup_failures = []
+        active_failure = __import__("sys").exc_info()[0] is not None
+        for resource in (acquisition_gateway, processor, storage):
+            close = getattr(resource, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except BaseException as exc:
+                    cleanup_failures.append(exc)
+        if cleanup_failures and not active_failure:
+            raise cleanup_failures[0]
 
     resolved_report_path = Path(report_path) if report_path else build_run_report_path(f"scope_{plan.site_key}")
     resolved_report_path.parent.mkdir(parents=True, exist_ok=True)

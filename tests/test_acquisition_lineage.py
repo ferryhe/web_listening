@@ -9,7 +9,12 @@ from datetime import datetime, timezone
 import pytest
 
 from web_listening.blocks.acquisition_evidence import _portable_source_path, persisted_acquisition_evidence
-from web_listening.blocks.acquisition_gateway import AcquisitionOutcome, LegacyCrawlerGateway, redact_persisted_value
+from web_listening.blocks.acquisition_gateway import (
+    AcquisitionOutcome,
+    GovernedAcquisitionGateway,
+    LegacyCrawlerGateway,
+    redact_persisted_value,
+)
 import web_listening.blocks.storage as storage_module
 from web_listening.blocks.storage import Storage
 from web_listening.blocks.tree_crawler import TreeCrawler
@@ -133,6 +138,15 @@ def test_attempt_semantic_acceptance_matrix_rejects_contradictions_before_mutati
     storage.close()
 
 
+def test_rejected_attempt_reason_must_match_classification_before_mutation(tmp_path):
+    storage = Storage(tmp_path / "rejected-semantic-conflict.db")
+    attempt = _attempt(classification="not_found", accepted=False, reason="timeout")
+    with pytest.raises(ValueError, match="classification or reason"):
+        storage.add_acquisition_attempt(attempt)
+    assert storage.conn.execute("SELECT COUNT(*) FROM acquisition_attempts").fetchone()[0] == 0
+    storage.close()
+
+
 @pytest.mark.parametrize(("field", "value"), [("position", 99), ("profile_id", "different-profile")])
 def test_persistence_rejects_relational_authority_that_contradicts_canonical(field, value, tmp_path):
     storage = Storage(tmp_path / "semantic-conflict.db")
@@ -189,6 +203,77 @@ def test_snapshot_requires_accepted_same_run_scope_attempt(tmp_path):
         storage.add_page_snapshot(PageSnapshot(scope_id=scope.id, run_id=run.id,
             page_id=page.id, attempt_id=rejected.attempt_id, content_hash="other"))
     storage.close()
+
+
+def test_page_snapshot_redacts_all_text_surfaces_and_recomputes_hash(tmp_path):
+    storage = Storage(tmp_path / "page-text-redaction.db")
+    storage.add_acquisition_attempt(_attempt())
+    secret = "PAGE-TEXT-SECRET-CANARY"
+    url = f"https://example.com/callback?token={secret}&ok=visible"
+    surfaces = {
+        "raw_html": f'<a href="{url}">raw</a>',
+        "cleaned_html": f'<a href="{url}">clean</a>',
+        "content_text": f"text {url}",
+        "markdown": f"[markdown]({url})",
+        "fit_markdown": f"[fit]({url})",
+    }
+    snapshot = storage.add_page_snapshot(PageSnapshot(
+        scope_id=1, run_id=1, page_id=1, attempt_id="attempt-1",
+        content_hash=hashlib.sha256(surfaces["fit_markdown"].encode()).hexdigest(),
+        metadata_json={"hash_basis": "fit_markdown"}, **surfaces,
+    ))
+    row = dict(storage.conn.execute("SELECT * FROM page_snapshots").fetchone())
+    exported = storage.list_page_snapshots_for_run(1, 1)[0].model_dump_json()
+    for field in surfaces:
+        assert secret not in row[field]
+        assert "visible" in row[field]
+    assert secret not in exported
+    assert snapshot.content_hash == hashlib.sha256(snapshot.fit_markdown.encode()).hexdigest()
+    assert snapshot.content_hash != hashlib.sha256(surfaces["fit_markdown"].encode()).hexdigest()
+
+    long_text = "A" * 5000
+    plain = storage.add_page_snapshot(PageSnapshot(
+        scope_id=1, run_id=1, page_id=2, attempt_id="attempt-1",
+        content_hash=hashlib.sha256(long_text.encode()).hexdigest(),
+        raw_html=long_text, cleaned_html=long_text, content_text=long_text,
+        markdown=long_text, fit_markdown=long_text,
+        metadata_json={"hash_basis": "fit_markdown"},
+    ))
+    for field in surfaces:
+        assert getattr(plain, field) == long_text
+    assert plain.content_hash == hashlib.sha256(long_text.encode()).hexdigest()
+    storage.close()
+
+
+def test_governed_failed_attempt_preserves_null_final_url_and_redacts_host_path():
+    now = datetime.now(timezone.utc)
+    request = CaptureRequest(
+        request_id="failed-request", site_key="demo", site_skill_id="skill",
+        site_skill_version="1.0.0", site_skill_digest="a" * 64, recipe_id="recipe",
+        run_id="1", scope_id="1", executor_id="web_http",
+        url="https://example.com/a", requested_at=now,
+    )
+    result = CaptureResult(
+        request_id=request.request_id, site_key=request.site_key,
+        site_skill_id=request.site_skill_id, site_skill_version=request.site_skill_version,
+        site_skill_digest=request.site_skill_digest, recipe_id=request.recipe_id,
+        run_id=request.run_id, scope_id=request.scope_id, executor_id=request.executor_id,
+        state="failed", started_at=now, finished_at=now, final_url=None,
+        error=CaptureError(code="executor_exception",
+                           message="failed reading /root/private/browser/profile.json"),
+    )
+    gateway = object.__new__(GovernedAcquisitionGateway)
+    gateway.plan = type("Plan", (), {"profile_id": "profile", "acquisition_fingerprint": "b" * 64,
+                                      "quality_gates": {"blocked_markers": ()}})()
+    attempt = gateway._attempt(
+        request, {"position": 0, "executor_version": "1.0.0", "script_sha256": None},
+        "page", "executor_error", result,
+    )
+    canonical = json.loads(attempt.canonical_json)
+    assert attempt.final_url is None
+    assert canonical["result"]["final_url"] is None
+    assert "/root/private/browser/profile.json" not in attempt.canonical_json
+    assert canonical["result"]["error"]["code"] == "executor_exception"
 
 
 def test_tracked_state_requires_typed_lineage_ownership(tmp_path):
@@ -357,7 +442,8 @@ def test_persistence_recomputes_redaction_for_relational_and_canonical_fields(tm
     secret_url = "https://example.com/a?token=top-secret&ok=visible"
     attempt = _attempt(requested_url=secret_url, final_url=secret_url,
                        classification="blocked", accepted=False,
-                       reason="password=hunter2", validation={"authorization": "Bearer abc"},
+                       reason="blocked", validation={"authorization": "Bearer abc",
+                                                        "diagnostic": "password=hunter2"},
                        canonical_json=json.dumps({"token": "caller-lied"}))
     stored = storage.add_acquisition_attempt(attempt)
     raw = storage.conn.execute("SELECT * FROM acquisition_attempts").fetchone()

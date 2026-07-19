@@ -1,6 +1,7 @@
 import base64
 from datetime import datetime, timezone
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -519,11 +520,24 @@ def test_tree_crawler_bootstrap_tolerates_file_download_failures(tmp_path):
         mock_doc_settings.downloads_dir = tmp_path / "downloads"
         with TreeCrawler(storage=storage, crawler=crawler, document_processor=processor) as tree:
             result = tree.bootstrap_scope(scope, institution="File Failure", download_files=True)
+            incremental = tree.run_scope(result.scope, institution="File Failure", download_files=True)
 
     assert result.run.status == "completed"
     assert result.pages
     assert result.files == []
     assert len(result.file_failures) == 1
+    assert incremental.run.status == "completed"
+    assert len(incremental.file_failures) == 1
+    for run in (result.run, incremental.run):
+        attempts = storage.list_acquisition_attempts(result.scope.id, run.id)
+        document_attempts = [item for item in attempts if item.content_kind == "document"]
+        assert len(document_attempts) == 1
+        assert document_attempts[0].authority_mode == "legacy_runtime"
+        assert document_attempts[0].accepted is False
+        assert document_attempts[0].classification == "not_found"
+        assert document_attempts[0].final_url is None
+        assert json.loads(document_attempts[0].canonical_json)["result"]["final_url"] is None
+        assert document_attempts[0].executor_id != "legacy_compatibility_import"
 
     storage.close()
 

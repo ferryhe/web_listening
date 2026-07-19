@@ -29,6 +29,7 @@ from web_listening.models import (
     TrackedPage,
 )
 from web_listening.blocks.acquisition_gateway import redact_persisted_value
+from web_listening.blocks.diff import compute_hash
 from web_listening.contracts import AcquisitionAttempt as ContractAcquisitionAttempt
 from web_listening.contracts._protocol import validate_portable_relative_path
 
@@ -1276,7 +1277,17 @@ class Storage:
 
     def add_page_snapshot(self, snapshot: PageSnapshot) -> PageSnapshot:
         self._validate_accepted_attempt(snapshot.attempt_id, snapshot.scope_id, snapshot.run_id, "page")
+        text_fields = {
+            field: redact_persisted_value(getattr(snapshot, field))
+            for field in ("raw_html", "cleaned_html", "content_text", "markdown", "fit_markdown")
+        }
+        hash_basis = snapshot.metadata_json.get("hash_basis")
+        content_hash = snapshot.content_hash
+        if hash_basis in text_fields and text_fields[hash_basis] != getattr(snapshot, hash_basis):
+            content_hash = compute_hash(text_fields[hash_basis])
         snapshot = snapshot.model_copy(update={
+            **text_fields,
+            "content_hash": content_hash,
             "metadata_json": redact_persisted_value(snapshot.metadata_json),
             "final_url": redact_persisted_value(snapshot.final_url),
             "links": redact_persisted_value(snapshot.links),
@@ -1599,6 +1610,8 @@ class Storage:
             or (attempt.reason and attempt.reason != "accepted")
         ):
             raise ValueError("conflicting accepted attempt classification or reason")
+        if not attempt.accepted and attempt.reason and attempt.reason != attempt.classification:
+            raise ValueError("conflicting rejected attempt classification or reason")
 
     def add_legacy_compatibility_attempt(
         self, *, scope_id: int, run_id: int, identity: str, content_kind: str = "page",

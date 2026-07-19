@@ -182,7 +182,7 @@ class GovernedAcquisitionGateway:
                 result = self.registry.execute(request)
             except Exception as exc:
                 result = self._failed_result(
-                    request, "executor_exception", _redact_text(str(exc)))
+                    request, "executor_exception", _redact_diagnostic_text(str(exc)))
                 last_result = result
                 attempts.append(self._attempt(request, step, content_kind, "executor_error", result,
                                               reason="executor_error"))
@@ -229,7 +229,7 @@ class GovernedAcquisitionGateway:
             site_skill_package_sha256=request.site_skill_digest, recipe_id=request.recipe_id,
             script_sha256=step.get("script_sha256"), executor_id=request.executor_id,
             executor_version=step["executor_version"], requested_url=str(request.url),
-            final_url=str(getattr(result, "final_url", "")) or None,
+            final_url=(str(result.final_url) if getattr(result, "final_url", None) is not None else None),
             requested_at=request.requested_at, started_at=getattr(result, "started_at", None),
             finished_at=getattr(result, "finished_at", datetime.now(timezone.utc)),
             acquisition_fingerprint=self.plan.acquisition_fingerprint,
@@ -252,7 +252,8 @@ class GovernedAcquisitionGateway:
             "acceptance_reason": reason or classification,
         }, sort_keys=True, separators=(",", ":"), ensure_ascii=True))
         attempt.canonical_json = json.dumps(
-            contract.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            redact_persisted_value(contract.model_dump(mode="json")),
+            sort_keys=True, separators=(",", ":"), ensure_ascii=True,
         )
         return attempt
 
@@ -302,6 +303,7 @@ class GovernedAcquisitionGateway:
                 "scope_budgets": dict(self.plan.scope_budgets),
             }),
         )
+
 
     def _classify(
         self, request: CaptureRequest, result: CaptureResult, content_kind: str
@@ -415,6 +417,67 @@ class GovernedAcquisitionGateway:
             raise failures[0]
 
 
+def legacy_document_runtime_attempt(
+    *, url: str, run_id: int, scope_id: int, fetch_mode: str,
+    started_at: datetime, finished_at: datetime, classification: str,
+    error_message: str = "",
+) -> AcquisitionAttempt:
+    """Build truthful typed lineage for the live legacy document downloader."""
+    identity = json.dumps({"run_id": run_id, "scope_id": scope_id, "url": url,
+                           "content_kind": "document", "mode": "legacy_runtime_document"},
+                          sort_keys=True, separators=(",", ":"))
+    request_id = hashlib.sha256(identity.encode()).hexdigest()
+    sentinel_digest = "0" * 64
+    executor_id = _legacy_executor_id(fetch_mode)
+    request = _execution_request(
+        request_id=request_id, site_key="legacy-runtime", site_skill_id="absent",
+        site_skill_version="0.0.0", site_skill_digest=sentinel_digest,
+        recipe_id="legacy-runtime", run_id=str(run_id), scope_id=str(scope_id),
+        executor_id=executor_id, url=url, requested_at=started_at, config={},
+        metadata={"authority_mode": "legacy_runtime", "content_kind": "document",
+                  "fallback_position": 0, "profile_id": None,
+                  "legacy_fetch_mode": fetch_mode,
+                  "legacy_executor_label": f"legacy_{fetch_mode}_document",
+                  "site_skill_lineage": "absent", "executor_version": "legacy-runtime"},
+    )
+    accepted = classification == "accepted"
+    lineage = {field: getattr(request, field) for field in (
+        "request_id", "site_key", "site_skill_id", "site_skill_version",
+        "site_skill_digest", "recipe_id", "run_id", "scope_id", "executor_id")}
+    result = CaptureResult(
+        **lineage, state="succeeded" if accepted else "failed",
+        started_at=started_at, finished_at=finished_at, final_url=url if accepted else None,
+        content=(CaptureContent(
+            media_type="application/octet-stream", text="",
+            metadata={"content_kind": "document", "representation": "legacy_parent_persisted"},
+        ) if accepted else None),
+        error=None if accepted else CaptureError(code=classification, message=error_message or classification),
+        metadata={"authority_mode": "legacy_runtime", "content_kind": "document",
+                  "legacy_fetch_mode": fetch_mode,
+                  "legacy_executor_label": f"legacy_{fetch_mode}_document",
+                  "acquisition_classification": classification,
+                  "acquisition_validation": {"decision": classification}},
+    )
+    contract = ContractAcquisitionAttempt.model_validate_json(json.dumps({
+        "attempt_id": request_id,
+        "request": _canonical_request(request).model_dump(mode="json"),
+        "result": result.model_dump(mode="json"),
+        "accepted": accepted, "acceptance_reason": classification,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=True))
+    return AcquisitionAttempt(
+        attempt_id=request_id, request_id=request_id, scope_id=scope_id, run_id=run_id,
+        position=0, content_kind="document", site_skill_id="absent",
+        site_skill_version="0.0.0", site_skill_package_sha256=sentinel_digest,
+        recipe_id="legacy-runtime", executor_id=executor_id, executor_version="legacy-runtime",
+        requested_url=url, final_url=url if accepted else None, requested_at=started_at,
+        started_at=started_at, finished_at=finished_at, classification=classification,
+        accepted=accepted, reason=classification, validation={"decision": classification},
+        canonical_json=json.dumps(redact_persisted_value(contract.model_dump(mode="json")),
+                                  sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+        authority_mode="legacy_runtime",
+    )
+
+
 _SECRET_KEYS = ("apikey", "authorization", "cookie", "credential", "password", "secret", "token", "argv")
 _HOST_PATH_KEYS = ("executable", "executable_path", "binary_path", "host_path")
 
@@ -437,12 +500,25 @@ def _redact_text(value: str) -> str:
         flags=re.IGNORECASE,
     )
     value = re.sub(r"(?i)(bearer|basic)\s+[^\s,;]+", r"\1 [REDACTED]", value)
-    value = re.sub(r"(?i)(token|password|secret|api[_-]?key|cookie|authorization)\s*[:=]\s*[^\s,;]+", r"\1=[REDACTED]", value)
+    value = re.sub(r"(?i)(token|password|secret|api[_-]?key|cookie|authorization)\s*[:=]\s*[^\s,;&#<>\"']+", r"\1=[REDACTED]", value)
     value = re.sub(
         r"(?i)([?&#](?:access[_-]?token|token|api[_-]?key|password|authorization|cookie|secret|credential)(?:=|/))[^&#\s<>\"']*",
         r"\1[REDACTED]", value,
     )
-    return value[:4096]
+    return value
+
+
+def _redact_diagnostic_text(value: str) -> str:
+    import re
+    value = _redact_text(value)
+    value = re.sub(
+        r"(?<![A-Za-z0-9./:])(?:/[A-Za-z0-9_.-]+){2,}(?:/[A-Za-z0-9_.-]+)?",
+        "[HOST_PATH_REDACTED]", value,
+    )
+    return re.sub(
+        r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/](?:[^\s,;:\"']+[\\/])*[^\s,;:\"']+)",
+        "[HOST_PATH_REDACTED]", value,
+    )[:4096]
 
 
 def _redact_url(value: str) -> str:
@@ -494,6 +570,8 @@ def _redact_json(value: Any, key: str = "") -> Any:
         if _normalized_key(key) in {_normalized_key(item) for item in _HOST_PATH_KEYS} and (
                 value.startswith(("/", "\\")) or (len(value) > 2 and value[1:3] in {":/", ":\\"})):
             return "[HOST_PATH_REDACTED]"
+        if _normalized_key(key) in {"message", "diagnostic", "errormessage"}:
+            return _redact_diagnostic_text(value)
         return _redact_url(value)
     return value
 
@@ -571,4 +649,5 @@ def _legacy_executor_id(fetch_mode: str) -> str:
 
 
 __all__ = ["AcquisitionGateway", "AcquisitionOutcome", "GovernedAcquisitionGateway",
-           "LegacyCrawlerGateway", "canonical_redacted_attempt", "redact_persisted_value"]
+           "LegacyCrawlerGateway", "canonical_redacted_attempt", "legacy_document_runtime_attempt",
+           "redact_persisted_value"]

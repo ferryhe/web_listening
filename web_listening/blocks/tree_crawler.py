@@ -15,7 +15,12 @@ from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from web_listening.blocks.crawler import Crawler, resolve_request_headers
-from web_listening.blocks.acquisition_gateway import AcquisitionGateway, AcquisitionOutcome, LegacyCrawlerGateway
+from web_listening.blocks.acquisition_gateway import (
+    AcquisitionGateway,
+    AcquisitionOutcome,
+    LegacyCrawlerGateway,
+    legacy_document_runtime_attempt,
+)
 from web_listening.blocks.diff import compute_hash, extract_links, find_document_links, select_compare_artifact
 from web_listening.blocks.document import DocumentProcessor
 from web_listening.blocks.polite import PolitePacer
@@ -375,10 +380,7 @@ class TreeCrawler:
                                 force_download=False,
                                 capture_result=file_outcome.result if self.acquisition_gateway is not None else None,
                                 attempt_id=(file_outcome.accepted_attempt.attempt_id if file_outcome.accepted_attempt else None)
-                                if self.acquisition_gateway is not None else self.storage.add_legacy_compatibility_attempt(
-                                    scope_id=stored_scope.id, run_id=run.id, identity=canonical_link,
-                                    content_kind="document",
-                                ).attempt_id,
+                                if self.acquisition_gateway is not None else None,
                             )
                         except Exception as exc:  # pragma: no cover - live failure path
                             result.file_failures.append(f"{canonical_link}: {type(exc).__name__}: {exc}")
@@ -658,10 +660,7 @@ class TreeCrawler:
                                 force_download=True,
                                 capture_result=file_outcome.result if self.acquisition_gateway is not None else None,
                                 attempt_id=(file_outcome.accepted_attempt.attempt_id if file_outcome.accepted_attempt else None)
-                                if self.acquisition_gateway is not None else self.storage.add_legacy_compatibility_attempt(
-                                    scope_id=stored_scope.id, run_id=run.id, identity=canonical_link,
-                                    content_kind="document",
-                                ).attempt_id,
+                                if self.acquisition_gateway is not None else None,
                             )
                         except Exception as exc:  # pragma: no cover - live failure path
                             traversal_complete = False
@@ -760,37 +759,58 @@ class TreeCrawler:
         latest_document_id = None
         latest_sha256 = ""
         tracked_local_path = ""
+        legacy_started_at = datetime.now(timezone.utc)
 
-        if download_files and self.document_processor is not None:
-            if self.acquisition_gateway is not None:
-                document = self._document_from_capture(
-                    capture_result,
-                    site_id=scope.site_id,
-                    institution=institution,
-                    page_url=page_url,
-                    file_url=file_url,
+        try:
+            if download_files and self.document_processor is not None:
+                if self.acquisition_gateway is not None:
+                    document = self._document_from_capture(
+                        capture_result,
+                        site_id=scope.site_id,
+                        institution=institution,
+                        page_url=page_url,
+                        file_url=file_url,
+                    )
+                else:
+                    document = self.document_processor.process(
+                        file_url,
+                        site_id=scope.site_id,
+                        institution=institution,
+                        page_url=page_url,
+                        request_headers=request_headers,
+                        force_download=force_download,
+                    )
+                persisted = self.storage.add_document(document)
+                latest_document_id = persisted.id
+                latest_sha256 = persisted.sha256
+                tracked_local_path = str(
+                    self.document_processor.materialize_tracked_view(
+                        canonical_local_path=persisted.local_path,
+                        page_url=page_url,
+                        file_url=file_url,
+                        sha256=persisted.sha256,
+                        content_type=persisted.content_type,
+                    )
                 )
-            else:
-                document = self.document_processor.process(
-                    file_url,
-                    site_id=scope.site_id,
-                    institution=institution,
-                    page_url=page_url,
-                    request_headers=request_headers,
-                    force_download=force_download,
+            if self.acquisition_gateway is None:
+                attempt = legacy_document_runtime_attempt(
+                    url=file_url, run_id=run.id, scope_id=scope.id,
+                    fetch_mode=scope.fetch_mode, started_at=legacy_started_at,
+                    finished_at=datetime.now(timezone.utc), classification="accepted",
                 )
-            persisted = self.storage.add_document(document)
-            latest_document_id = persisted.id
-            latest_sha256 = persisted.sha256
-            tracked_local_path = str(
-                self.document_processor.materialize_tracked_view(
-                    canonical_local_path=persisted.local_path,
-                    page_url=page_url,
-                    file_url=file_url,
-                    sha256=persisted.sha256,
-                    content_type=persisted.content_type,
-                )
-            )
+                attempt_id = self.storage.add_acquisition_attempt(attempt).attempt_id
+        except Exception as exc:
+            if self.acquisition_gateway is None:
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                classification = "not_found" if status_code in {404, 410} else (
+                    "timeout" if isinstance(exc, TimeoutError) else "executor_error")
+                self.storage.add_acquisition_attempt(legacy_document_runtime_attempt(
+                    url=file_url, run_id=run.id, scope_id=scope.id,
+                    fetch_mode=scope.fetch_mode, started_at=legacy_started_at,
+                    finished_at=datetime.now(timezone.utc), classification=classification,
+                    error_message=str(exc),
+                ))
+            raise
 
         tracked_file = self.storage.upsert_tracked_file(
             scope_id=scope.id,

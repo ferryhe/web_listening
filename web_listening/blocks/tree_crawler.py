@@ -6,7 +6,6 @@ import binascii
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
-import mimetypes
 import os
 from pathlib import Path
 import stat
@@ -828,7 +827,7 @@ class TreeCrawler:
             file_size=len(payload),
             content_type=content.media_type,
         )
-        suffix = Path(filename).suffix or mimetypes.guess_extension(content.media_type) or ""
+        suffix = local_path.suffix
         return Document(
             site_id=site_id,
             title=filename,

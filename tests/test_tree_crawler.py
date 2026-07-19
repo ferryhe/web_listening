@@ -899,6 +899,40 @@ def test_governed_document_persists_admitted_bytes_without_second_fetch(tmp_path
     storage.close()
 
 
+def test_governed_document_type_matches_blob_suffix_for_parameterized_media_type(tmp_path):
+    storage = Storage(tmp_path / "governed-document-type.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Document Type"))
+    payload = b"%PDF governed"
+    digest = hashlib.sha256(payload).hexdigest()
+    now = datetime.now(timezone.utc)
+    capture = CaptureResult(
+        request_id="request", site_key="demo", site_skill_id="skill",
+        site_skill_version="1.0.0", site_skill_digest="a" * 64,
+        recipe_id="recipe", run_id="run", scope_id="scope",
+        executor_id="web_http", state="succeeded", started_at=now,
+        finished_at=now, final_url="https://example.com/files/report", status_code=200,
+        content=CaptureContent(
+            media_type="application/pdf; version=1.7", text=base64.b64encode(payload).decode(),
+            sha256=digest,
+            metadata={"representation": "base64", "sha256_scope": "decoded-bytes"},
+        ),
+    )
+    processor = DocumentProcessor(storage=storage)
+
+    with patch("web_listening.blocks.document.settings") as doc_settings:
+        doc_settings.downloads_dir = tmp_path / "downloads"
+        with TreeCrawler(storage=storage, acquisition_gateway=SimpleNamespace(close=lambda: None),
+                         document_processor=processor) as tree:
+            document = tree._document_from_capture(
+                capture, site_id=site.id, institution="", page_url=site.url,
+                file_url="https://example.com/files/report",
+            )
+
+    assert Path(document.local_path).suffix == ".pdf"
+    assert document.doc_type == "pdf"
+    storage.close()
+
+
 def test_real_governed_http_document_preserves_non_utf8_response_bytes(tmp_path, monkeypatch):
     storage = Storage(tmp_path / "governed-http-document.db")
     site = storage.add_site(Site(url="https://example.com/section", name="HTTP Bytes"))

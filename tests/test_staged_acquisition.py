@@ -79,6 +79,21 @@ def test_legacy_gateway_preserves_fetch_mode_and_config():
                         "config": {"wait_for": "main"}}
 
 
+def test_legacy_gateway_classifies_executor_errors_without_exposing_exception_details():
+    class Crawler:
+        def fetch_page(self, url, *, fetch_mode, fetch_config_json):
+            raise RuntimeError("private executor diagnostics")
+
+    outcome = LegacyCrawlerGateway(Crawler(), fetch_mode="http", fetch_config_json={}).acquire(
+        "https://example.com/", run_id="1", scope_id="2"
+    )
+
+    assert outcome.classification == "executor_error"
+    assert outcome.attempts == ("executor_error",)
+    assert "RuntimeError" not in repr(outcome)
+    assert "private executor diagnostics" not in repr(outcome)
+
+
 @pytest.mark.parametrize("failure", ["lineage", "protocol", "redirect"])
 def test_governed_gateway_treats_untrusted_result_mismatches_as_terminal(failure):
     seen = []

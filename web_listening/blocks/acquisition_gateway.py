@@ -57,8 +57,8 @@ class LegacyCrawlerGateway:
             page = self.crawler.fetch_page(
                 url, fetch_mode=self.fetch_mode, fetch_config_json=self.fetch_config_json
             )
-        except Exception as exc:
-            return AcquisitionOutcome(None, None, None, "executor_error", (type(exc).__name__,), False)
+        except Exception:
+            return AcquisitionOutcome(None, None, None, "executor_error", ("executor_error",), False)
         classification = "not_found" if page.status_code in {404, 410} else "accepted"
         return AcquisitionOutcome(None, None, page, classification, (classification,), True)
 

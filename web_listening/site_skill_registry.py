@@ -253,7 +253,12 @@ def _read_tree(
         cache_name = re.compile(
             rf"^(?P<stem>[A-Za-z0-9_]+)\.{re.escape(cache_tag)}(?:\.opt-(?P<optimization>[012]))?\.pyc$"
         )
-        file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        file_flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
 
         def read_bound_file(parent_fd: int, name: str, expected: os.stat_result) -> bytes | None:
             fd = None

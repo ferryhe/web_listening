@@ -5,6 +5,7 @@ import compileall
 import os
 import py_compile
 import shutil
+import threading
 import tomllib
 from pathlib import Path
 
@@ -138,6 +139,58 @@ def test_cache_source_same_inode_rewrite_after_package_hash_fails_closed(
     result = validate_site_skill_package(package)
 
     assert rewritten is True
+    assert result["valid"] is False
+    assert "path.tree_changed" in diagnostic_codes(result)
+
+
+@pytest.mark.parametrize("replaced_entry", ["pyc", "source"])
+def test_runtime_cache_file_replaced_by_fifo_before_bound_read_fails_closed_without_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replaced_entry: str
+) -> None:
+    package = copy_example(tmp_path)
+    scripts = package / "scripts"
+    for cache in package.rglob("__pycache__"):
+        shutil.rmtree(cache)
+    cache = scripts / "__pycache__"
+    cache.mkdir()
+    source = scripts / "recipe.py"
+    pyc = cache / f"recipe.{sys.implementation.cache_tag}.pyc"
+    py_compile.compile(str(source), cfile=str(pyc), doraise=True)
+    target = pyc if replaced_entry == "pyc" else source
+    original_open = registry_module.os.open
+    validation_finished = threading.Event()
+    blocked = threading.Event()
+    unblocker: threading.Thread | None = None
+    replaced = False
+
+    def unblock_old_implementation() -> None:
+        if validation_finished.wait(1):
+            return
+        blocked.set()
+        fd = original_open(target, os.O_RDWR | getattr(os, "O_NONBLOCK", 0))
+        os.close(fd)
+
+    def replace_with_fifo(path, flags, *args, **kwargs):
+        nonlocal replaced, unblocker
+        if path == target.name and kwargs.get("dir_fd") is not None and not replaced:
+            replaced = True
+            target.unlink()
+            os.mkfifo(target)
+            unblocker = threading.Thread(target=unblock_old_implementation)
+            unblocker.start()
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(registry_module.os, "open", replace_with_fifo)
+    try:
+        result = validate_site_skill_package(package)
+    finally:
+        validation_finished.set()
+        if unblocker is not None:
+            unblocker.join(timeout=2)
+
+    assert replaced is True
+    assert unblocker is not None and not unblocker.is_alive()
+    assert blocked.is_set() is False
     assert result["valid"] is False
     assert "path.tree_changed" in diagnostic_codes(result)
 

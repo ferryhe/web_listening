@@ -6,6 +6,25 @@ from web_listening.blocks.storage import Storage
 from web_listening.models import CrawlRun, CrawlScope, FileObservation, PageSnapshot, Site
 
 
+def _add_legacy_snapshot(storage: Storage, snapshot: PageSnapshot) -> PageSnapshot:
+    attempt = storage.add_legacy_compatibility_attempt(
+        scope_id=snapshot.scope_id,
+        run_id=snapshot.run_id,
+        identity=snapshot.final_url or f"historical-page-{snapshot.page_id}",
+    )
+    return storage.add_page_snapshot(snapshot.model_copy(update={"attempt_id": attempt.attempt_id}))
+
+
+def _add_legacy_observation(storage: Storage, observation: FileObservation) -> FileObservation:
+    attempt = storage.add_legacy_compatibility_attempt(
+        scope_id=observation.scope_id,
+        run_id=observation.run_id,
+        identity=observation.download_url,
+        content_kind="document",
+    )
+    return storage.add_file_observation(observation.model_copy(update={"attempt_id": attempt.attempt_id}))
+
+
 def test_summarize_monitor_scope_bootstrap_groups_by_source_page_directories(tmp_path: Path):
     classification_path = tmp_path / "classification.yaml"
     classification_path.write_text(
@@ -87,7 +106,7 @@ selected_sections:
             depth=1,
             run_id=run.id,
         )
-        snap_a = storage.add_page_snapshot(
+        snap_a = _add_legacy_snapshot(storage,
             PageSnapshot(
                 scope_id=scope.id,
                 page_id=page_a.id,
@@ -111,7 +130,7 @@ selected_sections:
             depth=1,
             run_id=run.id,
         )
-        snap_b = storage.add_page_snapshot(
+        snap_b = _add_legacy_snapshot(storage,
             PageSnapshot(
                 scope_id=scope.id,
                 page_id=page_b.id,
@@ -151,7 +170,7 @@ selected_sections:
             latest_sha256="sha-c",
         )
 
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,
@@ -161,7 +180,7 @@ selected_sections:
                 download_url=file_a.canonical_url,
             )
         )
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,
@@ -171,7 +190,7 @@ selected_sections:
                 download_url=file_b.canonical_url,
             )
         )
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,
@@ -275,7 +294,7 @@ selected_sections:
             depth=1,
             run_id=run.id,
         )
-        snapshot = storage.add_page_snapshot(
+        snapshot = _add_legacy_snapshot(storage,
             PageSnapshot(
                 scope_id=scope.id,
                 page_id=page.id,

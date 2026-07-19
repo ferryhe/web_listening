@@ -9,7 +9,9 @@ import pytest
 
 from web_listening.blocks.acquisition_gateway import GovernedAcquisitionGateway, LegacyCrawlerGateway
 from web_listening.blocks.crawler import FetchResult, HttpCrawler
+from web_listening.blocks.storage import Storage
 from web_listening.blocks.staged_workflow import _compile_acquisition_gateway, _portable_json
+from web_listening.contracts import AcquisitionAttempt as ContractAcquisitionAttempt
 from web_listening.contracts import CaptureContent, CaptureError, CaptureResult
 from web_listening.executors.http_wrapper import HttpAcquisitionAdapter
 from web_listening.executors.registry import ExecutorMetadata
@@ -23,8 +25,11 @@ def _plan():
         "recipe_id": f"recipe-{position}", "script_sha256": digest, "config": {"position": position},
     }) for position, executor in enumerate(("web_http", "browser_rendered")))
     return SimpleNamespace(mode="governed", steps=steps, acquisition_fingerprint="b" * 64,
+                           scope_fingerprint="c" * 64, profile_id="profile",
                            site_key="demo", site_skill_id="demo-skill", site_skill_version="1.0.0",
                            site_skill_package_sha256=digest,
+                           scope_budgets=MappingProxyType({"max_depth": 2, "max_files": 10,
+                                                           "max_pages": 20}),
                            quality_gates=MappingProxyType({"min_words": 1, "min_links": 0,
                                                           "min_document_links": 0, "blocked_markers": ()}))
 
@@ -63,7 +68,144 @@ def test_governed_gateway_uses_frozen_fallback_and_deterministic_request_identit
     assert all(item.metadata["acquisition_fingerprint"] == "b" * 64 for item in seen)
 
 
-def test_legacy_gateway_preserves_fetch_mode_and_config():
+def test_governed_attempt_canonical_json_preserves_exact_request_and_result_semantics(tmp_path):
+    captured = {}
+
+    class Registry:
+        def execute(self, request):
+            captured["request"] = request
+            now = datetime.now(timezone.utc)
+            lineage = {field: getattr(request, field) for field in (
+                "request_id", "site_key", "site_skill_id", "site_skill_version",
+                "site_skill_digest", "recipe_id", "run_id", "scope_id", "executor_id",
+            )}
+            result = CaptureResult(
+                **lineage, state="succeeded", started_at=now, finished_at=now,
+                final_url=request.url, status_code=200,
+                content=CaptureContent(media_type="text/html", text="<p>semantic canary</p>",
+                                       metadata={"content-canary": "kept"}),
+                metadata={"result-canary": "kept"},
+            )
+            captured["result"] = result
+            return result
+
+    outcome = GovernedAcquisitionGateway(_plan(), Registry()).acquire(
+        "https://example.com/a", run_id="1", scope_id="2")
+    canonical = __import__("web_listening.contracts", fromlist=["AcquisitionAttempt"]).AcquisitionAttempt.model_validate_json(
+        outcome.attempt_records[0].canonical_json)
+    assert canonical.request == captured["request"]
+    assert canonical.result.model_copy(update={
+        "metadata": captured["result"].metadata
+    }) == captured["result"]
+    assert canonical.request.config == {"position": 0}
+    assert canonical.request.metadata["profile_id"] == "profile"
+    assert canonical.request.metadata["fallback_position"] == 0
+    assert canonical.request.metadata["quality_gates"]["min_words"] == 1
+    assert tuple(canonical.request.metadata["quality_gates"]["blocked_markers"]) == ()
+    assert canonical.request.metadata["required_capabilities"] == ()
+    assert canonical.request.metadata["verification_rules"] == ()
+    assert canonical.request.metadata["resource_limits"] == {}
+    assert canonical.result.content.metadata["content-canary"] == "kept"
+    assert canonical.result.metadata["result-canary"] == "kept"
+    assert canonical.result.metadata["acquisition_classification"] == "accepted"
+    assert canonical.result.metadata["acquisition_validation"]["decision"] == "accepted"
+    storage = Storage(tmp_path / "canonical-semantics.db")
+    stored = storage.add_acquisition_attempt(outcome.attempt_records[0])
+    persisted = __import__("web_listening.contracts", fromlist=["AcquisitionAttempt"]).AcquisitionAttempt.model_validate_json(
+        stored.canonical_json)
+    assert persisted.request == captured["request"]
+    assert persisted.result == canonical.result
+    storage.close()
+
+
+def test_governed_execution_keeps_host_config_but_canonical_authority_is_sanitized():
+    plan = _plan()
+    step = dict(plan.steps[0])
+    step["config"] = {"executable": "/opt/browseract/bin/browser-act", "recipe": "safe"}
+    step["limits"] = {"stdout_bytes": 2048, "stderr_bytes": 1024, "timeout_seconds": 12.0}
+    plan.steps = (MappingProxyType(step),)
+    seen = {}
+
+    class Registry:
+        def execute(self, request):
+            seen["config"] = dict(request.config)
+            return _result(request)
+
+    outcome = GovernedAcquisitionGateway(plan, Registry()).acquire(
+        "https://example.com/a", run_id="1", scope_id="2")
+    canonical = ContractAcquisitionAttempt.model_validate_json(
+        outcome.attempt_records[0].canonical_json)
+    assert seen["config"]["executable"] == "/opt/browseract/bin/browser-act"
+    assert canonical.request.config == {"executable": "[HOST_PATH_REDACTED]", "recipe": "safe"}
+    assert canonical.request.metadata["resource_limits"] == {
+        "stdout_bytes": 2048, "stderr_bytes": 1024, "timeout_seconds": 12.0,
+    }
+    assert "/opt/browseract" not in outcome.attempt_records[0].canonical_json
+
+
+def test_legacy_secret_config_executes_and_always_yields_sanitized_canonical_attempt():
+    seen = {}
+
+    class Crawler:
+        def fetch_page(self, url, *, fetch_mode, fetch_config_json):
+            seen.update(fetch_config_json)
+            return FetchResult("<p>x</p>", "x", "x", "x", "x", {}, url, 200)
+
+    gateway = LegacyCrawlerGateway(Crawler(), fetch_mode="http", fetch_config_json={
+        "headers": {"Authorization": "Bearer legacy-secret"}, "timeout": 5,
+    })
+    outcome = gateway.acquire("https://example.com", run_id="1", scope_id="2")
+    canonical = ContractAcquisitionAttempt.model_validate_json(
+        outcome.attempt_records[0].canonical_json)
+    assert seen["headers"]["Authorization"] == "Bearer legacy-secret"
+    assert canonical.request.config == {
+        "headers": {"redacted_field": "[REDACTED]"}, "timeout": 5,
+    }
+    assert "legacy-secret" not in outcome.attempt_records[0].canonical_json
+
+
+def test_failed_quality_attempt_preserves_measurements_and_redacted_block_decision():
+    plan = _plan()
+    plan.quality_gates = MappingProxyType({
+        "min_words": 3, "min_links": 1, "min_document_links": 1,
+        "blocked_markers": ("PRIVATE-BLOCK-CANARY",),
+    })
+
+    class Registry:
+        def execute(self, request):
+            return _result(request).model_copy(update={"content": CaptureContent(
+                media_type="text/html", text="<p>PRIVATE-BLOCK-CANARY short</p>")})
+
+    outcome = GovernedAcquisitionGateway(plan, Registry()).acquire(
+        "https://example.com/a", run_id="1", scope_id="2")
+    attempt = outcome.attempt_records[0]
+    canonical = ContractAcquisitionAttempt.model_validate_json(attempt.canonical_json)
+    evidence = canonical.result.metadata["acquisition_validation"]
+    assert evidence["measurements"] == {"word_count": 2, "link_count": 0, "document_link_count": 0}
+    assert set(evidence["failed_rules"]) == {"min_words", "min_links", "min_document_links"}
+    assert evidence["blocked_marker"] == {"matched": True, "configured_count": 1}
+    assert attempt.validation["decision"] == evidence["decision"]
+    assert attempt.validation["measurements"] == evidence["measurements"]
+    assert tuple(attempt.validation["failed_rules"]) == tuple(evidence["failed_rules"])
+    assert attempt.validation["blocked_marker"] == evidence["blocked_marker"]
+    assert "PRIVATE-BLOCK-CANARY" not in attempt.canonical_json
+
+
+def test_governed_request_identity_separates_page_and_document_content_kinds():
+    seen = []
+    class Registry:
+        def execute(self, request):
+            seen.append(request)
+            return _result(request)
+    gateway = GovernedAcquisitionGateway(_plan(), Registry())
+    gateway.acquire("https://example.com/a", run_id="run-1", scope_id="scope-1",
+                    content_kind="page")
+    gateway.acquire("https://example.com/a", run_id="run-1", scope_id="scope-1",
+                    content_kind="document")
+    assert seen[0].request_id != seen[1].request_id
+
+
+def test_legacy_gateway_preserves_fetch_mode_and_config(tmp_path):
     captured = {}
 
     class Crawler:
@@ -77,6 +219,19 @@ def test_legacy_gateway_preserves_fetch_mode_and_config():
     assert outcome.accepted
     assert captured == {"url": "https://example.com/", "mode": "playwright",
                         "config": {"wait_for": "main"}}
+    assert outcome.request.executor_id == "browser_rendered"
+    assert outcome.request.config == {"wait_for": "main"}
+    assert outcome.request.metadata["legacy_fetch_mode"] == "playwright"
+    assert outcome.request.metadata["site_skill_lineage"] == "absent"
+    assert outcome.result.status_code == 200
+    assert outcome.attempt_records[0].authority_mode == "legacy_runtime"
+    ContractAcquisitionAttempt.model_validate_json(outcome.attempt_records[0].canonical_json)
+    storage = Storage(tmp_path / "legacy-runtime.db")
+    stored = storage.add_acquisition_attempt(outcome.attempt_records[0])
+    assert ContractAcquisitionAttempt.model_validate_json(stored.canonical_json).request.config == {
+        "wait_for": "main"
+    }
+    storage.close()
 
 
 def test_legacy_gateway_classifies_executor_errors_without_exposing_exception_details():
@@ -90,8 +245,10 @@ def test_legacy_gateway_classifies_executor_errors_without_exposing_exception_de
 
     assert outcome.classification == "executor_error"
     assert outcome.attempts == ("executor_error",)
+    assert outcome.result is not None and outcome.result.error is not None
     assert "RuntimeError" not in repr(outcome)
     assert "private executor diagnostics" not in repr(outcome)
+    assert outcome.result.error.message == "executor_error"
 
 
 @pytest.mark.parametrize("failure", ["lineage", "protocol", "redirect"])

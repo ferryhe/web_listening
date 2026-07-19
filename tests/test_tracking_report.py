@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 
 import yaml
@@ -10,6 +11,24 @@ from web_listening.blocks.monitor_task import build_monitor_task, render_yaml_te
 from web_listening.blocks.storage import Storage
 from web_listening.blocks.tracking_report import build_tracking_report, render_markdown, render_yaml_text, set_report_output_path
 from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, PageSnapshot, Site
+
+
+def _add_legacy_snapshot(storage: Storage, snapshot: PageSnapshot) -> PageSnapshot:
+    if snapshot.attempt_id is None:
+        attempt = storage.add_legacy_compatibility_attempt(
+            scope_id=snapshot.scope_id, run_id=snapshot.run_id,
+            identity=snapshot.final_url or f"historical-page-{snapshot.page_id}")
+        snapshot = snapshot.model_copy(update={"attempt_id": attempt.attempt_id})
+    return storage.add_page_snapshot(snapshot)
+
+
+def _add_legacy_observation(storage: Storage, observation: FileObservation) -> FileObservation:
+    if observation.attempt_id is None:
+        attempt = storage.add_legacy_compatibility_attempt(
+            scope_id=observation.scope_id, run_id=observation.run_id,
+            identity=observation.download_url, content_kind="document")
+        observation = observation.model_copy(update={"attempt_id": attempt.attempt_id})
+    return storage.add_file_observation(observation)
 
 
 def _write_scope_inputs(tmp_path: Path) -> tuple[Path, Path]:
@@ -83,8 +102,8 @@ def test_load_acquisition_evidence_combines_profile_and_probe_payload(tmp_path: 
 
     assert evidence is not None
     assert evidence["schema_version"] == "acquisition-evidence.v1"
-    assert evidence["input_paths"]["profile_path"] == str(profile_path)
-    assert evidence["input_paths"]["probe_path"] == str(probe_path)
+    assert evidence["input_paths"]["profile_path"] == "compatibility_inputs/acquisition_profile/acquisition_profile_demo.yaml"
+    assert evidence["input_paths"]["probe_path"] == "compatibility_inputs/acquisition_probe/probe.json"
     assert evidence["profile"]["site_key"] == "demo"
     assert len(evidence["attempts"]) == 1
     assert evidence["latest_attempt"]["adapter"] == "web_http"
@@ -203,7 +222,7 @@ def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_
             depth=1,
             run_id=bootstrap_run.id,
         )
-        storage.add_page_snapshot(
+        _add_legacy_snapshot(storage,
             PageSnapshot(
                 scope_id=scope.id,
                 page_id=changed_page.id,
@@ -212,7 +231,7 @@ def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_
                 final_url="https://example.com/research/page-a",
             )
         )
-        changed_snapshot = storage.add_page_snapshot(
+        changed_snapshot = _add_legacy_snapshot(storage,
             PageSnapshot(
                 scope_id=scope.id,
                 page_id=changed_page.id,
@@ -236,7 +255,7 @@ def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_
             depth=1,
             run_id=rerun.id,
         )
-        new_snapshot = storage.add_page_snapshot(
+        new_snapshot = _add_legacy_snapshot(storage,
             PageSnapshot(
                 scope_id=scope.id,
                 page_id=new_page.id,
@@ -288,7 +307,7 @@ def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_
             latest_document_id=old_doc.id,
             latest_sha256=old_doc.sha256,
         )
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=bootstrap_run.id,
@@ -323,7 +342,7 @@ def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_
             latest_document_id=new_doc.id,
             latest_sha256=new_doc.sha256,
         )
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=rerun.id,
@@ -359,7 +378,7 @@ def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_
             latest_document_id=new_file_doc.id,
             latest_sha256=new_file_doc.sha256,
         )
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=rerun.id,
@@ -395,7 +414,7 @@ def test_build_tracking_report_includes_change_bundles_priority_queue_artifacts_
             latest_document_id=missing_doc.id,
             latest_sha256=missing_doc.sha256,
         )
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=bootstrap_run.id,
@@ -568,8 +587,15 @@ def test_build_tracking_report_includes_acquisition_evidence_when_paths_are_pass
     assert report.acquisition_evidence is not None
     assert report.acquisition_evidence["latest_attempt"]["adapter"] == "web_http"
     assert report.acquisition_evidence["recommended_next_adapter"] == "browser_rendered"
-    assert any(item["kind"] == "acquisition_profile" and item["path"] == str(profile_path) for item in report.artifact_index)
-    assert any(item["kind"] == "capture_attempt" and item["path"] == str(capture_attempt_path) for item in report.artifact_index)
+    assert any(item["kind"] == "acquisition_profile" and item["path"] == "compatibility_inputs/acquisition_profile/acquisition_profile_demo.yaml" for item in report.artifact_index)
+    assert any(item["kind"] == "capture_attempt" and item["path"] == "compatibility_inputs/capture_attempt/capture_attempt_demo.yaml" for item in report.artifact_index)
+    compatibility_surfaces = json.dumps({
+        "evidence": report.acquisition_evidence,
+        "artifacts": [item for item in report.artifact_index
+                      if item["kind"] in {"acquisition_profile", "capture_attempt"}],
+    })
+    assert str(profile_path) not in compatibility_surfaces
+    assert str(capture_attempt_path) not in compatibility_surfaces
     assert "## Acquisition Evidence" in markdown
     assert "try_adapter:browser_rendered" in markdown
     assert "acquisition_evidence:" in yaml_text
@@ -740,7 +766,7 @@ def test_build_tracking_report_low_priority_only_sets_review_action_and_report_p
             depth=1,
             run_id=bootstrap_run.id,
         )
-        storage.add_page_snapshot(
+        _add_legacy_snapshot(storage,
             PageSnapshot(
                 scope_id=scope.id,
                 page_id=changed_page.id,
@@ -749,7 +775,7 @@ def test_build_tracking_report_low_priority_only_sets_review_action_and_report_p
                 final_url="https://example.com/research/page-a",
             )
         )
-        changed_snapshot = storage.add_page_snapshot(
+        changed_snapshot = _add_legacy_snapshot(storage,
             PageSnapshot(
                 scope_id=scope.id,
                 page_id=changed_page.id,
@@ -839,7 +865,7 @@ def test_build_tracking_report_handles_bad_severity_policy_config_with_fallback(
             depth=1,
             run_id=rerun.id,
         )
-        storage.add_page_snapshot(
+        _add_legacy_snapshot(storage,
             PageSnapshot(
                 scope_id=scope.id,
                 page_id=new_page.id,
@@ -871,7 +897,7 @@ def test_build_tracking_report_handles_bad_severity_policy_config_with_fallback(
             latest_document_id=new_file_doc.id,
             latest_sha256=new_file_doc.sha256,
         )
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=rerun.id,
@@ -945,8 +971,8 @@ def test_build_tracking_report_matches_change_type_rules_case_insensitively(tmp_
             depth=1,
             run_id=bootstrap_run.id,
         )
-        storage.add_page_snapshot(PageSnapshot(scope_id=scope.id, page_id=changed_page.id, run_id=bootstrap_run.id, content_hash="hash-old", final_url="https://example.com/research/page-a"))
-        changed_snapshot = storage.add_page_snapshot(PageSnapshot(scope_id=scope.id, page_id=changed_page.id, run_id=rerun.id, content_hash="hash-new", final_url="https://example.com/research/page-a"))
+        _add_legacy_snapshot(storage, PageSnapshot(scope_id=scope.id, page_id=changed_page.id, run_id=bootstrap_run.id, content_hash="hash-old", final_url="https://example.com/research/page-a"))
+        changed_snapshot = _add_legacy_snapshot(storage, PageSnapshot(scope_id=scope.id, page_id=changed_page.id, run_id=rerun.id, content_hash="hash-new", final_url="https://example.com/research/page-a"))
         storage.upsert_tracked_page(
             scope_id=scope.id,
             canonical_url="https://example.com/research/page-a",
@@ -1031,7 +1057,7 @@ def test_build_tracking_report_sorts_same_severity_by_policy_weight_then_entity_
                 depth=1,
                 run_id=bootstrap_run.id,
             )
-            storage.add_page_snapshot(
+            _add_legacy_snapshot(storage,
                 PageSnapshot(
                     scope_id=scope.id,
                     page_id=page.id,
@@ -1040,7 +1066,7 @@ def test_build_tracking_report_sorts_same_severity_by_policy_weight_then_entity_
                     final_url=f"https://example.com/research/{slug}",
                 )
             )
-            changed_snapshot = storage.add_page_snapshot(
+            changed_snapshot = _add_legacy_snapshot(storage,
                 PageSnapshot(
                     scope_id=scope.id,
                     page_id=page.id,

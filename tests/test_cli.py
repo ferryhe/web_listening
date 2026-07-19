@@ -29,6 +29,25 @@ from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation
 runner = CliRunner()
 
 
+def _add_legacy_snapshot(storage: Storage, snapshot: PageSnapshot) -> PageSnapshot:
+    attempt = storage.add_legacy_compatibility_attempt(
+        scope_id=snapshot.scope_id,
+        run_id=snapshot.run_id,
+        identity=snapshot.final_url or f"historical-page-{snapshot.page_id}",
+    )
+    return storage.add_page_snapshot(snapshot.model_copy(update={"attempt_id": attempt.attempt_id}))
+
+
+def _add_legacy_observation(storage: Storage, observation: FileObservation) -> FileObservation:
+    attempt = storage.add_legacy_compatibility_attempt(
+        scope_id=observation.scope_id,
+        run_id=observation.run_id,
+        identity=observation.download_url,
+        content_kind="document",
+    )
+    return storage.add_file_observation(observation.model_copy(update={"attempt_id": attempt.attempt_id}))
+
+
 def test_preview_execution_plan_json_legacy_is_byte_identical(tmp_path: Path):
     scope = tmp_path / "scope.yaml"
     scope.write_text("""site_key: demo
@@ -1126,7 +1145,7 @@ notes: []
         )
         storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": run.id, "is_initialized": True}))
         page = storage.upsert_tracked_page(scope_id=scope.id, canonical_url="https://example.com/research/page-a", depth=1, run_id=run.id)
-        snapshot = storage.add_page_snapshot(PageSnapshot(scope_id=scope.id, page_id=page.id, run_id=run.id, content_hash="hash-a", final_url="https://example.com/research/page-a"))
+        snapshot = _add_legacy_snapshot(storage, PageSnapshot(scope_id=scope.id, page_id=page.id, run_id=run.id, content_hash="hash-a", final_url="https://example.com/research/page-a"))
         storage.upsert_tracked_page(scope_id=scope.id, canonical_url="https://example.com/research/page-a", depth=1, run_id=run.id, latest_hash="hash-a", latest_snapshot_id=snapshot.id)
         document = storage.add_document(
             Document(
@@ -1142,7 +1161,7 @@ notes: []
             )
         )
         tracked_file = storage.upsert_tracked_file(scope_id=scope.id, canonical_url="https://example.com/files/report.pdf", run_id=run.id, latest_document_id=document.id, latest_sha256=document.sha256)
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,
@@ -1693,7 +1712,7 @@ selected_sections:
             )
         )
         tracked_file = storage.upsert_tracked_file(scope_id=scope.id, canonical_url="https://example.com/files/report.pdf", run_id=run.id, latest_document_id=document.id, latest_sha256=document.sha256)
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,

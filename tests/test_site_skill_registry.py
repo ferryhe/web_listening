@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import compileall
 import os
+import py_compile
 import shutil
+import threading
 import tomllib
 from pathlib import Path
 
 import pytest
+import sys
 import typer
 import yaml
 from typer.testing import CliRunner
@@ -16,6 +20,7 @@ from web_listening.cli import app
 from web_listening.site_skill_registry import (
     list_site_skills,
     resolve_site_skill,
+    resolve_site_skill_contract,
     validate_site_skill_package,
 )
 
@@ -32,6 +37,195 @@ def copy_example(tmp_path: Path) -> Path:
 
 def diagnostic_codes(result: dict[str, object]) -> set[str]:
     return {item["code"] for item in result["diagnostics"]}  # type: ignore[index, union-attr]
+
+
+def test_typed_resolution_uses_one_pinned_descriptor_snapshot_during_replacement(tmp_path: Path, monkeypatch):
+    package = copy_example(tmp_path)
+    expected = validate_site_skill_package(package)["package_sha256"]
+    original = registry_module._validate_site_skill_package
+    moved = package.with_name("1.0.0-pinned")
+
+    def replace_path_before_snapshot(path, **kwargs):
+        package.rename(moved)
+        shutil.copytree(EXAMPLE, package)
+        (package / "scripts/recipe.py").write_text("raise RuntimeError('replacement')\n", encoding="utf-8")
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(registry_module, "_validate_site_skill_package", replace_path_before_snapshot)
+    resolved = resolve_site_skill_contract(site_key="example-news", version="1.0.0",
+        package_sha256=str(expected), root=tmp_path / "sites")
+    monkeypatch.setattr(registry_module, "_validate_site_skill_package", original)
+    assert resolved.package_sha256 == expected
+    assert resolved.script_sha256["scripts/recipe.py"] != validate_site_skill_package(package)["script_sha256"]["scripts/recipe.py"]
+
+
+def test_runtime_bytecode_caches_do_not_change_package_digest_or_typed_resolution(tmp_path: Path):
+    package = copy_example(tmp_path)
+    for cache in package.rglob("__pycache__"):
+        shutil.rmtree(cache)
+    clean = validate_site_skill_package(package)
+    assert compileall.compile_dir(package / "scripts", quiet=1)
+    cached = validate_site_skill_package(package)
+    assert cached["valid"] is True
+    assert cached["package_sha256"] == clean["package_sha256"]
+    resolved = resolve_site_skill_contract(site_key="example-news", version="1.0.0",
+        package_sha256=str(clean["package_sha256"]), root=tmp_path / "sites")
+    assert resolved.package_sha256 == clean["package_sha256"]
+
+
+def test_cache_source_replacement_before_package_hash_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = copy_example(tmp_path)
+    for cache in package.rglob("__pycache__"):
+        shutil.rmtree(cache)
+    assert compileall.compile_dir(package / "scripts", quiet=1)
+    replacement = package / "scripts" / "replacement.py"
+    replacement.write_text("VALUE = 'replacement'\n", encoding="utf-8")
+    original_stat = registry_module.os.stat
+    source_stat_calls = 0
+
+    def replace_between_cache_and_walk(path, *args, **kwargs):
+        nonlocal source_stat_calls
+        if path == "recipe.py" and kwargs.get("dir_fd") is not None:
+            source_stat_calls += 1
+            if source_stat_calls == 2:
+                os.replace(replacement, package / "scripts" / "recipe.py")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(registry_module.os, "stat", replace_between_cache_and_walk)
+    result = validate_site_skill_package(package)
+
+    assert result["valid"] is False
+    assert "path.tree_changed" in diagnostic_codes(result)
+
+
+def test_cache_source_same_inode_rewrite_after_package_hash_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = copy_example(tmp_path)
+    scripts = package / "scripts"
+    source = scripts / "Upper.py"
+    cache = scripts / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    pyc = cache / f"Upper.{sys.implementation.cache_tag}.pyc"
+    prepared_pyc = tmp_path / "Upper.pyc"
+    timestamp = 1_700_000_000
+
+    source.write_text("VALUE = 'B'\n", encoding="utf-8")
+    os.utime(source, (timestamp, timestamp))
+    py_compile.compile(str(source), cfile=str(prepared_pyc), doraise=True)
+    source.write_text("VALUE = 'A'\n", encoding="utf-8")
+    os.utime(source, (timestamp, timestamp))
+    py_compile.compile(str(source), cfile=str(pyc), doraise=True)
+    source_inode = source.stat().st_ino
+    pyc_inode = pyc.stat().st_ino
+    replacement_pyc = prepared_pyc.read_bytes()
+    original_open = registry_module.os.open
+    rewritten = False
+
+    def rewrite_before_cache_inspection(path, flags, *args, **kwargs):
+        nonlocal rewritten
+        if path == "__pycache__" and kwargs.get("dir_fd") is not None and not rewritten:
+            rewritten = True
+            source.write_text("VALUE = 'B'\n", encoding="utf-8")
+            os.utime(source, (timestamp, timestamp))
+            pyc.write_bytes(replacement_pyc)
+            assert source.stat().st_ino == source_inode
+            assert pyc.stat().st_ino == pyc_inode
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(registry_module.os, "open", rewrite_before_cache_inspection)
+    result = validate_site_skill_package(package)
+
+    assert rewritten is True
+    assert result["valid"] is False
+    assert "path.tree_changed" in diagnostic_codes(result)
+
+
+@pytest.mark.parametrize("replaced_entry", ["pyc", "source"])
+def test_runtime_cache_file_replaced_by_fifo_before_bound_read_fails_closed_without_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replaced_entry: str
+) -> None:
+    package = copy_example(tmp_path)
+    scripts = package / "scripts"
+    for cache in package.rglob("__pycache__"):
+        shutil.rmtree(cache)
+    cache = scripts / "__pycache__"
+    cache.mkdir()
+    source = scripts / "recipe.py"
+    pyc = cache / f"recipe.{sys.implementation.cache_tag}.pyc"
+    py_compile.compile(str(source), cfile=str(pyc), doraise=True)
+    target = pyc if replaced_entry == "pyc" else source
+    original_open = registry_module.os.open
+    validation_finished = threading.Event()
+    blocked = threading.Event()
+    unblocker: threading.Thread | None = None
+    replaced = False
+
+    def unblock_old_implementation() -> None:
+        if validation_finished.wait(1):
+            return
+        blocked.set()
+        fd = original_open(target, os.O_RDWR | getattr(os, "O_NONBLOCK", 0))
+        os.close(fd)
+
+    def replace_with_fifo(path, flags, *args, **kwargs):
+        nonlocal replaced, unblocker
+        if path == target.name and kwargs.get("dir_fd") is not None and not replaced:
+            replaced = True
+            target.unlink()
+            os.mkfifo(target)
+            unblocker = threading.Thread(target=unblock_old_implementation)
+            unblocker.start()
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(registry_module.os, "open", replace_with_fifo)
+    try:
+        result = validate_site_skill_package(package)
+    finally:
+        validation_finished.set()
+        if unblocker is not None:
+            unblocker.join(timeout=2)
+
+    assert replaced is True
+    assert unblocker is not None and not unblocker.is_alive()
+    assert blocked.is_set() is False
+    assert result["valid"] is False
+    assert "path.tree_changed" in diagnostic_codes(result)
+
+
+@pytest.mark.parametrize("cache_entry", ["evil.txt", "nested"])
+def test_runtime_cache_name_abuse_is_rejected(tmp_path: Path, cache_entry: str):
+    package = copy_example(tmp_path)
+    cache = package / "scripts" / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    target = cache / cache_entry
+    target.mkdir() if cache_entry == "nested" else target.write_text("evil", encoding="utf-8")
+    result = validate_site_skill_package(package)
+    assert "cache.invalid" in diagnostic_codes(result)
+
+
+@pytest.mark.parametrize("cache_entry", [
+    "evil.pyc", "evil.cpython-311.pyc", "recipe.cpython-311.pyc", "evil.cpython-312.pyc", "recipe.pyo",
+])
+def test_noncanonical_or_source_unbound_bytecode_cache_is_rejected(tmp_path: Path, cache_entry: str):
+    package = copy_example(tmp_path)
+    cache = package / "scripts" / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    (cache / cache_entry).write_bytes(b"evil")
+    result = validate_site_skill_package(package)
+    assert "cache.invalid" in diagnostic_codes(result)
+
+
+@pytest.mark.parametrize("suffix", ["", ".opt-999"])
+def test_current_tag_arbitrary_bytecode_is_rejected(tmp_path: Path, suffix: str):
+    package = copy_example(tmp_path)
+    cache = package / "scripts" / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    (cache / f"recipe.{sys.implementation.cache_tag}{suffix}.pyc").write_bytes(b"arbitrary hidden bytes")
+    result = validate_site_skill_package(package)
+    assert "cache.invalid" in diagnostic_codes(result)
 
 
 def set_secret_policy(package: Path, *, allowed: list[str]) -> None:
@@ -1264,7 +1458,10 @@ def test_package_file_count_limit_is_stable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     package = copy_example(tmp_path)
-    existing_count = sum(path.is_file() for path in package.rglob("*"))
+    existing_count = sum(
+        path.is_file() and "__pycache__" not in path.parts
+        for path in package.rglob("*")
+    )
     monkeypatch.setattr(registry_module, "_MAX_PACKAGE_FILES", existing_count)
     (package / "scripts" / "overflow.txt").write_text("x", encoding="utf-8")
 

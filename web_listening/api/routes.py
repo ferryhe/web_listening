@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone, timedelta
+import os
 from pathlib import Path
-from typing import List, Optional
+import stat
+from typing import Any, Iterator, List, Optional, TextIO
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
 from web_listening.blocks.acquisition_evidence import AcquisitionEvidenceError
 from web_listening.blocks.acquisition_tools import (
@@ -84,6 +88,39 @@ def _safe_input_path(raw_path: str | None) -> Path | None:
     return resolved
 
 
+@contextmanager
+def _open_preview_input(raw_path: str) -> Iterator[TextIO]:
+    data_root = _resolve_data_root()
+    candidate = Path(raw_path)
+    if ".." in candidate.parts:
+        raise HTTPException(status_code=422, detail="Path traversal is not allowed")
+    if candidate.is_absolute():
+        try:
+            relative = candidate.relative_to(data_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Path must stay under the data root") from exc
+    else:
+        relative = candidate
+    if not relative.parts:
+        raise HTTPException(status_code=422, detail="Path must name a file")
+
+    read_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    with ExitStack() as stack:
+        directory_fd = os.open(data_root, read_flags | os.O_DIRECTORY)
+        stack.callback(os.close, directory_fd)
+        for component in relative.parts[:-1]:
+            directory_fd = os.open(component, read_flags | os.O_DIRECTORY, dir_fd=directory_fd)
+            stack.callback(os.close, directory_fd)
+        file_fd = os.open(relative.parts[-1], read_flags | os.O_NONBLOCK, dir_fd=directory_fd)
+        try:
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise HTTPException(status_code=422, detail="Path must be a regular file")
+            with os.fdopen(file_fd, encoding="utf-8", closefd=False) as stream:
+                yield stream
+        finally:
+            os.close(file_fd)
+
+
 def get_storage() -> Storage:
     return Storage(settings.db_path)
 
@@ -142,6 +179,26 @@ class AcquisitionProbeRequest(BaseModel):
     allowed_domains: List[str] = Field(default_factory=list)
     allow_stealth_browser: bool = False
     require_authorized_access: bool = False
+
+
+class AcquisitionExecutionPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope_path: StrictStr
+    profile_path: Optional[StrictStr] = None
+
+
+class AcquisitionExecutionPreviewError(BaseModel):
+    code: str
+    field: str
+    message: str
+
+
+class AcquisitionExecutionPreviewResponse(BaseModel):
+    schema_version: str
+    ok: bool
+    plan: Optional[dict[str, Any]] = None
+    error: Optional[AcquisitionExecutionPreviewError] = None
 
 
 class UpdateDocumentContentRequest(BaseModel):
@@ -313,6 +370,47 @@ def probe_acquisition_endpoint(body: AcquisitionProbeRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
+    "/acquisition/execution-plans/preview",
+    response_model=AcquisitionExecutionPreviewResponse,
+    responses={422: {"model": AcquisitionExecutionPreviewResponse}},
+    openapi_extra={"requestBody": {"required": True, "content": {"application/json": {
+        "schema": AcquisitionExecutionPreviewRequest.model_json_schema()
+    }}}},
+)
+async def preview_acquisition_execution_plan_endpoint(request: Request):
+    from web_listening.blocks.acquisition_execution_plan import (
+        AcquisitionExecutionPlanError, compile_acquisition_execution_plan, failure_envelope, preview_envelope,
+    )
+    from web_listening.blocks.acquisition_profile import load_acquisition_profile
+    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
+    from web_listening.executors.registry import default_preview_registry
+    from web_listening.site_skill_registry import resolve_site_skill_contract
+    try:
+        raw_body = await request.json()
+        body = AcquisitionExecutionPreviewRequest.model_validate(raw_body)
+        with _open_preview_input(body.scope_path) as scope_stream:
+            scope = load_monitor_scope_plan(scope_stream, strict_limits=True)
+        if body.profile_path:
+            with _open_preview_input(body.profile_path) as profile_stream:
+                profile = load_acquisition_profile(profile_stream, strict=True)
+        else:
+            profile = None
+        governed = any(str(scope.based_on.get(key, "")).strip() for key in (
+            "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
+            "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",
+        ))
+        skill = resolve_site_skill_contract(site_key=scope.site_key,
+            version=str(scope.based_on.get("site_skill_version", "")),
+            package_sha256=str(scope.based_on.get("site_skill_package_sha256", ""))) if governed else None
+        return preview_envelope(compile_acquisition_execution_plan(scope, profile, skill, default_preview_registry()))
+    except AcquisitionExecutionPlanError as exc:
+        return JSONResponse(status_code=422, content=failure_envelope(exc))
+    except (HTTPException, ValidationError, OSError, ValueError, LookupError):
+        error = AcquisitionExecutionPlanError("input.invalid", "preview input is invalid")
+        return JSONResponse(status_code=422, content=failure_envelope(error))
 
 
 # ── Sites ───────────────────────────────────────────────────────────────────

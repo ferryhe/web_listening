@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import yaml
 
@@ -86,6 +86,25 @@ def compute_scope_fingerprint(
         "fetch_mode": str(fetch_mode or "http").strip().lower() or "http",
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def compute_semantic_scope_fingerprint(plan: MonitorScopePlan) -> str:
+    """Execution-planning identity, explicitly separate from persisted legacy v1."""
+    payload = {
+        "algorithm": "monitor-scope-semantic.v2",
+        "site_key": plan.site_key,
+        "seed_url": plan.seed_url.rstrip("/"),
+        "homepage_url": plan.homepage_url.rstrip("/"),
+        "allowed_page_prefixes": sorted(set(plan.allowed_page_prefixes)),
+        "allowed_file_prefixes": sorted(set(plan.allowed_file_prefixes)),
+        "tree_strategy": plan.tree_strategy,
+        "file_scope_mode": plan.file_scope_mode,
+        "max_depth": plan.max_depth,
+        "max_pages": plan.max_pages,
+        "max_files": plan.max_files,
+    }
+    wire = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(wire.encode("utf-8")).hexdigest()
 
 
 def _normalize_prefix(value: str) -> str:
@@ -195,17 +214,77 @@ def load_section_selection(path: str | Path) -> SectionSelection:
     )
 
 
-def load_monitor_scope_plan(path: str | Path) -> MonitorScopePlan:
-    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+def _load_scope_limit(
+    payload: dict[str, Any], key: str, default: int, *, strict: bool
+) -> int:
+    if not strict:
+        return int(payload.get(key, default) or default)
+    if key not in payload:
+        return default
+    value = payload[key]
+    if type(value) is not int or value <= 0:
+        raise ValueError("monitor_scope limits must be positive integers")
+    return value
+
+
+def load_monitor_scope_plan(
+    source: str | Path | TextIO, *, strict_limits: bool = False
+) -> MonitorScopePlan:
+    try:
+        text = Path(source).read_text(encoding="utf-8") if isinstance(source, str | Path) else source.read()
+        payload = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError("monitor scope YAML is invalid") from exc
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise ValueError("monitor scope YAML root must be an object")
+    if strict_limits:
+        for field in ("fetch_config_json", "based_on", "selection_summary"):
+            if field in payload and type(payload[field]) is not dict:
+                raise ValueError(f"monitor_scope.{field} must be an object")
+        list_fields = (
+            "allowed_page_prefixes",
+            "allowed_file_prefixes",
+            "selected_focus_prefixes",
+            "excluded_page_prefixes",
+            "deferred_page_prefixes",
+            "excluded_categories",
+            "notes",
+        )
+        if any(
+            type(payload[field]) is not list
+            or any(type(item) is not str for item in payload[field])
+            for field in list_fields
+            if field in payload
+        ):
+            raise ValueError("monitor_scope list fields must be lists of strings")
     fetch_config_json = payload.get("fetch_config_json", {}) or {}
     if not isinstance(fetch_config_json, dict):
         raise ValueError("monitor_scope.fetch_config_json must be an object")
     based_on = payload.get("based_on", {}) or {}
     if not isinstance(based_on, dict):
         based_on = {}
+    if strict_limits:
+        governed_bindings = {
+            "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
+            "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",
+        }
+        if any(
+            type(key) is not str or (key in governed_bindings and type(value) is not str)
+            for key, value in based_on.items()
+        ):
+            raise ValueError("monitor_scope governed binding keys and values must be strings")
     selection_summary = payload.get("selection_summary", {}) or {}
     if not isinstance(selection_summary, dict):
         selection_summary = {}
+    if strict_limits and any(
+        type(key) is not str or type(value) is not int or value < 0
+        for key, value in selection_summary.items()
+    ):
+        raise ValueError(
+            "monitor_scope.selection_summary keys must be strings and values must be non-negative integers"
+        )
     return MonitorScopePlan(
         scope_fingerprint=str(payload.get("scope_fingerprint", "")).strip()
         or compute_scope_fingerprint(
@@ -235,9 +314,9 @@ def load_monitor_scope_plan(path: str | Path) -> MonitorScopePlan:
         excluded_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("excluded_page_prefixes"))],
         deferred_page_prefixes=[_normalize_prefix(value) for value in _as_string_list(payload.get("deferred_page_prefixes"))],
         excluded_categories=_as_string_list(payload.get("excluded_categories")),
-        max_depth=int(payload.get("max_depth", PRODUCTION_TREE_LIMITS.max_depth) or PRODUCTION_TREE_LIMITS.max_depth),
-        max_pages=int(payload.get("max_pages", PRODUCTION_TREE_LIMITS.max_pages) or PRODUCTION_TREE_LIMITS.max_pages),
-        max_files=int(payload.get("max_files", PRODUCTION_TREE_LIMITS.max_files) or PRODUCTION_TREE_LIMITS.max_files),
+        max_depth=_load_scope_limit(payload, "max_depth", PRODUCTION_TREE_LIMITS.max_depth, strict=strict_limits),
+        max_pages=_load_scope_limit(payload, "max_pages", PRODUCTION_TREE_LIMITS.max_pages, strict=strict_limits),
+        max_files=_load_scope_limit(payload, "max_files", PRODUCTION_TREE_LIMITS.max_files, strict=strict_limits),
         based_on={str(key): str(value) for key, value in based_on.items()},
         selection_summary={str(key): int(value) for key, value in selection_summary.items() if str(key).strip()},
         notes=_as_string_list(payload.get("notes")),

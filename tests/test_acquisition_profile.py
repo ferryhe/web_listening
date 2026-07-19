@@ -4,7 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from web_listening.blocks.acquisition_profile import (
+    AcquisitionAdapterConfig,
     AcquisitionProfile,
+    AcquisitionQualityGates,
     AcquisitionSafetyPolicy,
     CaptureAttempt,
     build_default_acquisition_profile,
@@ -12,6 +14,40 @@ from web_listening.blocks.acquisition_profile import (
     recommend_next_adapter,
     render_acquisition_profile_yaml,
 )
+
+
+def test_legacy_profile_without_recipe_mappings_or_limits_remains_valid():
+    profile = AcquisitionProfile(profile_id="legacy", site_key="demo", generated_at="2026-01-01T00:00:00Z")
+    assert profile.recipe_mappings == []
+    assert profile.resource_limits.timeout_seconds is None
+
+
+def test_shared_quality_and_safety_models_preserve_legacy_scalar_coercion():
+    quality = AcquisitionQualityGates(min_words="7", require_status_ok="true")
+    safety = AcquisitionSafetyPolicy(allow_stealth_browser="true", require_authorized_access="false")
+
+    assert quality.min_words == 7
+    assert quality.require_status_ok is True
+    assert safety.allow_stealth_browser is True
+    assert safety.require_authorized_access is False
+
+
+def test_governed_quality_and_authorization_scalars_accept_exact_types():
+    quality = AcquisitionQualityGates(
+        min_words=0,
+        min_links=1,
+        min_document_links=2,
+        require_status_ok=False,
+    )
+    safety = AcquisitionSafetyPolicy(
+        allow_stealth_browser=True,
+        require_authorized_access=False,
+    )
+
+    assert (quality.min_words, quality.min_links, quality.min_document_links) == (0, 1, 2)
+    assert quality.require_status_ok is False
+    assert safety.allow_stealth_browser is True
+    assert safety.require_authorized_access is False
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -149,6 +185,92 @@ def test_load_acquisition_profile_rejects_non_mapping_yaml_roots(
 
     with pytest.raises(ValueError, match="YAML root must be a mapping"):
         load_acquisition_profile(profile_path)
+
+
+def test_load_acquisition_profile_normalizes_malformed_yaml_without_canaries(tmp_path: Path):
+    profile_path = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
+    profile_path.write_text("profile_id: [SECRET-CONTENT-CANARY\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_acquisition_profile(profile_path)
+
+    assert str(exc_info.value) == "acquisition profile YAML is invalid"
+    assert "SECRET-PATH-CANARY" not in str(exc_info.value)
+    assert "SECRET-CONTENT-CANARY" not in str(exc_info.value)
+
+
+def test_default_loader_coerces_legacy_quality_and_safety_scalars(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text("""profile_id: legacy
+site_key: demo
+generated_at: "2026-01-01T00:00:00Z"
+quality_gates:
+  min_words: "120"
+  require_status_ok: "true"
+safety:
+  allow_stealth_browser: "false"
+  require_authorized_access: "true"
+""", encoding="utf-8")
+
+    profile = load_acquisition_profile(profile_path)
+
+    assert profile.quality_gates.min_words == 120
+    assert profile.quality_gates.require_status_ok is True
+    assert profile.safety.allow_stealth_browser is False
+    assert profile.safety.require_authorized_access is True
+
+
+@pytest.mark.parametrize("yaml_line", [
+    'quality_gates: {min_words: "120"}',
+    'quality_gates: {min_links: true}',
+    'quality_gates: {require_status_ok: "true"}',
+    'safety: {allow_stealth_browser: "false"}',
+    'safety: {require_authorized_access: "true"}',
+])
+def test_strict_loader_rejects_coercible_quality_and_safety_scalars(tmp_path: Path, yaml_line: str):
+    profile_path = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
+    profile_path.write_text(
+        'profile_id: legacy\nsite_key: demo\ngenerated_at: "2026-01-01T00:00:00Z"\n' + yaml_line + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_acquisition_profile(profile_path, strict=True)
+
+    assert "SECRET-PATH-CANARY" not in str(exc_info.value)
+    assert "120" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("enabled_yaml", ['"true"', "1"])
+def test_strict_loader_rejects_coercible_adapter_enabled_scalars(tmp_path: Path, enabled_yaml: str):
+    profile_path = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
+    profile_path.write_text(
+        'profile_id: legacy\nsite_key: demo\ngenerated_at: "2026-01-01T00:00:00Z"\n'
+        f'adapters: [{{adapter: web_http, enabled: {enabled_yaml}, reason: "SECRET-CONTENT-CANARY"}}]\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_acquisition_profile(profile_path, strict=True)
+
+    assert str(exc_info.value) == "acquisition profile has an invalid adapter enabled flag"
+    assert "SECRET-PATH-CANARY" not in str(exc_info.value)
+    assert "SECRET-CONTENT-CANARY" not in str(exc_info.value)
+
+
+def test_default_loader_and_direct_adapter_model_preserve_enabled_coercion(tmp_path: Path):
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text(
+        'profile_id: legacy\nsite_key: demo\ngenerated_at: "2026-01-01T00:00:00Z"\n'
+        'adapters: [{adapter: web_http, enabled: "true"}]\n',
+        encoding="utf-8",
+    )
+
+    profile = load_acquisition_profile(profile_path)
+    adapter = AcquisitionAdapterConfig(adapter="web_http", enabled=1)
+
+    assert profile.adapters[0].enabled is True
+    assert adapter.enabled is True
 
 
 def test_recommend_next_adapter_walks_fallback_order_and_stops_after_passed_attempt():

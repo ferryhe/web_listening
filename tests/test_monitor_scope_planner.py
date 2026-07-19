@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from web_listening.blocks.monitor_scope_planner import (
     build_monitor_scope,
     load_monitor_scope_plan,
@@ -234,3 +236,118 @@ selection_notes:
     assert target.tree_max_depth == 4
     assert target.tree_max_pages == 120
     assert target.tree_max_files == 40
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "allowed_page_prefixes",
+        "allowed_file_prefixes",
+        "selected_focus_prefixes",
+        "excluded_page_prefixes",
+        "deferred_page_prefixes",
+        "excluded_categories",
+        "notes",
+    ],
+)
+@pytest.mark.parametrize("invalid_value", ["/news", [True], [7], [["/news"]], [{"path": "/news"}]])
+def test_load_monitor_scope_plan_strictly_rejects_non_list_or_non_string_list_fields(
+    tmp_path: Path, field: str, invalid_value: object
+):
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(f"{field}: {invalid_value!r}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="monitor_scope list fields must be lists of strings"):
+        load_monitor_scope_plan(scope_path, strict_limits=True)
+
+
+def test_load_monitor_scope_plan_strict_allows_missing_list_fields(tmp_path: Path):
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text("site_key: demo\n", encoding="utf-8")
+
+    loaded = load_monitor_scope_plan(scope_path, strict_limits=True)
+
+    assert loaded.allowed_page_prefixes == []
+    assert loaded.notes == []
+
+
+def test_load_monitor_scope_plan_default_retains_list_coercion_and_drop_compatibility(tmp_path: Path):
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(
+        "allowed_page_prefixes: /news\nnotes: [true, 7, [/nested], {key: value}, null, '']\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_monitor_scope_plan(scope_path)
+
+    assert loaded.allowed_page_prefixes == []
+    assert loaded.notes == ["True", "7", "['/nested']", "{'key': 'value'}"]
+
+
+@pytest.mark.parametrize("field", ["fetch_config_json", "based_on", "selection_summary"])
+@pytest.mark.parametrize(
+    "invalid_yaml", ["null", "false", "true", "0", "1", "''", "'value'", "[]", "[value]"]
+)
+def test_load_monitor_scope_plan_strictly_rejects_declared_non_mapping_fields_deterministically(
+    tmp_path: Path, field: str, invalid_yaml: str
+):
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(f"{field}: {invalid_yaml}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as first:
+        load_monitor_scope_plan(scope_path, strict_limits=True)
+    with pytest.raises(ValueError) as second:
+        load_monitor_scope_plan(scope_path, strict_limits=True)
+
+    assert str(first.value) == str(second.value) == f"monitor_scope.{field} must be an object"
+
+
+@pytest.mark.parametrize(
+    "invalid_yaml",
+    ["{1: 0}", "{selected: true}", "{selected: '1'}", "{selected: -1}"],
+)
+def test_load_monitor_scope_plan_strictly_rejects_invalid_selection_summary_entries(
+    tmp_path: Path, invalid_yaml: str
+):
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(f"selection_summary: {invalid_yaml}\n", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="monitor_scope.selection_summary keys must be strings and values must be non-negative integers",
+    ):
+        load_monitor_scope_plan(scope_path, strict_limits=True)
+
+
+def test_load_monitor_scope_plan_strict_accepts_non_negative_selection_summary(tmp_path: Path):
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text("selection_summary: {selected: 0, rejected: 2}\n", encoding="utf-8")
+
+    loaded = load_monitor_scope_plan(scope_path, strict_limits=True)
+
+    assert loaded.selection_summary == {"selected": 0, "rejected": 2}
+
+
+@pytest.mark.parametrize("field", ["fetch_config_json", "based_on", "selection_summary"])
+@pytest.mark.parametrize("falsey_yaml", ["null", "false", "0", "''", "[]"])
+def test_load_monitor_scope_plan_default_retains_falsey_mapping_normalization(
+    tmp_path: Path, field: str, falsey_yaml: str
+):
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(f"{field}: {falsey_yaml}\n", encoding="utf-8")
+
+    loaded = load_monitor_scope_plan(scope_path)
+
+    assert getattr(loaded, field) == {}
+
+
+def test_load_monitor_scope_plan_default_retains_selection_summary_coercion(tmp_path: Path):
+    scope_path = tmp_path / "monitor_scope.yaml"
+    scope_path.write_text(
+        "selection_summary: {7: '3', selected: true, rejected: -1, '': 9}\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_monitor_scope_plan(scope_path)
+
+    assert loaded.selection_summary == {"7": 3, "selected": 1, "rejected": -1}

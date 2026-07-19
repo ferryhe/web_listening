@@ -1,8 +1,13 @@
+from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
+import os
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import pytest
 
 from web_listening.api import routes
 from web_listening.api.app import create_app
@@ -29,6 +34,391 @@ class FakeProbeAdapter:
             final_url=url,
             status_code=200,
         )
+
+
+def test_execution_plan_preview_plural_api_uses_stable_compatibility_envelope(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("""site_key: demo
+seed_url: https://example.com/news
+homepage_url: https://example.com/
+allowed_page_prefixes: [/news]
+allowed_file_prefixes: [/]
+max_depth: 3
+max_pages: 25
+max_files: 10
+based_on: {}
+""", encoding="utf-8")
+    client = TestClient(create_app())
+    response = client.post("/api/v1/acquisition/execution-plans/preview", json={"scope_path": "scope.yaml"})
+    assert response.status_code == 200
+    assert response.json()["schema_version"] == "acquisition-execution-plan-preview.v1"
+    assert response.json()["plan"]["mode"] == "legacy_compatibility"
+    assert client.post("/api/v1/acquisition/execution-plan/preview", json={"scope_path": "scope.yaml"}).status_code == 404
+
+
+def test_execution_plan_preview_pins_validated_scope_before_parsing(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "scope.yaml"
+    outside = tmp_path.parent / "outside-scope.yaml"
+    scope.write_text("site_key: inside\nseed_url: https://inside.example/\nbased_on: {}\n", encoding="utf-8")
+    outside.write_text(
+        "site_key: outside-canary\nseed_url: https://outside.example/\nbased_on: {}\n",
+        encoding="utf-8",
+    )
+    swapped = False
+
+    def swap_to_outside_symlink() -> None:
+        nonlocal swapped
+        if swapped:
+            return
+        scope.unlink()
+        scope.symlink_to(outside)
+        swapped = True
+
+    original_open = getattr(routes, "_open_preview_input", None)
+    if original_open is not None:
+        @contextmanager
+        def swapping_open(raw_path: str):
+            with original_open(raw_path) as stream:
+                if raw_path == scope.name:
+                    swap_to_outside_symlink()
+                yield stream
+
+        monkeypatch.setattr(routes, "_open_preview_input", swapping_open)
+    else:
+        original_safe_input_path = routes._safe_input_path
+
+        def swapping_safe_input_path(raw_path: str | None):
+            validated = original_safe_input_path(raw_path)
+            if raw_path == scope.name:
+                swap_to_outside_symlink()
+            return validated
+
+        monkeypatch.setattr(routes, "_safe_input_path", swapping_safe_input_path)
+
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+
+    assert swapped
+    assert response.status_code == 200
+    assert response.json()["plan"]["site_key"] == "inside"
+    assert "outside-canary" not in response.text
+
+
+@pytest.mark.parametrize("input_kind", ["scope", "profile"])
+@pytest.mark.parametrize("symlink_kind", ["final", "intermediate"])
+def test_execution_plan_preview_rejects_symlinked_input_components(
+    tmp_path: Path, monkeypatch, input_kind: str, symlink_kind: str
+):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    outside_dir = tmp_path.parent / f"outside-{input_kind}-{symlink_kind}"
+    outside_dir.mkdir(exist_ok=True)
+    outside = outside_dir / f"SECRET-PATH-CANARY-{input_kind}.yaml"
+    outside.write_text(
+        "site_key: SECRET-CONTENT-CANARY\nseed_url: https://outside.example/\nbased_on: {}\n",
+        encoding="utf-8",
+    )
+    if symlink_kind == "final":
+        requested = tmp_path / f"{input_kind}.yaml"
+        requested.symlink_to(outside)
+    else:
+        linked_parent = tmp_path / "linked-parent"
+        linked_parent.symlink_to(outside_dir, target_is_directory=True)
+        requested = linked_parent / outside.name
+
+    payload = {f"{input_kind}_path": str(requested.relative_to(tmp_path))}
+    if input_kind == "profile":
+        scope = tmp_path / "scope.yaml"
+        scope.write_text("site_key: inside\nseed_url: https://inside.example/\nbased_on: {}\n", encoding="utf-8")
+        payload["scope_path"] = scope.name
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json=payload)
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-PATH-CANARY" not in response.text
+    assert "SECRET-CONTENT-CANARY" not in response.text
+
+
+def test_execution_plan_preview_rejects_fifo_input_promptly(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    fifo = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
+    os.mkfifo(fifo)
+    final_open_started = Event()
+    original_open = routes.os.open
+
+    def observe_final_open(path, flags, *args, **kwargs):
+        if path == fifo.name and kwargs.get("dir_fd") is not None:
+            final_open_started.set()
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(routes.os, "open", observe_final_open)
+    client = TestClient(create_app())
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            client.post,
+            "/api/v1/acquisition/execution-plans/preview",
+            json={"scope_path": fifo.name},
+        )
+        assert final_open_started.wait(timeout=1)
+        try:
+            response = future.result(timeout=1)
+        except FutureTimeoutError:
+            writer_fd = original_open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            os.close(writer_fd)
+            future.result(timeout=1)
+            pytest.fail("FIFO preview input blocked while opening")
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-PATH-CANARY" not in response.text
+    assert str(tmp_path) not in response.text
+
+
+def test_execution_plan_preview_api_structured_redacted_failure(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {site_skill_version: 1.0.0}\n", encoding="utf-8")
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": "scope.yaml"})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "input.invalid"
+    assert str(tmp_path) not in response.text
+
+
+def test_execution_plan_preview_api_malformed_scope_yaml_is_redacted_422(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
+    scope.write_text("site_key: [SECRET-CONTENT-CANARY\n", encoding="utf-8")
+
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-PATH-CANARY" not in response.text
+    assert "SECRET-CONTENT-CANARY" not in response.text
+
+
+def test_execution_plan_preview_api_sequence_scope_root_is_redacted_422(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
+    scope.write_text("- SECRET-CONTENT-CANARY\n", encoding="utf-8")
+
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-PATH-CANARY" not in response.text
+    assert "SECRET-CONTENT-CANARY" not in response.text
+
+
+def test_execution_plan_preview_api_missing_path_is_redacted_envelope(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    response = TestClient(create_app()).post("/api/v1/acquisition/execution-plans/preview",
+        json={"scope_path": "SECRET-CANARY-missing.yaml"})
+    assert response.status_code == 422
+    assert response.json()["schema_version"] == "acquisition-execution-plan-preview.v1"
+    assert response.json()["error"] == {"code": "input.invalid", "field": ".", "message": "preview input is invalid"}
+    assert "SECRET-CANARY" not in response.text
+    assert str(tmp_path) not in response.text
+
+
+@pytest.mark.parametrize("limit_yaml", ["true", '"25"'])
+def test_execution_plan_preview_api_rejects_coerced_scope_limits(tmp_path: Path, monkeypatch, limit_yaml: str):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(f"""site_key: demo
+seed_url: https://example.com/news
+homepage_url: https://example.com/
+allowed_page_prefixes: [/news]
+allowed_file_prefixes: [/]
+max_depth: 3
+max_pages: {limit_yaml}
+max_files: 10
+based_on: {{}}
+""", encoding="utf-8")
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-CANARY" not in response.text
+
+
+@pytest.mark.parametrize(
+    "invalid_list_yaml",
+    ["allowed_page_prefixes: /news", "notes: [safe, 7]"],
+)
+def test_execution_plan_preview_api_rejects_invalid_scope_lists_deterministically_and_redacted(
+    tmp_path: Path, monkeypatch, invalid_list_yaml: str
+):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(
+        f"site_key: demo\nseed_url: https://example.com/\nbased_on: {{}}\n{invalid_list_yaml}\n",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app())
+
+    first = client.post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+    second = client.post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+
+    assert first.status_code == second.status_code == 422
+    assert first.content == second.content
+    assert first.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-CANARY" not in first.text
+    assert "/news" not in first.text
+
+
+@pytest.mark.parametrize(
+    "invalid_mapping_yaml",
+    [
+        "fetch_config_json: false",
+        "fetch_config_json: 0",
+        "fetch_config_json: ''",
+        "fetch_config_json: []",
+        "selection_summary: {selected: true}",
+        "selection_summary: {selected: -1}",
+    ],
+)
+def test_execution_plan_preview_api_rejects_invalid_scope_mappings_deterministically_and_redacted(
+    tmp_path: Path, monkeypatch, invalid_mapping_yaml: str
+):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(
+        f"site_key: demo\nseed_url: https://example.com/\nbased_on: {{}}\n{invalid_mapping_yaml}\n",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app())
+
+    first = client.post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+    second = client.post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+
+    assert first.status_code == second.status_code == 422
+    assert first.content == second.content
+    assert first.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-CANARY" not in first.text
+    assert "selected" not in first.text
+
+
+@pytest.mark.parametrize("based_on_yaml", ["[]", "[acquisition_profile_id]"])
+def test_execution_plan_preview_api_rejects_non_mapping_based_on_deterministically(
+    tmp_path: Path, monkeypatch, based_on_yaml: str
+):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(
+        f"site_key: demo\nseed_url: https://example.com/\nbased_on: {based_on_yaml}\n",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app())
+
+    first = client.post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+    second = client.post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+
+    assert first.status_code == second.status_code == 422
+    assert first.content == second.content
+    assert first.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-CANARY" not in first.text
+
+
+def test_execution_plan_preview_api_rejects_coerced_profile_authority(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {}\n", encoding="utf-8")
+    profile = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
+    profile.write_text("""profile_id: demo
+site_key: demo
+generated_at: "2026-01-01T00:00:00Z"
+safety: {require_authorized_access: "SECRET-VALUE-CANARY"}
+""", encoding="utf-8")
+
+    response = TestClient(create_app()).post("/api/v1/acquisition/execution-plans/preview", json={
+        "scope_path": scope.name, "profile_path": profile.name,
+    })
+
+    assert response.status_code == 422
+    assert response.json()["error"] == {
+        "code": "input.invalid", "field": ".", "message": "preview input is invalid",
+    }
+    assert "SECRET-PATH-CANARY" not in response.text
+    assert "SECRET-VALUE-CANARY" not in response.text
+
+
+def test_execution_plan_preview_route_owns_all_request_validation(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    client = TestClient(create_app())
+    cases = [
+        ({}, None),
+        ({"profile_path": "SECRET-CANARY.yaml"}, None),
+        ({"scope_path": "SECRET-CANARY.yaml", "extra": "SECRET-CANARY"}, None),
+        ({"scope_path": 12345}, None),
+    ]
+    for payload, _ in cases:
+        response = client.post("/api/v1/acquisition/execution-plans/preview", json=payload)
+        assert response.status_code == 422
+        assert response.json() == {
+            "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+            "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+        }
+        assert "SECRET-CANARY" not in response.text
+    missing = client.post("/api/v1/acquisition/execution-plans/preview")
+    assert missing.status_code == 422
+    assert missing.json()["schema_version"] == "acquisition-execution-plan-preview.v1"
+    assert "detail" not in missing.json()
+
+
+def test_execution_plan_preview_owns_malformed_json_and_openapi_schema():
+    client = TestClient(create_app())
+    response = client.post("/api/v1/acquisition/execution-plans/preview",
+        content=b'{"scope_path":', headers={"content-type": "application/json"})
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    operation = client.get("/openapi.json").json()["paths"]["/api/v1/acquisition/execution-plans/preview"]["post"]
+    request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
+    assert request_schema["type"] == "object"
+    assert request_schema["required"] == ["scope_path"]
+    assert set(request_schema["properties"]) == {"scope_path", "profile_path"}
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/AcquisitionExecutionPreviewResponse")
+    assert operation["responses"]["422"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/AcquisitionExecutionPreviewResponse")
 
 
 class FakeCloakProbeAdapter(FakeProbeAdapter):
@@ -138,6 +528,19 @@ def test_acquisition_probe_endpoint_uses_helper_network_free(monkeypatch):
     assert payload["attempt"]["adapter"] == "browser_rendered"
     assert payload["attempt"]["status"] == "failed_quality_gate"
     assert payload["next_action"] == "try_adapter:sitemap"
+
+
+def test_acquisition_probe_endpoint_translates_helper_value_error(monkeypatch):
+    def fail_probe(**kwargs):
+        raise ValueError("invalid probe input")
+
+    monkeypatch.setattr(routes, "probe_acquisition_url", fail_probe)
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/probe",
+        json={"url": "https://example.com/", "site_key": "demo"},
+    )
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid probe input"}
 
 
 def test_acquisition_probe_endpoint_loads_profile_path_without_site_key(tmp_path, monkeypatch):

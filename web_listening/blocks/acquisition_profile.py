@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+import math
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TextIO
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -43,7 +44,7 @@ class AcquisitionAdapterConfig(BaseModel):
 
 
 class AcquisitionQualityGates(BaseModel):
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
+    model_config = ConfigDict(from_attributes=True, extra="forbid", hide_input_in_errors=True)
 
     min_words: int = 120
     min_links: int = 3
@@ -59,9 +60,8 @@ class AcquisitionQualityGates(BaseModel):
         ]
     )
 
-
 class AcquisitionSafetyPolicy(BaseModel):
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
+    model_config = ConfigDict(from_attributes=True, extra="forbid", hide_input_in_errors=True)
 
     allowed_domains: list[str] = Field(default_factory=list)
     allow_stealth_browser: bool = False
@@ -103,6 +103,50 @@ class AcquisitionSafetyPolicy(BaseModel):
         return self.allow_stealth_browser and self.require_authorized_access
 
 
+class AcquisitionRecipeMapping(BaseModel):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    adapter: AdapterId
+    recipe_id: str = Field(min_length=1)
+
+
+class AcquisitionResourceLimits(BaseModel):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    timeout_seconds: float | None = None
+    stdout_bytes: int | None = None
+    stderr_bytes: int | None = None
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def strict_timeout(cls, value: Any) -> Any:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int | float)):
+            raise ValueError("timeout_seconds must be a number without coercion")
+        return value
+
+    @field_validator("stdout_bytes", "stderr_bytes", mode="before")
+    @classmethod
+    def strict_bytes(cls, value: Any) -> Any:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise ValueError("byte limits must be integers without coercion")
+        return value
+
+    @model_validator(mode="after")
+    def validate_bounded_limits(self) -> AcquisitionResourceLimits:
+        if self.timeout_seconds is not None and (
+            isinstance(self.timeout_seconds, bool) or not math.isfinite(self.timeout_seconds)
+            or self.timeout_seconds <= 0 or self.timeout_seconds > 300
+        ):
+            raise ValueError("timeout_seconds must be finite and in (0, 300]")
+        for name, value, ceiling in (
+            ("stdout_bytes", self.stdout_bytes, 16 * 1024 * 1024),
+            ("stderr_bytes", self.stderr_bytes, 1024 * 1024),
+        ):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0 or value > ceiling):
+                raise ValueError(f"{name} must be a positive integer no greater than {ceiling}")
+        return self
+
+
 class AcquisitionProfile(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
@@ -116,6 +160,9 @@ class AcquisitionProfile(BaseModel):
     quality_gates: AcquisitionQualityGates = Field(default_factory=AcquisitionQualityGates)
     safety: AcquisitionSafetyPolicy = Field(default_factory=AcquisitionSafetyPolicy)
     adapters: list[AcquisitionAdapterConfig] = Field(default_factory=list)
+    recipe_mappings: list[AcquisitionRecipeMapping] = Field(default_factory=list)
+    resource_limits: AcquisitionResourceLimits = Field(default_factory=AcquisitionResourceLimits)
+    adapter_resource_limits: dict[AdapterId, AcquisitionResourceLimits] = Field(default_factory=dict)
     notes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -150,6 +197,12 @@ class AcquisitionProfile(BaseModel):
                 "browseract requires safety.allow_stealth_browser=true "
                 "and safety.require_authorized_access=true"
             )
+        adapter_ids = [item.adapter for item in self.adapters]
+        if len(adapter_ids) != len(set(adapter_ids)):
+            raise ValueError("adapters must have unique adapter values")
+        mapped = [item.adapter for item in self.recipe_mappings]
+        if len(mapped) != len(set(mapped)):
+            raise ValueError("recipe_mappings must have unique adapter values")
         return self
 
 
@@ -242,12 +295,35 @@ def build_default_acquisition_profile(
     )
 
 
-def load_acquisition_profile(path: str | Path) -> AcquisitionProfile:
-    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+def load_acquisition_profile(source: str | Path | TextIO, *, strict: bool = False) -> AcquisitionProfile:
+    try:
+        text = Path(source).read_text(encoding="utf-8") if isinstance(source, str | Path) else source.read()
+        payload = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError("acquisition profile YAML is invalid") from exc
     if payload is None:
         payload = {}
     if not isinstance(payload, Mapping):
         raise ValueError("acquisition profile YAML root must be a mapping/object")
+    if strict:
+        quality_gates = payload.get("quality_gates")
+        if isinstance(quality_gates, Mapping):
+            for field in ("min_words", "min_links", "min_document_links"):
+                value = quality_gates.get(field)
+                if field in quality_gates and (isinstance(value, bool) or not isinstance(value, int)):
+                    raise ValueError("acquisition profile has an invalid quality gate count")
+            if "require_status_ok" in quality_gates and not isinstance(quality_gates["require_status_ok"], bool):
+                raise ValueError("acquisition profile has an invalid quality status policy")
+        safety = payload.get("safety")
+        if isinstance(safety, Mapping):
+            for field in ("allow_stealth_browser", "require_authorized_access"):
+                if field in safety and not isinstance(safety[field], bool):
+                    raise ValueError("acquisition profile has an invalid safety authorization flag")
+        adapters = payload.get("adapters")
+        if isinstance(adapters, list):
+            for adapter in adapters:
+                if isinstance(adapter, Mapping) and "enabled" in adapter and not isinstance(adapter["enabled"], bool):
+                    raise ValueError("acquisition profile has an invalid adapter enabled flag")
     return AcquisitionProfile(**payload)
 
 

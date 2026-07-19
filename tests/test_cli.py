@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
+import pytest
 from typer.testing import CliRunner
 
 import web_listening.blocks.acquisition_tools as acquisition_tools
@@ -15,13 +16,282 @@ from web_listening.blocks.acquisition_profile import (
     render_acquisition_profile_yaml,
 )
 from web_listening.blocks.crawler import FetchResult
-from web_listening.blocks.monitor_scope_planner import build_monitor_scope, render_yaml_text as render_scope_yaml_text
+from web_listening.blocks.monitor_scope_planner import (
+    build_monitor_scope,
+    load_monitor_scope_plan,
+    render_yaml_text as render_scope_yaml_text,
+)
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
 from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, Job, PageSnapshot, Site
 
 
 runner = CliRunner()
+
+
+def test_preview_execution_plan_json_legacy_is_byte_identical(tmp_path: Path):
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("""site_key: demo
+seed_url: https://example.com/news
+homepage_url: https://example.com/
+allowed_page_prefixes: [/news]
+allowed_file_prefixes: [/]
+max_depth: 3
+max_pages: 25
+max_files: 10
+based_on: {}
+""", encoding="utf-8")
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+    assert first.exit_code == second.exit_code == 0
+    assert first.stdout == second.stdout
+    payload = json.loads(first.stdout)
+    assert payload["plan"]["mode"] == "legacy_compatibility"
+    assert len(payload["plan"]["warnings"]) == 1
+
+
+def test_preview_execution_plan_json_parser_and_compiler_errors_are_structured(tmp_path: Path):
+    missing = runner.invoke(app, ["preview-execution-plan", "--json"])
+    assert missing.exit_code != 0
+    assert json.loads(missing.stdout)["error"]["code"] == "parser.invalid"
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {site_skill_version: 1.0.0}\n", encoding="utf-8")
+    failed = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope), "--json"])
+    assert failed.exit_code != 0
+    assert json.loads(failed.stdout)["error"]["code"] == "input.invalid"
+    assert str(tmp_path) not in failed.stdout
+
+
+def test_preview_execution_plan_json_malformed_scope_yaml_is_stable_and_redacted(tmp_path: Path):
+    scope = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
+    scope.write_text("site_key: [SECRET-CONTENT-CANARY\n", encoding="utf-8")
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code != 0
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "SECRET-PATH-CANARY" not in first.stdout
+    assert "SECRET-CONTENT-CANARY" not in first.stdout
+
+
+def test_preview_execution_plan_json_sequence_scope_root_is_stable_and_redacted(tmp_path: Path):
+    scope = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
+    scope.write_text("- SECRET-CONTENT-CANARY\n", encoding="utf-8")
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code != 0
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "SECRET-PATH-CANARY" not in first.stdout
+    assert "SECRET-CONTENT-CANARY" not in first.stdout
+
+
+def test_preview_execution_plan_json_rejects_explicit_empty_governed_binding(tmp_path: Path):
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {acquisition_profile_id: ''}\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope), "--json"])
+
+    assert result.exit_code != 0
+    assert json.loads(result.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "bindings.partial", "field": "based_on", "message": "governed acquisition bindings must be all present or all absent"},
+    }
+    assert "SECRET-CANARY" not in result.stdout
+
+
+@pytest.mark.parametrize("limit_yaml", ["true", '"25"'])
+def test_preview_execution_plan_json_rejects_coerced_scope_limits(tmp_path: Path, limit_yaml: str):
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(f"""site_key: demo
+seed_url: https://example.com/news
+homepage_url: https://example.com/
+allowed_page_prefixes: [/news]
+allowed_file_prefixes: [/]
+max_depth: 3
+max_pages: {limit_yaml}
+max_files: 10
+based_on: {{}}
+""", encoding="utf-8")
+    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope), "--json"])
+    assert result.exit_code != 0
+    assert json.loads(result.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "SECRET-CANARY" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "invalid_list_yaml",
+    ["allowed_page_prefixes: /news", "notes: [safe, 7]"],
+)
+def test_preview_execution_plan_json_rejects_invalid_scope_lists_deterministically_and_redacted(
+    tmp_path: Path, invalid_list_yaml: str
+):
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(
+        f"site_key: demo\nseed_url: https://example.com/\nbased_on: {{}}\n{invalid_list_yaml}\n",
+        encoding="utf-8",
+    )
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code != 0
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "SECRET-CANARY" not in first.stdout
+    assert "/news" not in first.stdout
+
+
+@pytest.mark.parametrize(
+    "invalid_mapping_yaml",
+    [
+        "fetch_config_json: false",
+        "fetch_config_json: 0",
+        "fetch_config_json: ''",
+        "fetch_config_json: []",
+        "selection_summary: {selected: '1'}",
+        "selection_summary: {1: 0}",
+    ],
+)
+def test_preview_execution_plan_json_rejects_invalid_scope_mappings_deterministically_and_redacted(
+    tmp_path: Path, invalid_mapping_yaml: str
+):
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(
+        f"site_key: demo\nseed_url: https://example.com/\nbased_on: {{}}\n{invalid_mapping_yaml}\n",
+        encoding="utf-8",
+    )
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code != 0
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "SECRET-CANARY" not in first.stdout
+    assert "selected" not in first.stdout
+
+
+def test_preview_execution_plan_json_rejects_coerced_profile_authority(tmp_path: Path):
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {}\n", encoding="utf-8")
+    profile = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
+    profile.write_text("""profile_id: demo
+site_key: demo
+generated_at: "2026-01-01T00:00:00Z"
+quality_gates: {min_words: "SECRET-VALUE-CANARY"}
+""", encoding="utf-8")
+
+    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope),
+        "--profile-path", str(profile), "--json"])
+
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["error"] == {
+        "code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError",
+    }
+    assert "SECRET-PATH-CANARY" not in result.stdout
+    assert "SECRET-VALUE-CANARY" not in result.stdout
+
+
+def test_preview_execution_plan_json_rejects_non_string_governed_identity_deterministically(tmp_path: Path):
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {acquisition_profile_id: 123}\n", encoding="utf-8")
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+    assert first.exit_code == second.exit_code != 0
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "123" not in first.stdout
+    assert "SECRET-CANARY" not in first.stdout
+
+
+@pytest.mark.parametrize("based_on_yaml", ["[]", "[acquisition_profile_id]"])
+def test_preview_execution_plan_json_rejects_non_mapping_based_on_deterministically(
+    tmp_path: Path, based_on_yaml: str
+):
+    scope = tmp_path / "SECRET-CANARY-scope.yaml"
+    scope.write_text(
+        f"site_key: demo\nseed_url: https://example.com/\nbased_on: {based_on_yaml}\n",
+        encoding="utf-8",
+    )
+    args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code != 0
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+    }
+    assert "SECRET-CANARY" not in first.stdout
+
+
+@pytest.mark.parametrize("based_on_yaml", ["[]", "[acquisition_profile_id]"])
+def test_default_scope_loader_preserves_non_mapping_based_on_compatibility(
+    tmp_path: Path, based_on_yaml: str
+):
+    scope = tmp_path / "scope.yaml"
+    scope.write_text(f"based_on: {based_on_yaml}\n", encoding="utf-8")
+
+    loaded = load_monitor_scope_plan(scope)
+
+    assert loaded.based_on == {}
+
+
+def test_default_scope_loader_preserves_numeric_string_limits_for_bootstrap_callers(tmp_path: Path):
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("max_depth: '3'\nmax_pages: '25'\nmax_files: '10'\n", encoding="utf-8")
+
+    loaded = load_monitor_scope_plan(scope)
+
+    assert (loaded.max_depth, loaded.max_pages, loaded.max_files) == (3, 25, 10)
+
+
+def test_preview_json_missing_path_parser_error_is_redacted_and_stdout_only():
+    canary = "/tmp/SECRET-CANARY-scope.yaml"
+    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", canary, "--json"])
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["error"] == {"code": "parser.invalid", "field": ".", "message": "invalid command arguments"}
+    assert "SECRET-CANARY" not in result.output
+    assert result.stderr == ""
+
+
+def test_preview_execution_plan_human_parser_error_is_normal_human_output():
+    result = runner.invoke(app, ["preview-execution-plan"])
+    assert result.exit_code != 0
+    assert "Usage:" in result.output
+    assert not result.output.lstrip().startswith("{")
 
 
 class FakeProbeAdapter:

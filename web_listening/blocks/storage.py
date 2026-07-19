@@ -1,11 +1,20 @@
 import json
+import base64
+import binascii
+import hashlib
+import os
 import sqlite3
+import stat
+import re
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final, List, Optional
 
 from web_listening.models import (
     AnalysisReport,
+    AcquisitionArtifact,
+    AcquisitionAttempt,
     Change,
     CrawlRun,
     CrawlScope,
@@ -19,6 +28,9 @@ from web_listening.models import (
     TrackedFile,
     TrackedPage,
 )
+from web_listening.blocks.acquisition_gateway import redact_persisted_value
+from web_listening.contracts import AcquisitionAttempt as ContractAcquisitionAttempt
+from web_listening.contracts._protocol import validate_portable_relative_path
 
 
 def _parse_dt(value) -> Optional[datetime]:
@@ -255,12 +267,60 @@ class Storage:
                 discovered_url TEXT NOT NULL,
                 download_url TEXT NOT NULL,
                 tracked_local_path TEXT DEFAULT '',
+                attempt_id TEXT,
                 FOREIGN KEY (scope_id) REFERENCES crawl_scopes(id),
                 FOREIGN KEY (run_id) REFERENCES crawl_runs(id),
                 FOREIGN KEY (page_id) REFERENCES tracked_pages(id),
                 FOREIGN KEY (file_id) REFERENCES tracked_files(id),
                 FOREIGN KEY (document_id) REFERENCES documents(id)
             );
+
+            CREATE TABLE IF NOT EXISTS acquisition_attempts (
+                attempt_id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                scope_id INTEGER NOT NULL,
+                run_id INTEGER NOT NULL,
+                position INTEGER NOT NULL,
+                content_kind TEXT NOT NULL,
+                profile_id TEXT,
+                site_skill_id TEXT,
+                site_skill_version TEXT,
+                site_skill_package_sha256 TEXT,
+                recipe_id TEXT,
+                script_sha256 TEXT,
+                executor_id TEXT NOT NULL,
+                executor_version TEXT NOT NULL,
+                requested_url TEXT NOT NULL,
+                final_url TEXT,
+                requested_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                acquisition_fingerprint TEXT,
+                classification TEXT NOT NULL,
+                accepted INTEGER NOT NULL,
+                reason TEXT DEFAULT '',
+                validation_json TEXT DEFAULT '{}',
+                canonical_json TEXT NOT NULL,
+                redaction_status TEXT NOT NULL,
+                authority_mode TEXT NOT NULL,
+                UNIQUE(run_id, request_id, position)
+            );
+
+            CREATE TABLE IF NOT EXISTS acquisition_artifacts (
+                attempt_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                portable_path TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                redaction_status TEXT NOT NULL,
+                PRIMARY KEY(attempt_id, kind, portable_path),
+                FOREIGN KEY(attempt_id) REFERENCES acquisition_attempts(attempt_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_acquisition_attempts_run_scope
+                ON acquisition_attempts(scope_id, run_id, position, attempt_id);
+            CREATE INDEX IF NOT EXISTS idx_acquisition_artifacts_attempt
+                ON acquisition_artifacts(attempt_id);
         """)
         self._ensure_column("sites", "fetch_mode", "TEXT DEFAULT 'http'")
         self._ensure_column("sites", "fetch_config_json", "TEXT DEFAULT '{}'")
@@ -289,6 +349,10 @@ class Storage:
         self._ensure_column("jobs", "accepted_at", "TEXT")
         self._ensure_column("file_observations", "document_id", "INTEGER")
         self._ensure_column("file_observations", "tracked_local_path", "TEXT DEFAULT ''")
+        self._ensure_column("page_snapshots", "attempt_id", "TEXT")
+        self._ensure_column("file_observations", "attempt_id", "TEXT")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_page_snapshots_attempt_id ON page_snapshots(attempt_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_file_observations_attempt_id ON file_observations(attempt_id)")
         self.conn.commit()
 
     def _ensure_column(self, table_name: str, column_name: str, column_sql: str):
@@ -1211,14 +1275,20 @@ class Storage:
         )
 
     def add_page_snapshot(self, snapshot: PageSnapshot) -> PageSnapshot:
+        self._validate_accepted_attempt(snapshot.attempt_id, snapshot.scope_id, snapshot.run_id, "page")
+        snapshot = snapshot.model_copy(update={
+            "metadata_json": redact_persisted_value(snapshot.metadata_json),
+            "final_url": redact_persisted_value(snapshot.final_url),
+            "links": redact_persisted_value(snapshot.links),
+        })
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.execute(
             """
             INSERT INTO page_snapshots (
                 scope_id, page_id, run_id, captured_at, content_hash, raw_html, cleaned_html,
                 content_text, markdown, fit_markdown, metadata_json, fetch_mode,
-                final_url, status_code, links
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                final_url, status_code, links, attempt_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot.scope_id,
@@ -1236,6 +1306,7 @@ class Storage:
                 snapshot.final_url,
                 snapshot.status_code,
                 json.dumps(snapshot.links),
+                snapshot.attempt_id,
             ),
         )
         self.conn.commit()
@@ -1272,6 +1343,7 @@ class Storage:
             scope_id=row["scope_id"],
             page_id=row["page_id"],
             run_id=row["run_id"],
+            attempt_id=row["attempt_id"],
             captured_at=_parse_dt(row["captured_at"]),
             content_hash=row["content_hash"],
             raw_html=row["raw_html"] or "",
@@ -1421,11 +1493,17 @@ class Storage:
         )
 
     def add_file_observation(self, observation: FileObservation) -> FileObservation:
+        self._validate_accepted_attempt(observation.attempt_id, observation.scope_id, observation.run_id, "document")
+        observation = observation.model_copy(update={
+            "discovered_url": redact_persisted_value(observation.discovered_url),
+            "download_url": redact_persisted_value(observation.download_url),
+            "tracked_local_path": redact_persisted_value(observation.tracked_local_path),
+        })
         cur = self.conn.execute(
             """
             INSERT INTO file_observations (
-                scope_id, run_id, page_id, file_id, document_id, discovered_url, download_url, tracked_local_path
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                scope_id, run_id, page_id, file_id, document_id, discovered_url, download_url, tracked_local_path, attempt_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 observation.scope_id,
@@ -1436,6 +1514,7 @@ class Storage:
                 observation.discovered_url,
                 observation.download_url,
                 observation.tracked_local_path,
+                observation.attempt_id,
             ),
         )
         self.conn.commit()
@@ -1463,6 +1542,7 @@ class Storage:
             id=row["id"],
             scope_id=row["scope_id"],
             run_id=row["run_id"],
+            attempt_id=row["attempt_id"],
             page_id=row["page_id"],
             file_id=row["file_id"],
             document_id=row["document_id"],
@@ -1470,3 +1550,459 @@ class Storage:
             download_url=row["download_url"],
             tracked_local_path=row["tracked_local_path"] or "",
         )
+
+    def add_acquisition_attempt(self, attempt: AcquisitionAttempt) -> AcquisitionAttempt:
+        self._validate_acquisition_attempt_semantics(attempt)
+        sanitized_payload = redact_persisted_value(
+            attempt.model_dump(mode="python", exclude={"canonical_json", "artifacts"})
+        )
+        sanitized = AcquisitionAttempt(**sanitized_payload, canonical_json="")
+        payload = self._canonical_attempt_payload(attempt, sanitized)
+        existing = self.conn.execute(
+            "SELECT canonical_json FROM acquisition_attempts WHERE attempt_id = ?", (attempt.attempt_id,)
+        ).fetchone()
+        if existing is not None:
+            persisted = self.get_acquisition_attempt(attempt.attempt_id)
+            comparable = lambda value: value.model_dump(
+                mode="json", exclude={"canonical_json", "artifacts"}
+            )
+            if existing["canonical_json"] != payload or comparable(persisted) != comparable(sanitized):
+                raise ValueError("conflicting acquisition attempt id")
+            return self.get_acquisition_attempt(attempt.attempt_id)
+        self.conn.execute(
+            """INSERT INTO acquisition_attempts (
+                attempt_id, request_id, scope_id, run_id, position, content_kind, profile_id,
+                site_skill_id, site_skill_version, site_skill_package_sha256, recipe_id,
+                script_sha256, executor_id, executor_version, requested_url, final_url,
+                requested_at, started_at, finished_at, acquisition_fingerprint, classification,
+                accepted, reason, validation_json, canonical_json, redaction_status, authority_mode
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (sanitized.attempt_id, sanitized.request_id, sanitized.scope_id, sanitized.run_id, sanitized.position,
+             sanitized.content_kind, sanitized.profile_id, sanitized.site_skill_id, sanitized.site_skill_version,
+             sanitized.site_skill_package_sha256, sanitized.recipe_id, sanitized.script_sha256,
+             sanitized.executor_id, sanitized.executor_version, sanitized.requested_url, sanitized.final_url,
+             sanitized.requested_at.isoformat(), sanitized.started_at.isoformat() if sanitized.started_at else None,
+             sanitized.finished_at.isoformat() if sanitized.finished_at else None,
+             sanitized.acquisition_fingerprint, sanitized.classification, int(sanitized.accepted), sanitized.reason,
+             json.dumps(sanitized.validation, sort_keys=True), payload, sanitized.redaction_status,
+             sanitized.authority_mode),
+        )
+        self.conn.commit()
+        return self.get_acquisition_attempt(attempt.attempt_id)
+
+    @staticmethod
+    def _validate_acquisition_attempt_semantics(attempt: AcquisitionAttempt) -> None:
+        if attempt.classification == "accepted" and not attempt.accepted:
+            raise ValueError("accepted classification requires accepted=true")
+        if attempt.accepted and (
+            attempt.classification != "accepted"
+            or (attempt.reason and attempt.reason != "accepted")
+        ):
+            raise ValueError("conflicting accepted attempt classification or reason")
+
+    def add_legacy_compatibility_attempt(
+        self, *, scope_id: int, run_id: int, identity: str, content_kind: str = "page",
+    ) -> AcquisitionAttempt:
+        """Create explicit lineage for compatibility fixtures/imports that predate governance."""
+        request_id = hashlib.sha256(
+            f"legacy-compatibility\0{scope_id}\0{run_id}\0{content_kind}\0{identity}".encode()
+        ).hexdigest()
+        existing = self.get_acquisition_attempt(request_id)
+        if existing is not None:
+            expected = (scope_id, run_id, content_kind, "legacy_compatibility_import",
+                        "legacy-compatibility", redact_persisted_value(identity), True)
+            actual = (existing.scope_id, existing.run_id, existing.content_kind, existing.executor_id,
+                      existing.executor_version, existing.requested_url, existing.accepted)
+            if actual != expected:
+                raise ValueError("conflicting legacy compatibility attempt id")
+            return existing
+        now = datetime.now(timezone.utc)
+        return self.add_acquisition_attempt(AcquisitionAttempt(
+            attempt_id=request_id, request_id=request_id, scope_id=scope_id, run_id=run_id,
+            position=0, content_kind=content_kind, executor_id="legacy_compatibility_import",
+            executor_version="legacy-compatibility", requested_url=identity, final_url=identity,
+            requested_at=now, started_at=now, finished_at=now, classification="accepted",
+            accepted=True, reason="accepted", validation={"decision": "accepted"},
+            authority_mode="legacy_compatibility",
+        ))
+
+    def admit_inline_acquisition_artifacts(self, attempt_id: str, payloads) -> List[AcquisitionArtifact]:
+        if not payloads:
+            return []
+        if (not isinstance(payloads, Sequence) or isinstance(payloads, (str, bytes, bytearray))
+                or len(payloads) > 8):
+            raise ValueError("inline acquisition artifacts must be a bounded sequence")
+        payloads = tuple(payloads)
+        self._validate_portable_component(attempt_id)
+        if self.conn.execute(
+            "SELECT 1 FROM acquisition_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone() is None:
+            raise ValueError("acquisition artifact requires an existing persisted attempt")
+        allowed = {
+            "screenshot": {"image/png", "image/jpeg", "image/webp"},
+            "trace": {"application/json", "application/zip"},
+            "raw_capture": {"text/html", "application/octet-stream", "application/json"},
+        }
+        staged: list[tuple[int, str, AcquisitionArtifact]] = []
+        created: list[tuple[str, int, int]] = []
+        root_fd = artifacts_fd = attempt_fd = None
+        try:
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            root_fd = os.open(self.db_path.parent, directory_flags)
+            try:
+                os.mkdir("acquisition_artifacts", 0o700, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+            artifacts_fd = os.open("acquisition_artifacts", directory_flags, dir_fd=root_fd)
+            try:
+                os.mkdir(attempt_id, 0o700, dir_fd=artifacts_fd)
+            except FileExistsError:
+                pass
+            attempt_fd = os.open(attempt_id, directory_flags, dir_fd=artifacts_fd)
+            for index, item in enumerate(payloads):
+                if not isinstance(item, Mapping):
+                    raise ValueError("inline artifact descriptor must be an object")
+                kind, mime = str(item.get("kind", "")), str(item.get("mime_type", ""))
+                if kind not in allowed or mime not in allowed[kind]:
+                    raise ValueError("inline artifact kind or MIME is not allowed")
+                try:
+                    data = base64.b64decode(str(item.get("data_base64", "")), validate=True)
+                except (binascii.Error, ValueError):
+                    raise ValueError("inline artifact payload is not valid base64") from None
+                if len(data) > 4 * 1024 * 1024 or int(item.get("size_bytes", -1)) != len(data):
+                    raise ValueError("inline artifact byte size mismatch or limit exceeded")
+                digest = hashlib.sha256(data).hexdigest()
+                if item.get("sha256") != digest:
+                    raise ValueError("inline artifact SHA-256 mismatch")
+                data, redaction_status = self._govern_artifact_bytes(kind, mime, data)
+                digest = hashlib.sha256(data).hexdigest()
+                suffix = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp",
+                          "application/json": ".json", "application/zip": ".zip",
+                          "text/html": ".html", "application/octet-stream": ".bin"}[mime]
+                portable = f"acquisition_artifacts/{attempt_id}/{index:02d}-{kind}{suffix}"
+                target = f"{index:02d}-{kind}{suffix}"
+                descriptor = os.open(".", os.O_RDWR | os.O_TMPFILE, 0o600, dir_fd=attempt_fd)
+                try:
+                    created_identity = os.stat(descriptor)
+                    opened = os.fstat(descriptor)
+                    if ((opened.st_dev, opened.st_ino)
+                            != (created_identity.st_dev, created_identity.st_ino)):
+                        raise ValueError("temporary acquisition artifact identity changed")
+                    artifact = AcquisitionArtifact(attempt_id=attempt_id, kind=kind,
+                        portable_path=portable, mime_type=mime, size_bytes=len(data), sha256=digest,
+                        redaction_status=redaction_status)
+                    with os.fdopen(descriptor, "wb", closefd=False) as stream:
+                        stream.write(data)
+                        stream.flush()
+                    os.fsync(descriptor)
+                    staged.append((descriptor, target, artifact))
+                except Exception:
+                    os.close(descriptor)
+                    raise
+            self._verify_pinned_artifact_directories(root_fd, artifacts_fd, attempt_fd, attempt_id)
+            self.conn.execute("BEGIN IMMEDIATE")
+            for descriptor, target, artifact in staged:
+                row = self.conn.execute("""SELECT mime_type, size_bytes, sha256, redaction_status FROM acquisition_artifacts
+                    WHERE attempt_id=? AND kind=? AND portable_path=?""",
+                    (artifact.attempt_id, artifact.kind, artifact.portable_path)).fetchone()
+                if row is not None and (row["mime_type"], row["size_bytes"], row["sha256"],
+                                        row["redaction_status"]) != (
+                        artifact.mime_type, artifact.size_bytes, artifact.sha256,
+                        artifact.redaction_status):
+                    raise ValueError("conflicting acquisition artifact metadata")
+                try:
+                    source_info = os.fstat(descriptor)
+                    self._link_unnamed_temporary(descriptor, attempt_fd, target)
+                except FileExistsError:
+                    self._verify_existing_artifact(attempt_fd, target, artifact)
+                else:
+                    created.append((target, source_info.st_dev, source_info.st_ino))
+                self.conn.execute("""INSERT INTO acquisition_artifacts
+                    (attempt_id, kind, portable_path, mime_type, size_bytes, sha256, redaction_status)
+                    VALUES (?,?,?,?,?,?,?) ON CONFLICT(attempt_id, kind, portable_path) DO NOTHING""",
+                    (artifact.attempt_id, artifact.kind, artifact.portable_path,
+                    artifact.mime_type, artifact.size_bytes, artifact.sha256, artifact.redaction_status))
+            for _, target, artifact in staged:
+                self._verify_existing_artifact(attempt_fd, target, artifact)
+            # Verify every final named target before checking that the pinned
+            # directory chain is still the one reachable by its published path.
+            for _, target, artifact in staged:
+                self._verify_existing_artifact(attempt_fd, target, artifact)
+            # This directory rebind is intentionally the final filesystem
+            # operation immediately before the database commit.
+            self._verify_pinned_artifact_directories(root_fd, artifacts_fd, attempt_fd, attempt_id)
+            self.conn.commit()
+            return [item[2] for item in staged]
+        except Exception:
+            self.conn.rollback()
+            for target, device, inode in created:
+                self._unlink_if_identity(attempt_fd, target, device, inode)
+            raise
+        finally:
+            for descriptor, _, _ in staged:
+                os.close(descriptor)
+            for descriptor in (attempt_fd, artifacts_fd, root_fd):
+                if descriptor is not None:
+                    os.close(descriptor)
+
+    @staticmethod
+    def _link_unnamed_temporary(descriptor: int, parent_fd: int, target: str) -> None:
+        # procfs resolves this magic link to the already-open unnamed inode;
+        # the destination remains relative to the pinned attempt directory.
+        os.link(f"/proc/self/fd/{descriptor}", target, dst_dir_fd=parent_fd,
+                follow_symlinks=True)
+
+    @staticmethod
+    def _validate_portable_component(value: str) -> None:
+        try:
+            validated = validate_portable_relative_path(value, field_name="attempt_id")
+        except ValueError:
+            raise ValueError("attempt_id must be one safe portable path component") from None
+        if validated is None or "/" in validated:
+            raise ValueError("attempt_id must be one safe portable path component")
+
+    def _canonical_attempt_payload(self, supplied: AcquisitionAttempt,
+                                   indexed: AcquisitionAttempt) -> str:
+        if indexed.authority_mode not in {"governed", "legacy_runtime"}:
+            return self._compatibility_attempt_payload(indexed)
+        if not supplied.canonical_json:
+            raise ValueError("governed acquisition attempt requires canonical JSON authority")
+        contract = ContractAcquisitionAttempt.model_validate_json(supplied.canonical_json)
+        redacted_json = json.dumps(
+            redact_persisted_value(contract.model_dump(mode="json")),
+            sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        )
+        redacted = ContractAcquisitionAttempt.model_validate_json(redacted_json)
+        redacted_plain = json.loads(redacted_json)
+        expected = (
+            indexed.attempt_id, indexed.request_id, str(indexed.scope_id), str(indexed.run_id),
+            indexed.executor_id, indexed.requested_url, indexed.final_url, indexed.accepted,
+        )
+        actual = (
+            redacted.attempt_id, redacted.request.request_id, redacted.request.scope_id,
+            redacted.request.run_id, redacted.request.executor_id, str(redacted.request.url),
+            str(redacted.result.final_url) if redacted.result.final_url else None, redacted.accepted,
+        )
+        if actual != expected:
+            raise ValueError("canonical acquisition authority conflicts with relational indexes")
+        request_metadata = redacted.request.metadata
+        result_metadata = redacted.result.metadata
+        governed_request_metadata = {
+            "acquisition_fingerprint", "scope_fingerprint", "profile_id", "authority_mode",
+            "content_kind", "fallback_position", "executor_version", "entrypoint",
+            "script_sha256", "required_capabilities", "executor_capabilities",
+            "requires_authorized_access", "verification_rules", "resource_limits",
+            "quality_gates", "scope_budgets",
+        }
+        legacy_runtime_request_metadata = {
+            "authority_mode", "content_kind", "fallback_position", "profile_id",
+            "legacy_fetch_mode", "legacy_executor_label", "site_skill_lineage",
+            "executor_version",
+        }
+        required_request_metadata = (governed_request_metadata if indexed.authority_mode == "governed"
+                                     else legacy_runtime_request_metadata)
+        required_result_metadata = {
+            "acquisition_classification", "acquisition_validation",
+        }
+        if not required_request_metadata.issubset(request_metadata):
+            raise ValueError("canonical acquisition authority lacks required request metadata")
+        if not required_result_metadata.issubset(result_metadata):
+            raise ValueError("canonical acquisition authority lacks required result metadata")
+        canonical_validation = redacted_plain["result"]["metadata"]["acquisition_validation"]
+        semantic_expected = (
+            indexed.attempt_id, indexed.request_id,
+            indexed.requested_at, indexed.started_at, indexed.finished_at,
+            indexed.classification, indexed.reason or indexed.classification, indexed.accepted, indexed.authority_mode,
+            indexed.content_kind, indexed.requested_url, indexed.final_url,
+        )
+        semantic_actual = (
+            redacted.attempt_id, redacted.request.request_id, redacted.request.requested_at,
+            redacted.result.started_at, redacted.result.finished_at,
+            result_metadata["acquisition_classification"],
+            redacted.acceptance_reason, redacted.accepted,
+            request_metadata["authority_mode"], request_metadata["content_kind"], str(redacted.request.url),
+            str(redacted.result.final_url) if redacted.result.final_url else None,
+        )
+        if semantic_actual != semantic_expected:
+            raise ValueError("conflicting canonical acquisition authority and relational semantics")
+        if request_metadata["profile_id"] != indexed.profile_id:
+            raise ValueError("conflicting canonical acquisition authority and relational profile")
+        if request_metadata["fallback_position"] != indexed.position:
+            raise ValueError("conflicting canonical acquisition authority and relational position")
+        if ("status_code" in indexed.validation
+                and redacted.result.status_code != indexed.validation.get("status_code")):
+            raise ValueError("conflicting canonical acquisition authority and relational status")
+        if canonical_validation != indexed.validation:
+            raise ValueError("canonical acquisition authority conflicts with relational validation")
+        indexed_authority = (
+            indexed.site_skill_id, indexed.site_skill_version, indexed.site_skill_package_sha256,
+            indexed.recipe_id, indexed.script_sha256, indexed.executor_version,
+            indexed.acquisition_fingerprint, indexed.content_kind,
+        )
+        canonical_authority = (
+            redacted.request.site_skill_id, redacted.request.site_skill_version,
+            redacted.request.site_skill_digest, redacted.request.recipe_id,
+            request_metadata.get("script_sha256"), request_metadata.get("executor_version"),
+            request_metadata.get("acquisition_fingerprint"), request_metadata.get("content_kind"),
+        )
+        if any(value is not None for value in indexed_authority) and indexed_authority != canonical_authority:
+            raise ValueError("canonical acquisition authority conflicts with governed indexes")
+        return json.dumps(redacted.model_dump(mode="json"), sort_keys=True,
+                          separators=(",", ":"), ensure_ascii=True)
+
+    @staticmethod
+    def _compatibility_attempt_payload(attempt: AcquisitionAttempt) -> str:
+        """Keep non-governed lineage useful without claiming the frozen governed contract."""
+        return json.dumps(redact_persisted_value({
+            "schema_version": "acquisition-attempt-compatibility.v1",
+            "authority_mode": attempt.authority_mode,
+            "attempt": attempt.model_dump(mode="json", exclude={"canonical_json", "artifacts"}),
+        }), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+    @staticmethod
+    def _govern_artifact_bytes(kind: str, mime: str, data: bytes) -> tuple[bytes, str]:
+        Storage._verify_artifact_mime(mime, data)
+        if mime == "application/json":
+            try:
+                decoded = json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise ValueError("textual acquisition artifact is not valid governed JSON") from None
+            sanitized = redact_persisted_value(decoded)
+            return (json.dumps(sanitized, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=True).encode(), "structurally_redacted")
+        if mime == "text/html":
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError:
+                raise ValueError("textual acquisition artifact is not valid UTF-8") from None
+            text = re.sub(r"(?i)(authorization\s*:\s*(?:bearer|basic)\s+)[^\s<]+",
+                          r"\1[REDACTED]", text)
+            text = redact_persisted_value(text)
+            return str(text).encode(), "structurally_redacted"
+        if kind in {"trace", "raw_capture"}:
+            raise ValueError("opaque trace or raw capture cannot be verified for redaction")
+        return data, "opaque_unverified"
+
+    @staticmethod
+    def _verify_artifact_mime(mime: str, data: bytes) -> None:
+        valid = {
+            "image/png": data.startswith(b"\x89PNG\r\n\x1a\n"),
+            "image/jpeg": data.startswith(b"\xff\xd8\xff"),
+            "image/webp": (len(data) >= 12 and data.startswith(b"RIFF")
+                           and data[8:12] == b"WEBP"),
+            "application/zip": data.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")),
+            "application/json": True,
+            "text/html": True,
+            "application/octet-stream": True,
+        }
+        if not valid.get(mime, False):
+            raise ValueError("inline artifact bytes do not match declared MIME")
+
+    @staticmethod
+    def _unlink_if_identity(parent_fd: int | None, target: str,
+                            device: int, inode: int) -> None:
+        if parent_fd is None:
+            return
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        descriptor = None
+        try:
+            descriptor = os.open(target, flags, dir_fd=parent_fd)
+            info = os.fstat(descriptor)
+            named = os.stat(target, dir_fd=parent_fd, follow_symlinks=False)
+            if (info.st_dev, info.st_ino) == (device, inode) == (named.st_dev, named.st_ino):
+                os.unlink(target, dir_fd=parent_fd)
+        except (FileNotFoundError, OSError):
+            return
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+
+    def _verify_pinned_artifact_directories(self, root_fd: int, artifacts_fd: int,
+                                            attempt_fd: int, attempt_id: str) -> None:
+        paths = (self.db_path.parent, self.db_path.parent / "acquisition_artifacts",
+                 self.db_path.parent / "acquisition_artifacts" / attempt_id)
+        for descriptor, path in zip((root_fd, artifacts_fd, attempt_fd), paths):
+            try:
+                current = path.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                raise ValueError("artifact parent changed during publication") from None
+            pinned = os.fstat(descriptor)
+            if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != (pinned.st_dev, pinned.st_ino):
+                raise ValueError("artifact parent changed during publication")
+
+    @staticmethod
+    def _verify_existing_artifact(parent_fd: int, target: str, artifact: AcquisitionArtifact) -> None:
+        digest = hashlib.sha256()
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        try:
+            descriptor = os.open(target, flags, dir_fd=parent_fd)
+        except OSError as exc:
+            raise ValueError("existing acquisition artifact is symlinked or nonregular") from exc
+        stream = None
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError("existing acquisition artifact is not a regular file")
+            if info.st_size != artifact.size_bytes:
+                raise ValueError("conflicting acquisition artifact bytes")
+            stream = os.fdopen(descriptor, "rb", closefd=False)
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+            try:
+                named = os.stat(target, dir_fd=parent_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise ValueError("existing acquisition artifact changed during verification") from exc
+            if (named.st_dev, named.st_ino) != (info.st_dev, info.st_ino):
+                raise ValueError("existing acquisition artifact changed during verification")
+        finally:
+            if stream is not None:
+                stream.close()
+            os.close(descriptor)
+        if digest.hexdigest() != artifact.sha256:
+            raise ValueError("conflicting acquisition artifact bytes")
+
+    def get_acquisition_attempt(self, attempt_id: str) -> Optional[AcquisitionAttempt]:
+        row = self.conn.execute("SELECT * FROM acquisition_attempts WHERE attempt_id = ?", (attempt_id,)).fetchone()
+        return self._row_to_acquisition_attempt(row) if row else None
+
+    def list_acquisition_attempts(self, scope_id: int, run_id: int) -> List[AcquisitionAttempt]:
+        rows = self.conn.execute(
+            """SELECT * FROM acquisition_attempts WHERE scope_id=? AND run_id=?
+               ORDER BY requested_at, COALESCE(started_at, requested_at),
+                        COALESCE(finished_at, started_at, requested_at), request_id, position, attempt_id""",
+            (scope_id, run_id),
+        ).fetchall()
+        return [self._row_to_acquisition_attempt(row) for row in rows]
+
+    def _row_to_acquisition_attempt(self, row) -> AcquisitionAttempt:
+        artifacts = [AcquisitionArtifact(**dict(item)) for item in self.conn.execute(
+            "SELECT * FROM acquisition_artifacts WHERE attempt_id=? ORDER BY kind, portable_path", (row["attempt_id"],)
+        ).fetchall()]
+        return AcquisitionAttempt(
+            attempt_id=row["attempt_id"], request_id=row["request_id"], scope_id=row["scope_id"],
+            run_id=row["run_id"], position=row["position"], content_kind=row["content_kind"],
+            profile_id=row["profile_id"], site_skill_id=row["site_skill_id"],
+            site_skill_version=row["site_skill_version"], site_skill_package_sha256=row["site_skill_package_sha256"],
+            recipe_id=row["recipe_id"], script_sha256=row["script_sha256"], executor_id=row["executor_id"],
+            executor_version=row["executor_version"], requested_url=row["requested_url"], final_url=row["final_url"],
+            requested_at=_parse_dt(row["requested_at"]), started_at=_parse_dt(row["started_at"]),
+            finished_at=_parse_dt(row["finished_at"]), acquisition_fingerprint=row["acquisition_fingerprint"],
+            classification=row["classification"], accepted=bool(row["accepted"]), reason=row["reason"] or "",
+            validation=json.loads(row["validation_json"] or "{}"), canonical_json=row["canonical_json"],
+            redaction_status=row["redaction_status"], authority_mode=row["authority_mode"], artifacts=artifacts,
+        )
+
+    def _validate_accepted_attempt(
+        self, attempt_id: Optional[str], scope_id: int, run_id: int, content_kind: str,
+    ) -> None:
+        if attempt_id is None:
+            raise ValueError("new tracked state requires a non-null accepted acquisition attempt")
+        row = self.conn.execute(
+            "SELECT accepted, scope_id, run_id, content_kind FROM acquisition_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
+        if (row is None or not row["accepted"] or row["scope_id"] != scope_id
+                or row["run_id"] != run_id or row["content_kind"] != content_kind):
+            raise ValueError(
+                f"tracked state requires an accepted acquisition attempt with content_kind={content_kind} "
+                "for the same run and scope"
+            )

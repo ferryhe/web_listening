@@ -13,6 +13,20 @@ from web_listening.blocks.storage import Storage
 from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, PageSnapshot, Site
 
 
+def _add_legacy_snapshot(storage: Storage, snapshot: PageSnapshot) -> PageSnapshot:
+    attempt = storage.add_legacy_compatibility_attempt(
+        scope_id=snapshot.scope_id, run_id=snapshot.run_id,
+        identity=snapshot.final_url or f"historical-page-{snapshot.page_id}")
+    return storage.add_page_snapshot(snapshot.model_copy(update={"attempt_id": attempt.attempt_id}))
+
+
+def _add_legacy_observation(storage: Storage, observation: FileObservation) -> FileObservation:
+    attempt = storage.add_legacy_compatibility_attempt(
+        scope_id=observation.scope_id, run_id=observation.run_id,
+        identity=observation.download_url, content_kind="document")
+    return storage.add_file_observation(observation.model_copy(update={"attempt_id": attempt.attempt_id}))
+
+
 def test_document_preferred_display_path_prefers_tracked_path():
     document = Document(
         site_id=1,
@@ -130,7 +144,7 @@ selected_sections:
             depth=1,
             run_id=run.id,
         )
-        snapshot = storage.add_page_snapshot(
+        snapshot = _add_legacy_snapshot(storage,
             PageSnapshot(
                 scope_id=scope.id,
                 page_id=page.id,
@@ -170,7 +184,7 @@ selected_sections:
             latest_document_id=document.id,
             latest_sha256=document.sha256,
         )
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,
@@ -187,7 +201,7 @@ selected_sections:
             canonical_url="https://example.com/files/remote-only.pdf",
             run_id=run.id,
         )
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,
@@ -222,8 +236,9 @@ selected_sections:
 
     assert manifest.document_count == 1
     assert manifest.acquisition_evidence is not None
-    assert manifest.acquisition_evidence["latest_attempt"]["adapter"] == "web_http"
-    assert manifest.acquisition_evidence["recommended_next_adapter"] == "browser_rendered"
+    assert manifest.acquisition_evidence["source"] == "persisted_exact_run"
+    assert manifest.acquisition_evidence["latest_attempt"]["adapter"] == "legacy_compatibility_import"
+    assert manifest.acquisition_evidence["latest_attempt"]["status"] == "passed"
     assert manifest.documents[0]["sha256"] == "abcdef123456"
     assert manifest.documents[0]["local_path"] == "data/downloads/_blobs/ab/abcdef.pdf"
     assert manifest.documents[0]["tracked_local_path"].endswith("demo--abcdef12.pdf")
@@ -231,7 +246,7 @@ selected_sections:
     assert manifest.documents[0]["page_url"] == "https://example.com/research/topics/page-a"
     assert manifest.documents[0]["downloaded_at"] == "2026-04-07T13:00:00+00:00"
     assert "Acquisition Evidence" in markdown
-    assert "try_adapter:browser_rendered" in markdown
+    assert "legacy_compatibility_import" in markdown
     assert "acquisition_evidence:" in yaml_manifest
     assert "preferred_display_path" in markdown
     assert "Downloaded at" in markdown
@@ -244,11 +259,8 @@ selected_sections:
     assert handoff["artifacts"]["structured_exports"][0]["sha256"] is None
     assert handoff["artifacts"]["compatibility_exports"][0]["kind"] == "document_manifest_yaml"
     assert handoff["artifact_root"] == "."
-    extension_profile_path = handoff["extensions"]["acquisition"]["input_paths"]["profile_path"]
-    assert Path(extension_profile_path).name == profile_path.name
-    assert not Path(extension_profile_path).is_absolute()
-    assert handoff["extensions"]["acquisition"]["latest_attempt"]["adapter"] == "web_http"
-    assert handoff["extensions"]["acquisition"]["recommended_next_adapter"] == "browser_rendered"
+    assert handoff["extensions"]["acquisition"]["source"] == "persisted_exact_run"
+    assert handoff["extensions"]["acquisition"]["latest_attempt"]["adapter"] == "legacy_compatibility_import"
     assert any(Path(path).name == profile_path.name for path in handoff["run"]["input_paths"])
     assert any(Path(path).name == capture_attempt_path.name for path in handoff["run"]["input_paths"])
     assert handoff["discovered_items"][0]["url"] == "https://example.com/files/demo.pdf"
@@ -299,7 +311,7 @@ def test_list_scope_documents_falls_back_to_tracked_file_latest_document_for_leg
             latest_document_id=document.id,
             latest_sha256=document.sha256,
         )
-        storage.add_file_observation(
+        _add_legacy_observation(storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,

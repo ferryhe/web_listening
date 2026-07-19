@@ -446,6 +446,7 @@ class PageSnapshot(BaseModel):
     scope_id: int
     page_id: int
     run_id: int
+    attempt_id: Optional[str] = None
     captured_at: Optional[datetime] = None
     content_hash: str
     raw_html: str = ""
@@ -510,9 +511,56 @@ class FileObservation(BaseModel):
     id: Optional[int] = None
     scope_id: int
     run_id: int
+    attempt_id: Optional[str] = None
     page_id: int
     file_id: int
     document_id: Optional[int] = None
     discovered_url: str
     download_url: str
     tracked_local_path: str = ""
+
+
+class AcquisitionArtifact(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    attempt_id: str
+    kind: str
+    portable_path: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    redaction_status: str = "unverified"
+
+
+class AcquisitionAttempt(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    schema_version: str = "acquisition-attempt-storage.v1"
+    attempt_id: str
+    request_id: str
+    scope_id: int
+    run_id: int
+    position: int
+    content_kind: str = "page"
+    profile_id: Optional[str] = None
+    site_skill_id: Optional[str] = None
+    site_skill_version: Optional[str] = None
+    site_skill_package_sha256: Optional[str] = None
+    recipe_id: Optional[str] = None
+    script_sha256: Optional[str] = None
+    executor_id: str
+    executor_version: str
+    requested_url: str
+    final_url: Optional[str] = None
+    requested_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    acquisition_fingerprint: Optional[str] = None
+    classification: str
+    accepted: bool = False
+    reason: str = ""
+    validation: dict = Field(default_factory=dict)
+    canonical_json: str = ""
+    redaction_status: str = "redacted"
+    authority_mode: str = "governed"
+    artifacts: List[AcquisitionArtifact] = Field(default_factory=list)

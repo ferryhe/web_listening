@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -8,9 +9,48 @@ from typing import Any
 import yaml
 
 from web_listening.blocks.acquisition_profile import CaptureAttempt, load_acquisition_profile
+from web_listening.blocks.storage import Storage
+from web_listening.blocks.acquisition_gateway import redact_persisted_value
+from web_listening.contracts._protocol import validate_portable_relative_path
 
 
 SCHEMA_VERSION = "acquisition-evidence.v1"
+
+
+def persisted_acquisition_evidence(storage: Storage, *, scope_id: int, run_id: int) -> dict | None:
+    attempts = storage.list_acquisition_attempts(scope_id, run_id)
+    if not attempts:
+        return None
+    rows = []
+    for attempt in attempts:
+        row = attempt.model_dump(mode="json", exclude={"canonical_json"})
+        row["canonical_attempt"] = json.loads(attempt.canonical_json)
+        rows.append(redact_persisted_value(row))
+    accepted = [item for item in attempts if item.accepted]
+    latest = attempts[-1]
+    rendered_latest = {
+        **rows[attempts.index(latest)],
+        "adapter": latest.executor_id,
+        "status": "passed" if latest.accepted else latest.classification,
+    }
+    payload = {
+        "schema_version": "acquisition-evidence.v2",
+        "source": "persisted_exact_run",
+        "scope_id": scope_id,
+        "run_id": run_id,
+        "attempts": rows,
+        "executor_chain": [item.executor_id for item in attempts],
+        "fallback_used": any(item.position > 0 for item in attempts),
+        "quality_results": [item.validation for item in attempts],
+        "failure_classifications": [item.classification for item in attempts if not item.accepted],
+        "artifacts": [artifact.model_dump(mode="json") for item in attempts for artifact in item.artifacts],
+        "accepted_attempt_ids": [item.attempt_id for item in accepted],
+        "latest_attempt": rendered_latest,
+        "profile": {"site_key": attempts[0].profile_id or ""},
+        "recommended_next_adapter": "",
+        "next_action": "use_adapter_output" if latest.accepted else "review_probe_failure",
+    }
+    return redact_persisted_value(payload)
 MAX_EVIDENCE_BYTES = 512 * 1024
 
 
@@ -29,9 +69,9 @@ def load_acquisition_evidence(
         return None
 
     input_paths = {
-        "profile_path": str(profile_path) if profile_path else "",
-        "capture_attempt_path": str(capture_attempt_path) if capture_attempt_path else "",
-        "probe_path": str(probe_path) if probe_path else "",
+        "profile_path": _portable_source_path("acquisition_profile", profile_path),
+        "capture_attempt_path": _portable_source_path("capture_attempt", capture_attempt_path),
+        "probe_path": _portable_source_path("acquisition_probe", probe_path),
     }
     profile_payload: dict[str, Any] | None = None
     attempts: list[dict[str, Any]] = []
@@ -56,7 +96,7 @@ def load_acquisition_evidence(
     recommended_next_adapter = _recommended_next_adapter(latest_attempt, profile_payload)
     next_action = source_next_actions[-1] if source_next_actions else _derive_next_action(latest_attempt, recommended_next_adapter)
 
-    return {
+    return redact_persisted_value({
         "schema_version": SCHEMA_VERSION,
         "input_paths": input_paths,
         "profile": profile_payload,
@@ -64,7 +104,7 @@ def load_acquisition_evidence(
         "latest_attempt": latest_attempt,
         "recommended_next_adapter": recommended_next_adapter,
         "next_action": next_action,
-    }
+    })
 
 
 def acquisition_artifact_rows(
@@ -152,10 +192,21 @@ def _artifact_row(*, kind: str, path: str | Path, reader: str) -> dict[str, str]
         "plane": "control_plane" if kind == "acquisition_profile" else "evidence_plane",
         "kind": kind,
         "label": Path(path).name,
-        "path": str(path),
+        "path": _portable_source_path(kind, path),
         "url": "",
         "recommended_reader": reader,
     }
+
+
+def _portable_source_path(kind: str, path: str | Path | None) -> str:
+    if path is None:
+        return ""
+    basename = Path(path).name
+    try:
+        validate_portable_relative_path(basename, field_name="acquisition evidence basename")
+    except ValueError:
+        basename = f"source-{hashlib.sha256(basename.encode('utf-8')).hexdigest()[:16]}"
+    return f"compatibility_inputs/{kind}/{basename}"
 
 
 def _reader_for_path(path: str | Path) -> str:

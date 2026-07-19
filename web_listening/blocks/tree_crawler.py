@@ -6,6 +6,7 @@ import binascii
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
@@ -14,13 +15,13 @@ from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from web_listening.blocks.crawler import Crawler, resolve_request_headers
-from web_listening.blocks.acquisition_gateway import AcquisitionGateway, LegacyCrawlerGateway
+from web_listening.blocks.acquisition_gateway import AcquisitionGateway, AcquisitionOutcome, LegacyCrawlerGateway
 from web_listening.blocks.diff import compute_hash, extract_links, find_document_links, select_compare_artifact
 from web_listening.blocks.document import DocumentProcessor
 from web_listening.blocks.polite import PolitePacer
 from web_listening.blocks.storage import Storage
 from web_listening.contracts import CaptureResult
-from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, PageEdge, PageSnapshot, Site, TrackedFile, TrackedPage
+from web_listening.models import AcquisitionAttempt, CrawlRun, CrawlScope, Document, FileObservation, PageEdge, PageSnapshot, Site, TrackedFile, TrackedPage
 
 _TRACKING_QUERY_PREFIXES = ("utm_",)
 _TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
@@ -230,6 +231,9 @@ class TreeCrawler:
                     fetch_config_json=stored_scope.fetch_config_json)
                 pacer.wait_for_request("page")
                 outcome = gateway.acquire(request_url, run_id=str(run.id), scope_id=str(stored_scope.id))
+                outcome = self._persist_acquisition_outcome(
+                    outcome, requested_url=request_url, run_id=run.id, scope_id=stored_scope.id,
+                    content_kind="page")
                 if not outcome.accepted:
                     result.page_failures.append(f"{request_url}: {outcome.classification}")
                     continue
@@ -275,6 +279,7 @@ class TreeCrawler:
                             scope_id=stored_scope.id,
                             page_id=tracked_page.id,
                             run_id=run.id,
+                            attempt_id=outcome.accepted_attempt.attempt_id if outcome.accepted_attempt else None,
                             captured_at=datetime.now(timezone.utc),
                             content_hash=compute_hash(compare_text),
                             raw_html=page.raw_html,
@@ -339,6 +344,9 @@ class TreeCrawler:
                                 canonical_link, run_id=str(run.id), scope_id=str(stored_scope.id),
                                 content_kind="document",
                             )
+                            file_outcome = self._persist_acquisition_outcome(
+                                file_outcome, requested_url=canonical_link, run_id=run.id,
+                                scope_id=stored_scope.id, content_kind="document")
                             if not file_outcome.accepted:
                                 result.file_failures.append(
                                     f"{canonical_link}: {file_outcome.classification}"
@@ -366,6 +374,11 @@ class TreeCrawler:
                                 download_files=download_files,
                                 force_download=False,
                                 capture_result=file_outcome.result if self.acquisition_gateway is not None else None,
+                                attempt_id=(file_outcome.accepted_attempt.attempt_id if file_outcome.accepted_attempt else None)
+                                if self.acquisition_gateway is not None else self.storage.add_legacy_compatibility_attempt(
+                                    scope_id=stored_scope.id, run_id=run.id, identity=canonical_link,
+                                    content_kind="document",
+                                ).attempt_id,
                             )
                         except Exception as exc:  # pragma: no cover - live failure path
                             result.file_failures.append(f"{canonical_link}: {type(exc).__name__}: {exc}")
@@ -474,6 +487,9 @@ class TreeCrawler:
                     fetch_config_json=stored_scope.fetch_config_json)
                 pacer.wait_for_request("page")
                 outcome = gateway.acquire(request_url, run_id=str(run.id), scope_id=str(stored_scope.id))
+                outcome = self._persist_acquisition_outcome(
+                    outcome, requested_url=request_url, run_id=run.id, scope_id=stored_scope.id,
+                    content_kind="page")
                 if not outcome.accepted:
                     canonical_request = canonicalize_tracked_url(request_url)
                     final_url = (
@@ -537,6 +553,7 @@ class TreeCrawler:
                             scope_id=stored_scope.id,
                             page_id=tracked_page.id,
                             run_id=run.id,
+                            attempt_id=outcome.accepted_attempt.attempt_id if outcome.accepted_attempt else None,
                             captured_at=datetime.now(timezone.utc),
                             content_hash=compute_hash(compare_text),
                             raw_html=page.raw_html,
@@ -606,6 +623,9 @@ class TreeCrawler:
                                 canonical_link, run_id=str(run.id), scope_id=str(stored_scope.id),
                                 content_kind="document",
                             )
+                            file_outcome = self._persist_acquisition_outcome(
+                                file_outcome, requested_url=canonical_link, run_id=run.id,
+                                scope_id=stored_scope.id, content_kind="document")
                             if not file_outcome.accepted:
                                 traversal_complete = False
                                 result.file_failures.append(
@@ -637,6 +657,11 @@ class TreeCrawler:
                                 download_files=download_files,
                                 force_download=True,
                                 capture_result=file_outcome.result if self.acquisition_gateway is not None else None,
+                                attempt_id=(file_outcome.accepted_attempt.attempt_id if file_outcome.accepted_attempt else None)
+                                if self.acquisition_gateway is not None else self.storage.add_legacy_compatibility_attempt(
+                                    scope_id=stored_scope.id, run_id=run.id, identity=canonical_link,
+                                    content_kind="document",
+                                ).attempt_id,
                             )
                         except Exception as exc:  # pragma: no cover - live failure path
                             traversal_complete = False
@@ -729,6 +754,7 @@ class TreeCrawler:
         download_files: bool,
         force_download: bool = False,
         capture_result: CaptureResult | None = None,
+        attempt_id: str | None = None,
     ) -> TrackedFile:
         request_headers = resolve_request_headers(scope.fetch_config_json)
         latest_document_id = None
@@ -777,6 +803,7 @@ class TreeCrawler:
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,
+                attempt_id=attempt_id,
                 page_id=page_id,
                 file_id=tracked_file.id,
                 document_id=latest_document_id,
@@ -786,6 +813,33 @@ class TreeCrawler:
             )
         )
         return tracked_file
+
+    def _persist_acquisition_outcome(
+        self, outcome: AcquisitionOutcome, *, requested_url: str, run_id: int, scope_id: int,
+        content_kind: str,
+    ) -> AcquisitionOutcome:
+        if outcome.accepted and not outcome.attempt_records:
+            now = datetime.now(timezone.utc)
+            identity = json.dumps({"mode": "legacy_compatibility", "run_id": run_id,
+                "scope_id": scope_id, "url": requested_url, "content_kind": content_kind},
+                sort_keys=True, separators=(",", ":"))
+            attempt_id = hashlib.sha256(identity.encode()).hexdigest()
+            attempt = AcquisitionAttempt(
+                attempt_id=attempt_id, request_id=attempt_id, scope_id=scope_id, run_id=run_id,
+                position=0, content_kind=content_kind, executor_id="legacy_external_gateway",
+                executor_version="legacy-compatibility", requested_url=requested_url,
+                final_url=outcome.page.final_url if outcome.page else None, requested_at=now,
+                started_at=now, finished_at=now, classification="accepted", accepted=True,
+                reason="accepted", validation={"decision": "accepted"},
+                authority_mode="legacy_compatibility")
+            outcome = AcquisitionOutcome(
+                outcome.request, outcome.result, outcome.page, outcome.classification,
+                outcome.attempts, outcome.coverage_complete, (attempt,), ((),))
+        for index, attempt in enumerate(outcome.attempt_records):
+            self.storage.add_acquisition_attempt(attempt)
+            inline = outcome.attempt_inline_artifacts[index] if index < len(outcome.attempt_inline_artifacts) else ()
+            self.storage.admit_inline_acquisition_artifacts(attempt.attempt_id, inline)
+        return outcome
 
     def _document_from_capture(
         self,

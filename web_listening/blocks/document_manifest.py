@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from importlib import metadata
 
-from web_listening.blocks.acquisition_evidence import load_acquisition_evidence
+from web_listening.blocks.acquisition_evidence import load_acquisition_evidence, persisted_acquisition_evidence
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, load_monitor_scope_plan
 from web_listening.blocks.scope_lookup import find_scope_for_plan
 from web_listening.blocks.section_discovery import render_yaml
@@ -232,12 +232,15 @@ def build_scope_document_manifest(
         "preferred_display_path uses tracked_local_path when present and falls back to local_path otherwise.",
         "tracked_local_path is the source-oriented browsing path; local_path remains the canonical SHA256 blob path.",
     ]
-    acquisition_evidence = precomputed_acquisition_evidence
+    acquisition_evidence = persisted_acquisition_evidence(
+        storage, scope_id=scope.id or 0, run_id=resolved_run_id
+    ) or precomputed_acquisition_evidence
     if acquisition_evidence is None and (acquisition_profile_path is not None or capture_attempt_path is not None):
         acquisition_evidence = load_acquisition_evidence(
             profile_path=acquisition_profile_path,
             capture_attempt_path=capture_attempt_path,
         )
+        acquisition_evidence["source"] = "read_only_compatibility_input"
 
     return ScopeDocumentManifest(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -473,12 +476,15 @@ def build_web_listening_manifest_v1(
             }
         )
 
-    acquisition_evidence = precomputed_acquisition_evidence
+    acquisition_evidence = persisted_acquisition_evidence(
+        storage, scope_id=scope.id or 0, run_id=resolved_run_id
+    ) or precomputed_acquisition_evidence
     if acquisition_evidence is None and (acquisition_profile_path is not None or capture_attempt_path is not None):
         acquisition_evidence = load_acquisition_evidence(
             profile_path=acquisition_profile_path,
             capture_attempt_path=capture_attempt_path,
         )
+        acquisition_evidence["source"] = "read_only_compatibility_input"
     acquisition_evidence = _portable_acquisition_evidence(acquisition_evidence, artifact_base=artifact_base)
     deprecated_manifest = build_scope_document_manifest(
         scope_path,

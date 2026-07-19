@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from web_listening.blocks.acquisition_evidence import acquisition_artifact_rows, load_acquisition_evidence
+from web_listening.blocks.acquisition_evidence import acquisition_artifact_rows, load_acquisition_evidence, persisted_acquisition_evidence
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, load_monitor_scope_plan
 from web_listening.blocks.monitor_task import DEFAULT_CHANGE_SEVERITY_RULES, load_monitor_task
 from web_listening.blocks.scope_lookup import find_scope_for_plan
@@ -565,10 +565,15 @@ def build_tracking_report(
     notes = list(plan.notes)
     if task is not None:
         notes.extend(task.notes)
-    acquisition_evidence = load_acquisition_evidence(
-        profile_path=acquisition_profile_path,
-        capture_attempt_path=capture_attempt_path,
+    acquisition_evidence = persisted_acquisition_evidence(
+        storage, scope_id=scope.id or 0, run_id=resolved_run_id
     )
+    if acquisition_evidence is None:
+        acquisition_evidence = load_acquisition_evidence(
+            profile_path=acquisition_profile_path, capture_attempt_path=capture_attempt_path,
+        )
+        if acquisition_evidence is not None:
+            acquisition_evidence["source"] = "read_only_compatibility_input"
 
     return TrackingReport(
         generated_at=datetime.now(timezone.utc).isoformat(),

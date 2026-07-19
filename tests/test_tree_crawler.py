@@ -791,8 +791,10 @@ def test_governed_document_integrity_failure_creates_no_file_state_without_downl
             "position": 0, "executor_id": "web_http", "executor_version": "1.0.0",
             "recipe_id": "recipe", "script_sha256": "a" * 64, "config": {},
         },),
-        acquisition_fingerprint="b" * 64, site_key="demo", site_skill_id="skill",
+        acquisition_fingerprint="b" * 64, scope_fingerprint="c" * 64,
+        profile_id="profile", site_key="demo", site_skill_id="skill",
         site_skill_version="1.0.0", site_skill_package_sha256="a" * 64,
+        scope_budgets={"max_depth": 2, "max_files": 10, "max_pages": 20},
         quality_gates={"min_words": 1, "min_links": 0, "min_document_links": 0,
                        "blocked_markers": ()},
     )
@@ -967,8 +969,10 @@ def test_real_governed_http_document_preserves_non_utf8_response_bytes(tmp_path,
     }
     compiled = SimpleNamespace(
         mode="governed", steps=(step,), acquisition_fingerprint="b" * 64,
-        site_key="demo", site_skill_id="skill", site_skill_version="1.0.0",
+        scope_fingerprint="c" * 64, profile_id="profile", site_key="demo",
+        site_skill_id="skill", site_skill_version="1.0.0",
         site_skill_package_sha256="a" * 64,
+        scope_budgets={"max_depth": 2, "max_files": 10, "max_pages": 20},
         quality_gates={"min_words": 1, "min_links": 0, "min_document_links": 0,
                        "blocked_markers": ()},
     )

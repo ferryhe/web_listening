@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone, timedelta
+import os
 from pathlib import Path
-from typing import Any, List, Optional
+import stat
+from typing import Any, Iterator, List, Optional, TextIO
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
@@ -83,6 +86,39 @@ def _safe_input_path(raw_path: str | None) -> Path | None:
     if not resolved.is_file():
         raise HTTPException(status_code=422, detail=f"Path `{resolved}` must be a file")
     return resolved
+
+
+@contextmanager
+def _open_preview_input(raw_path: str) -> Iterator[TextIO]:
+    data_root = _resolve_data_root()
+    candidate = Path(raw_path)
+    if ".." in candidate.parts:
+        raise HTTPException(status_code=422, detail="Path traversal is not allowed")
+    if candidate.is_absolute():
+        try:
+            relative = candidate.relative_to(data_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Path must stay under the data root") from exc
+    else:
+        relative = candidate
+    if not relative.parts:
+        raise HTTPException(status_code=422, detail="Path must name a file")
+
+    read_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    with ExitStack() as stack:
+        directory_fd = os.open(data_root, read_flags | os.O_DIRECTORY)
+        stack.callback(os.close, directory_fd)
+        for component in relative.parts[:-1]:
+            directory_fd = os.open(component, read_flags | os.O_DIRECTORY, dir_fd=directory_fd)
+            stack.callback(os.close, directory_fd)
+        file_fd = os.open(relative.parts[-1], read_flags | os.O_NONBLOCK, dir_fd=directory_fd)
+        try:
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise HTTPException(status_code=422, detail="Path must be a regular file")
+            with os.fdopen(file_fd, encoding="utf-8", closefd=False) as stream:
+                yield stream
+        finally:
+            os.close(file_fd)
 
 
 def get_storage() -> Storage:
@@ -355,8 +391,13 @@ async def preview_acquisition_execution_plan_endpoint(request: Request):
     try:
         raw_body = await request.json()
         body = AcquisitionExecutionPreviewRequest.model_validate(raw_body)
-        scope = load_monitor_scope_plan(_safe_input_path(body.scope_path), strict_limits=True)
-        profile = load_acquisition_profile(_safe_input_path(body.profile_path), strict=True) if body.profile_path else None
+        with _open_preview_input(body.scope_path) as scope_stream:
+            scope = load_monitor_scope_plan(scope_stream, strict_limits=True)
+        if body.profile_path:
+            with _open_preview_input(body.profile_path) as profile_stream:
+                profile = load_acquisition_profile(profile_stream, strict=True)
+        else:
+            profile = None
         governed = any(str(scope.based_on.get(key, "")).strip() for key in (
             "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
             "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",

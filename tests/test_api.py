@@ -1,5 +1,9 @@
+from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
+import os
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -51,6 +55,131 @@ based_on: {}
     assert response.json()["schema_version"] == "acquisition-execution-plan-preview.v1"
     assert response.json()["plan"]["mode"] == "legacy_compatibility"
     assert client.post("/api/v1/acquisition/execution-plan/preview", json={"scope_path": "scope.yaml"}).status_code == 404
+
+
+def test_execution_plan_preview_pins_validated_scope_before_parsing(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    scope = tmp_path / "scope.yaml"
+    outside = tmp_path.parent / "outside-scope.yaml"
+    scope.write_text("site_key: inside\nseed_url: https://inside.example/\nbased_on: {}\n", encoding="utf-8")
+    outside.write_text(
+        "site_key: outside-canary\nseed_url: https://outside.example/\nbased_on: {}\n",
+        encoding="utf-8",
+    )
+    swapped = False
+
+    def swap_to_outside_symlink() -> None:
+        nonlocal swapped
+        if swapped:
+            return
+        scope.unlink()
+        scope.symlink_to(outside)
+        swapped = True
+
+    original_open = getattr(routes, "_open_preview_input", None)
+    if original_open is not None:
+        @contextmanager
+        def swapping_open(raw_path: str):
+            with original_open(raw_path) as stream:
+                if raw_path == scope.name:
+                    swap_to_outside_symlink()
+                yield stream
+
+        monkeypatch.setattr(routes, "_open_preview_input", swapping_open)
+    else:
+        original_safe_input_path = routes._safe_input_path
+
+        def swapping_safe_input_path(raw_path: str | None):
+            validated = original_safe_input_path(raw_path)
+            if raw_path == scope.name:
+                swap_to_outside_symlink()
+            return validated
+
+        monkeypatch.setattr(routes, "_safe_input_path", swapping_safe_input_path)
+
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json={"scope_path": scope.name})
+
+    assert swapped
+    assert response.status_code == 200
+    assert response.json()["plan"]["site_key"] == "inside"
+    assert "outside-canary" not in response.text
+
+
+@pytest.mark.parametrize("input_kind", ["scope", "profile"])
+@pytest.mark.parametrize("symlink_kind", ["final", "intermediate"])
+def test_execution_plan_preview_rejects_symlinked_input_components(
+    tmp_path: Path, monkeypatch, input_kind: str, symlink_kind: str
+):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    outside_dir = tmp_path.parent / f"outside-{input_kind}-{symlink_kind}"
+    outside_dir.mkdir(exist_ok=True)
+    outside = outside_dir / f"SECRET-PATH-CANARY-{input_kind}.yaml"
+    outside.write_text(
+        "site_key: SECRET-CONTENT-CANARY\nseed_url: https://outside.example/\nbased_on: {}\n",
+        encoding="utf-8",
+    )
+    if symlink_kind == "final":
+        requested = tmp_path / f"{input_kind}.yaml"
+        requested.symlink_to(outside)
+    else:
+        linked_parent = tmp_path / "linked-parent"
+        linked_parent.symlink_to(outside_dir, target_is_directory=True)
+        requested = linked_parent / outside.name
+
+    payload = {f"{input_kind}_path": str(requested.relative_to(tmp_path))}
+    if input_kind == "profile":
+        scope = tmp_path / "scope.yaml"
+        scope.write_text("site_key: inside\nseed_url: https://inside.example/\nbased_on: {}\n", encoding="utf-8")
+        payload["scope_path"] = scope.name
+    response = TestClient(create_app()).post(
+        "/api/v1/acquisition/execution-plans/preview", json=payload)
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-PATH-CANARY" not in response.text
+    assert "SECRET-CONTENT-CANARY" not in response.text
+
+
+def test_execution_plan_preview_rejects_fifo_input_promptly(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(routes.settings, "data_dir", str(tmp_path))
+    fifo = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
+    os.mkfifo(fifo)
+    final_open_started = Event()
+    original_open = routes.os.open
+
+    def observe_final_open(path, flags, *args, **kwargs):
+        if path == fifo.name and kwargs.get("dir_fd") is not None:
+            final_open_started.set()
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(routes.os, "open", observe_final_open)
+    client = TestClient(create_app())
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            client.post,
+            "/api/v1/acquisition/execution-plans/preview",
+            json={"scope_path": fifo.name},
+        )
+        assert final_open_started.wait(timeout=1)
+        try:
+            response = future.result(timeout=1)
+        except FutureTimeoutError:
+            writer_fd = original_open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            os.close(writer_fd)
+            future.result(timeout=1)
+            pytest.fail("FIFO preview input blocked while opening")
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
+        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid"},
+    }
+    assert "SECRET-PATH-CANARY" not in response.text
+    assert str(tmp_path) not in response.text
 
 
 def test_execution_plan_preview_api_structured_redacted_failure(tmp_path: Path, monkeypatch):

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import yaml
 
@@ -228,10 +228,11 @@ def _load_scope_limit(
 
 
 def load_monitor_scope_plan(
-    path: str | Path, *, strict_limits: bool = False
+    source: str | Path | TextIO, *, strict_limits: bool = False
 ) -> MonitorScopePlan:
     try:
-        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        text = Path(source).read_text(encoding="utf-8") if isinstance(source, str | Path) else source.read()
+        payload = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise ValueError("monitor scope YAML is invalid") from exc
     if payload is None:

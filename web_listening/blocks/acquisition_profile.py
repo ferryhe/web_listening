@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 import math
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TextIO
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -295,9 +295,10 @@ def build_default_acquisition_profile(
     )
 
 
-def load_acquisition_profile(path: str | Path, *, strict: bool = False) -> AcquisitionProfile:
+def load_acquisition_profile(source: str | Path | TextIO, *, strict: bool = False) -> AcquisitionProfile:
     try:
-        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        text = Path(source).read_text(encoding="utf-8") if isinstance(source, str | Path) else source.read()
+        payload = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise ValueError("acquisition profile YAML is invalid") from exc
     if payload is None:

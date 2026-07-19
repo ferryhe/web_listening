@@ -52,5 +52,9 @@ include = ["web_listening*"]
 web_listening = ["skills/sites/**/*"]
 
 [tool.pytest.ini_options]
+markers = [
+    "live: opt-in tests that access external runtimes or networks",
+    "catalog_canary: opt-in live checks for generated catalog Site Skills",
+]
 asyncio_mode = "auto"
 testpaths = ["tests"]

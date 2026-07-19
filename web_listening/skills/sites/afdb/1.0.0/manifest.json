@@ -1,0 +1,57 @@
+{
+  "allowed_domains": [
+    "www.afdb.org"
+  ],
+  "default_executor_id": "web_http",
+  "default_recipe_id": "catalog-http",
+  "executors": [
+    {
+      "config": {},
+      "enabled": true,
+      "executor_id": "web_http",
+      "script_path": "scripts/executor.py"
+    }
+  ],
+  "generated_at": "2026-07-20T00:00:00Z",
+  "metadata": {
+    "canary_outcome": "known_blocked",
+    "js_heavy_candidate": false,
+    "source_catalog": "smoke"
+  },
+  "recipes": [
+    {
+      "enabled": true,
+      "entrypoint": "scripts/recipe.py",
+      "executor_id": "web_http",
+      "output_contract": "capture-result.v1",
+      "profile_ref": "profiles/default.yaml",
+      "recipe_id": "catalog-http",
+      "required_capabilities": [
+        "http_get"
+      ],
+      "verification_rules": [
+        {
+          "description": "Require safe HTTP content meeting catalog quality gates.",
+          "rule_id": "status-and-quality"
+        }
+      ]
+    }
+  ],
+  "runtime_requirements": [
+    {
+      "description": "Python 3.12 runtime.",
+      "optional": false,
+      "requirement_id": "python-312"
+    }
+  ],
+  "schema_version": "site-skill.v1",
+  "secret_policy": {
+    "allow_secret_references": false,
+    "allowed_reference_schemes": [],
+    "forbid_secret_values": true
+  },
+  "site_key": "afdb",
+  "skill_id": "afdb-catalog",
+  "status": "active",
+  "version": "1.0.0"
+}

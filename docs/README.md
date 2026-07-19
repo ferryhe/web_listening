@@ -64,6 +64,10 @@ These are the long-lived docs that describe the current system:
 - `web-listening create-monitor-task`
 - `web-listening export-tracking-report`
 
+`bootstrap-scope` and `run-scope` require `--acquisition-profile-path` and a
+complete governed Site Skill binding. The packaged registry is the default;
+formal execution never falls through to automatic legacy acquisition.
+
 ### Lower-level compatibility entrypoints
 
 - compatibility and developer-oriented wrappers:
@@ -79,7 +83,7 @@ These are the long-lived docs that describe the current system:
 ## New Stable Artifacts
 
 - control plane:
-  - `acquisition_profile_<site_key>_<date>.yaml` (contract defined; workflow integration planned; static fixtures/examples may omit the date)
+  - `acquisition_profile_<site_key>_<date>.yaml` (required with a complete governed Site Skill binding for formal `bootstrap-scope` and `run-scope`; unrelated API or MCP integration remains outside this PR; static fixtures/examples may omit the date)
   - `monitor_task_<task>_<date>.yaml`
   - `section_selection_<site>_<date>.yaml`
   - `monitor_scope_<site>_<date>.yaml`

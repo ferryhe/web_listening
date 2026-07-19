@@ -51,7 +51,6 @@ What is production-usable now:
 
 What still remains future-facing:
 
-- acquisition profile execution inside the fixed staged bootstrap/run workflow
 - persistent jobs and webhooks for longer-running or external delivery workflows
 - richer incremental change bundles and conversion routing
 - REST/API expansion beyond the current staged workflow and compatibility surfaces
@@ -90,7 +89,7 @@ Optional CloakBrowser acquisition probing support:
 pip install -e ".[cloakbrowser]"
 ```
 
-`probe-acquisition --adapter cloakbrowser` is only for explicitly authorized access contexts. The active acquisition profile must set both `safety.allow_stealth_browser=true` and `safety.require_authorized_access=true`; this adapter is not used by `bootstrap-scope` or `run-scope`. CloakBrowser may download a browser binary on first launch.
+`probe-acquisition --adapter cloakbrowser` is only for explicitly authorized access contexts. CloakBrowser is optional, not bundled, and may be unavailable at runtime. Formal `bootstrap-scope` and `run-scope` may construct and dispatch it only when the exact compiled governed Site Skill step, profile safety approvals, and runtime checks authorize it; picker or probe selection alone is not formal authority. CloakBrowser may download a browser binary on first launch.
 
 ## Configuration
 
@@ -198,10 +197,12 @@ This compiles the chosen sections into a runnable `monitor_scope.yaml`.
 ### 5. Bootstrap the selected scope
 
 ```powershell
-web-listening bootstrap-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files --include-summary
+web-listening bootstrap-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --acquisition-profile-path data\plans\acquisition_profile_soa.yaml --download-files --include-summary
 ```
 
-`bootstrap-scope` now supports an additional bootstrap summary output with baseline quality signals, including coverage, budget truncation hints, confidence, and recommended follow-up actions.
+Formal `bootstrap-scope` and `run-scope` require a complete six-field governed Site Skill binding in the scope plus an acquisition profile. Authority is compiled into a non-empty governed execution plan and runtime-checked before Storage is opened. The packaged Site Skill registry is the default.
+
+`bootstrap-scope` also supports a bootstrap summary output with baseline quality signals, including coverage, budget truncation hints, confidence, and recommended follow-up actions.
 
 ### 6. Export summaries for people and agents
 
@@ -214,7 +215,7 @@ web-listening create-monitor-task --task-name soa-research-watch --site-url http
 ### 7. Run later incremental checks
 
 ```powershell
-web-listening run-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --download-files
+web-listening run-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --acquisition-profile-path data\plans\acquisition_profile_soa.yaml --download-files
 ```
 
 ## Data Layout

@@ -1,7 +1,8 @@
 import base64
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import hashlib
 from datetime import datetime, timezone
+from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 
 import httpx
@@ -10,7 +11,13 @@ import pytest
 from web_listening.blocks.acquisition_gateway import GovernedAcquisitionGateway, LegacyCrawlerGateway
 from web_listening.blocks.crawler import FetchResult, HttpCrawler
 from web_listening.blocks.storage import Storage
-from web_listening.blocks.staged_workflow import _compile_acquisition_gateway, _portable_json
+from web_listening.blocks.staged_workflow import (
+    _compile_acquisition_gateway,
+    _portable_json,
+    _preflight_optional_browser_runtimes,
+    bootstrap_scope,
+    run_scope,
+)
 from web_listening.contracts import AcquisitionAttempt as ContractAcquisitionAttempt
 from web_listening.contracts import CaptureContent, CaptureError, CaptureResult
 from web_listening.executors.http_wrapper import HttpAcquisitionAdapter
@@ -423,7 +430,7 @@ def test_gateway_construction_cleanup_preserves_original_error_and_closes_all(mo
         "position": position, "executor_id": name, "executor_version": "1.0.0",
         "recipe_id": name, "script_sha256": "a" * 64, "config": {},
     } for position, name in enumerate(("web_http", "browser_rendered", "cloakbrowser")))
-    compiled = SimpleNamespace(steps=steps)
+    compiled = SimpleNamespace(mode="governed", steps=steps)
     metadata = {name: SimpleNamespace(version="1.0.0") for name in
                 ("web_http", "browser_rendered", "cloakbrowser")}
 
@@ -435,17 +442,114 @@ def test_gateway_construction_cleanup_preserves_original_error_and_closes_all(mo
                         lambda: SimpleNamespace(metadata=metadata))
     monkeypatch.setattr("web_listening.executors.registry.ExecutorRegistry",
                         lambda *a, **k: (_ for _ in ()).throw(ValueError("original construction error")))
+    monkeypatch.setattr("web_listening.blocks.staged_workflow._preflight_optional_browser_runtimes",
+                        lambda planned: None)
     monkeypatch.setattr("web_listening.executors.http_wrapper.HttpAcquisitionAdapter", adapter("web_http"))
     monkeypatch.setattr("web_listening.executors.playwright_wrapper.BrowserAcquisitionAdapter",
                         adapter("browser_rendered"))
     monkeypatch.setattr("web_listening.executors.cloakbrowser_wrapper.CloakBrowserAcquisitionAdapter",
                         adapter("cloakbrowser"))
 
-    plan = SimpleNamespace(site_key="demo", based_on={"acquisition_profile_id": "profile"})
+    plan = SimpleNamespace(site_key="demo", based_on={
+        "acquisition_profile_id": "profile", "site_skill_version": "1.0.0",
+        "site_skill_package_sha256": "a" * 64, "site_skill_recipe_id": "web_http",
+        "site_skill_script_sha256": "a" * 64, "executor_version": "1.0.0",
+    })
     with pytest.raises(ValueError, match="original construction error"):
         _compile_acquisition_gateway(plan, acquisition_profile_path="profile.yaml")
 
     assert set(closed) == {"web_http", "browser_rendered", "cloakbrowser"}
+
+
+@pytest.mark.parametrize("runtime", ["browser_rendered", "cloakbrowser"])
+@pytest.mark.parametrize("condition", ["missing", "malformed"])
+def test_optional_browser_runtime_preflight_rejects_missing_or_malformed_runtime(
+    runtime, condition, tmp_path: Path,
+):
+    stopped = []
+
+    class Driver:
+        chromium = SimpleNamespace(executable_path=str(tmp_path / "missing"))
+
+        def stop(self):
+            stopped.append(True)
+
+    class Context:
+        def start(self):
+            return Driver()
+
+    def importer(name):
+        if condition == "missing":
+            raise ImportError(name)
+        if name == "playwright.sync_api":
+            return SimpleNamespace(sync_playwright=Context)
+        if name == "cloakbrowser":
+            return SimpleNamespace(launch=None)
+        raise ImportError(name)
+
+    with pytest.raises(RuntimeError, match="^governed optional browser runtime unavailable$"):
+        _preflight_optional_browser_runtimes({runtime}, importer=importer)
+
+    assert stopped == ([True] if condition == "malformed" and runtime == "browser_rendered" else [])
+
+
+@pytest.mark.parametrize("formal_entrypoint", [bootstrap_scope, run_scope])
+@pytest.mark.parametrize("runtime", ["browser_rendered", "cloakbrowser"])
+def test_formal_scope_optional_runtime_preflight_precedes_storage_and_report(
+    formal_entrypoint, runtime, tmp_path: Path, monkeypatch,
+):
+    report_path = tmp_path / "must-not-exist.md"
+
+    @dataclass(frozen=True)
+    class Plan:
+        site_key: str = "demo"
+        catalog: str = "dev"
+        display_name: str = "Demo"
+        seed_url: str = "https://example.com/"
+        homepage_url: str = "https://example.com/"
+        max_depth: int = 1
+        max_pages: int = 1
+        max_files: int = 0
+
+    plan = Plan()
+
+    class Driver:
+        chromium = SimpleNamespace(executable_path=str(tmp_path / "missing"))
+
+        def stop(self):
+            pass
+
+    class Context:
+        def start(self):
+            return Driver()
+
+    def importer(name):
+        if name == "playwright.sync_api":
+            return SimpleNamespace(sync_playwright=Context)
+        if name == "cloakbrowser":
+            return SimpleNamespace(launch=None)
+        raise ImportError(name)
+
+    def compile_gateway(*args, **kwargs):
+        _preflight_optional_browser_runtimes({runtime}, importer=importer)
+        pytest.fail("unavailable runtime was admitted")
+
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.load_monitor_scope_plan", lambda path: plan)
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.monitor_scope_to_tree_target", lambda value: object())
+    monkeypatch.setattr("web_listening.blocks.staged_workflow._compile_acquisition_gateway", compile_gateway)
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.Storage",
+                        lambda *args, **kwargs: pytest.fail("Storage was reached"))
+    monkeypatch.setattr("web_listening.blocks.staged_workflow.run_bootstrap",
+                        lambda **kwargs: pytest.fail("bootstrap mutation was reached"))
+
+    with pytest.raises(RuntimeError, match="^governed optional browser runtime unavailable$"):
+        formal_entrypoint(
+            scope_path=tmp_path / "scope.yaml",
+            report_path=report_path,
+            acquisition_profile_path=tmp_path / "profile.yaml",
+        )
+
+    assert not report_path.exists()
 
 
 def test_formal_gateway_constructs_and_dispatches_browseract_without_other_drivers(monkeypatch):
@@ -488,7 +592,11 @@ def test_formal_gateway_constructs_and_dispatches_browseract_without_other_drive
     ):
         monkeypatch.setattr(path, lambda: pytest.fail("another driver was selected"))
 
-    plan = SimpleNamespace(site_key="demo", based_on={"acquisition_profile_id": "profile"})
+    plan = SimpleNamespace(site_key="demo", based_on={
+        "acquisition_profile_id": "profile", "site_skill_version": "1.0.0",
+        "site_skill_package_sha256": "a" * 64, "site_skill_recipe_id": "news-browseract",
+        "site_skill_script_sha256": "a" * 64, "executor_version": "1.0.6",
+    })
     gateway = _compile_acquisition_gateway(plan, acquisition_profile_path="profile.yaml")
     outcome = gateway.acquire("https://example.com/a", run_id="run-1", scope_id="scope-1")
     gateway.close()

@@ -28,11 +28,33 @@ _SITE_SKILL_JSON_SCHEMAS = {
     "inspect-site-skill": ("site-skill-inspect.v1", "skill"),
     "validate-site-skill": ("site-skill-validation.v1", "skill"),
     "preview-execution-plan": ("acquisition-execution-plan-preview.v1", "plan"),
+    "bootstrap-scope": ("job_delivery.v1", "scope.bootstrap"),
+    "run-scope": ("job_delivery.v1", "scope.run"),
 }
 
 
 def _parser_failure(command: str, message: str) -> dict[str, object]:
     schema, payload_key = _SITE_SKILL_JSON_SCHEMAS[command]
+    if command in {"bootstrap-scope", "run-scope"}:
+        return {
+            "contract_version": schema,
+            "job": {
+                "job_id": None, "job_type": payload_key, "status": "failed",
+                "stage": "parser", "stage_message": "invalid command arguments", "progress": 0,
+                "scope_id": None, "run_id": None, "accepted_at": None,
+                "started_at": None, "finished_at": None,
+            },
+            "error": {
+                "message": "invalid command arguments", "code": "parser.invalid",
+                "detail": {}, "is_retryable": False,
+            },
+            "artifacts": {"produced": {}, "summary": {}},
+            "artifact_contract": {
+                "contract_version": "artifact_contract.v1", "primary_key": "",
+                "primary_kind": "", "primary_path": "", "path_keys": [], "path_map": {},
+            },
+            "next_action": "inspect_job_error",
+        }
     if command == "preview-execution-plan":
         return {
             "schema_version": schema, "ok": False, "plan": None,
@@ -53,6 +75,29 @@ def _parser_failure(command: str, message: str) -> dict[str, object]:
     return {
         "schema_version": schema,
         payload_key: [failure] if payload_key == "skills" else failure,
+    }
+
+
+def _runtime_failure(command: str) -> dict[str, object]:
+    schema, job_type = _SITE_SKILL_JSON_SCHEMAS[command]
+    return {
+        "contract_version": schema,
+        "job": {
+            "job_id": None, "job_type": job_type, "status": "failed",
+            "stage": "runtime", "stage_message": "command execution failed", "progress": 0,
+            "scope_id": None, "run_id": None, "accepted_at": None,
+            "started_at": None, "finished_at": None,
+        },
+        "error": {
+            "message": "command execution failed", "code": "runtime.failed",
+            "detail": {}, "is_retryable": False,
+        },
+        "artifacts": {"produced": {}, "summary": {}},
+        "artifact_contract": {
+            "contract_version": "artifact_contract.v1", "primary_key": "",
+            "primary_kind": "", "primary_path": "", "path_keys": [], "path_map": {},
+        },
+        "next_action": "inspect_job_error",
     }
 
 
@@ -97,6 +142,13 @@ class _SiteSkillJsonGroup(TyperGroup):
             if standalone_mode:
                 raise SystemExit(2) from None
             return 2
+        except Exception:
+            if command not in {"bootstrap-scope", "run-scope"}:
+                raise
+            _stable_json(_runtime_failure(command))
+            if standalone_mode:
+                raise SystemExit(1) from None
+            return 1
 
         if standalone_mode and isinstance(result, int):
             raise SystemExit(result)
@@ -926,7 +978,7 @@ def bootstrap_scope(
     report_path: str = typer.Option("", "--report-path", help="Optional bootstrap Markdown report path."),
     summary_path: str = typer.Option("", "--summary-path", help="Optional bootstrap summary Markdown path."),
     include_summary: bool = typer.Option(False, "--include-summary", help="Also export bootstrap scope summary markdown."),
-    acquisition_profile_path: Optional[Path] = typer.Option(None, "--acquisition-profile-path", exists=True, file_okay=True, dir_okay=False, readable=True, help="Governed acquisition profile YAML."),
+    acquisition_profile_path: Path = typer.Option(..., "--acquisition-profile-path", exists=True, file_okay=True, dir_okay=False, readable=True, help="Required governed acquisition profile YAML."),
     site_skill_root: Optional[Path] = typer.Option(None, "--site-skill-root", exists=True, file_okay=False, dir_okay=True, readable=True, help="Explicit Site Skill registry root."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
 ):
@@ -950,6 +1002,8 @@ def bootstrap_scope(
         acquisition_profile_path=acquisition_profile_path,
         site_skill_root=site_skill_root,
     )
+    if any(result.status == "failed" for result in artifacts.results):
+        raise RuntimeError("bootstrap scope execution failed")
     first = artifacts.results[0] if artifacts.results else None
     job = persist_job_result(
         job_type="scope.bootstrap",
@@ -986,7 +1040,7 @@ def run_scope(
     max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
     max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
     report_path: str = typer.Option("", "--report-path", help="Optional incremental run report path."),
-    acquisition_profile_path: Optional[Path] = typer.Option(None, "--acquisition-profile-path", exists=True, file_okay=True, dir_okay=False, readable=True, help="Governed acquisition profile YAML."),
+    acquisition_profile_path: Path = typer.Option(..., "--acquisition-profile-path", exists=True, file_okay=True, dir_okay=False, readable=True, help="Required governed acquisition profile YAML."),
     site_skill_root: Optional[Path] = typer.Option(None, "--site-skill-root", exists=True, file_okay=False, dir_okay=True, readable=True, help="Explicit Site Skill registry root."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
 ):

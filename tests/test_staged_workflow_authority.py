@@ -143,7 +143,7 @@ def test_staged_run_scope_provides_document_processor_when_downloading(monkeypat
             captured["document_processor_closed"] = True
 
     class FakeTreeCrawler:
-        def __init__(self, *, storage, document_processor=None):
+        def __init__(self, *, storage, document_processor=None, acquisition_gateway=None):
             captured["tree_storage"] = storage
             captured["document_processor"] = document_processor
 
@@ -174,6 +174,7 @@ def test_staged_run_scope_provides_document_processor_when_downloading(monkeypat
     monkeypatch.setattr(staged_workflow, "Storage", FakeStorage)
     monkeypatch.setattr(staged_workflow, "DocumentProcessor", FakeDocumentProcessor)
     monkeypatch.setattr(staged_workflow, "TreeCrawler", FakeTreeCrawler)
+    monkeypatch.setattr(staged_workflow, "_compile_acquisition_gateway", lambda *a, **k: object())
     monkeypatch.setattr(staged_workflow, "find_scope_for_plan", lambda storage, loaded_plan: (None, stored_scope))
 
     artifacts = staged_workflow.run_scope(scope_path="dummy", download_files=True)
@@ -229,6 +230,7 @@ def test_staged_bootstrap_scope_preserves_zero_limit_overrides(monkeypatch, tmp_
         lambda **kwargs: captured.setdefault("bootstrap_kwargs", kwargs) or [],
     )
     monkeypatch.setattr(staged_workflow, "render_bootstrap_run_markdown", lambda *args, **kwargs: "report")
+    monkeypatch.setattr(staged_workflow, "_compile_acquisition_gateway", lambda *a, **k: object())
 
     artifacts = staged_workflow.bootstrap_scope(
         scope_path="dummy",
@@ -318,6 +320,26 @@ def test_governed_run_authority_failure_happens_before_storage(monkeypatch):
         staged_workflow.run_scope(scope_path="dummy")
 
 
+@pytest.mark.parametrize("operation", ["bootstrap", "run"])
+def test_formal_scope_execution_requires_governed_authority_before_storage(
+    monkeypatch, tmp_path, operation,
+):
+    plan = _monitor_plan()
+    monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
+    monkeypatch.setattr(
+        staged_workflow, "Storage",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("storage constructed")),
+    )
+    monkeypatch.setattr(
+        staged_workflow, "run_bootstrap",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("bootstrap mutation reached")),
+    )
+
+    call = staged_workflow.bootstrap_scope if operation == "bootstrap" else staged_workflow.run_scope
+    with pytest.raises(ValueError, match="complete governed acquisition bindings"):
+        call(scope_path="dummy", report_path=tmp_path / "unused.md")
+
+
 def test_staged_run_scope_preserves_zero_limit_overrides(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
 
@@ -343,7 +365,7 @@ def test_staged_run_scope_preserves_zero_limit_overrides(monkeypatch, tmp_path):
             captured["storage_closed"] = True
 
     class FakeTreeCrawler:
-        def __init__(self, *, storage, document_processor=None):
+        def __init__(self, *, storage, document_processor=None, acquisition_gateway=None):
             captured["document_processor"] = document_processor
 
         def __enter__(self):
@@ -372,6 +394,7 @@ def test_staged_run_scope_preserves_zero_limit_overrides(monkeypatch, tmp_path):
     monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
     monkeypatch.setattr(staged_workflow, "Storage", FakeStorage)
     monkeypatch.setattr(staged_workflow, "TreeCrawler", FakeTreeCrawler)
+    monkeypatch.setattr(staged_workflow, "_compile_acquisition_gateway", lambda *a, **k: object())
     monkeypatch.setattr(staged_workflow, "find_scope_for_plan", lambda storage, loaded_plan: (None, stored_scope))
     monkeypatch.setattr(staged_workflow, "render_run_markdown", lambda *args, **kwargs: "report")
 

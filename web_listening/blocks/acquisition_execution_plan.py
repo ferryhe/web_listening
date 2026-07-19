@@ -253,6 +253,8 @@ def compile_acquisition_execution_plan(scope: MonitorScopePlan, profile: Acquisi
         if effective_config:
             step["config"] = effective_config
         steps.append(step)
+    if not steps:
+        _fail("plan.steps_empty", "governed acquisition plan requires a non-empty step chain", "steps")
     first = steps[0]
     if values["site_skill_recipe_id"] != first["recipe_id"]:
         _fail("recipe.binding_mismatch", "default recipe mapping does not match governed binding", "based_on.site_skill_recipe_id")
@@ -263,7 +265,6 @@ def compile_acquisition_execution_plan(scope: MonitorScopePlan, profile: Acquisi
     limits = first["limits"]
     authority = {
         "site_key": scope.site_key, "scope_fingerprint": scope_fp, "profile_id": profile.profile_id,
-        "fetch_mode": str(scope.fetch_mode).strip().lower(), "fetch_config_json": scope.fetch_config_json,
         "profile": profile.model_dump(mode="json", exclude={"generated_at", "notes"}),
         "site_skill_id": manifest.skill_id, "site_skill_version": manifest.version,
         "site_skill_package_sha256": site_skill.package_sha256, "steps": steps,

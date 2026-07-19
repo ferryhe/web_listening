@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import base64
 import hashlib
+from importlib import import_module
 import json
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,30 @@ from web_listening.config import settings
 from web_listening.models import CrawlScope
 from web_listening.tree_defaults import PRODUCTION_TREE_LIMITS
 from web_listening.tree_targets import filter_tree_targets, load_tree_targets
+
+
+_OPTIONAL_BROWSER_RUNTIME_ERROR = "governed optional browser runtime unavailable"
+
+
+def _preflight_optional_browser_runtimes(planned, *, importer=import_module) -> None:
+    """Validate only optional browser runtimes selected by the governed plan."""
+    try:
+        if "browser_rendered" in planned:
+            sync_api = importer("playwright.sync_api")
+            context = sync_api.sync_playwright()
+            driver = context.start()
+            try:
+                executable_path = getattr(getattr(driver, "chromium", None), "executable_path", None)
+                if not isinstance(executable_path, str) or not Path(executable_path).is_file():
+                    raise RuntimeError(_OPTIONAL_BROWSER_RUNTIME_ERROR)
+            finally:
+                driver.stop()
+        if "cloakbrowser" in planned:
+            cloakbrowser = importer("cloakbrowser")
+            if not callable(getattr(cloakbrowser, "launch", None)):
+                raise RuntimeError(_OPTIONAL_BROWSER_RUNTIME_ERROR)
+    except Exception as exc:
+        raise RuntimeError(_OPTIONAL_BROWSER_RUNTIME_ERROR) from exc
 
 
 def _portable_json(value):
@@ -83,8 +108,8 @@ def _compile_acquisition_gateway(plan, *, acquisition_profile_path=None, site_sk
     bindings = {"acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
                 "site_skill_recipe_id", "site_skill_script_sha256", "executor_version"}
     based_on = getattr(plan, "based_on", {})
-    if not any(key in based_on for key in bindings):
-        return None
+    if set(based_on).intersection(bindings) != bindings:
+        raise ValueError("formal scope execution requires complete governed acquisition bindings")
     if acquisition_profile_path is None:
         raise ValueError("governed scope requires --acquisition-profile-path")
     profile = load_acquisition_profile(acquisition_profile_path, strict=True)
@@ -94,6 +119,8 @@ def _compile_acquisition_gateway(plan, *, acquisition_profile_path=None, site_sk
         root=site_skill_root)
     preview = default_preview_registry()
     compiled = compile_acquisition_execution_plan(plan, profile, skill, preview)
+    if compiled.mode != "governed" or not compiled.steps:
+        raise ValueError("formal scope execution requires a governed non-empty acquisition plan")
 
     class _Executor:
         def __init__(self, executor_id, adapter):
@@ -149,6 +176,7 @@ def _compile_acquisition_gateway(plan, *, acquisition_profile_path=None, site_sk
     unavailable = planned - adapters.keys() - {"browseract"}
     if unavailable:
         raise ValueError(f"governed executor runtime unavailable: {', '.join(sorted(unavailable))}")
+    _preflight_optional_browser_runtimes(planned)
     executors = {}
     try:
         for executor_id in planned:
@@ -591,9 +619,11 @@ def run_scope(
                 "max_files": _first_defined(effective_max_files, stored_scope.max_files),
             }
         )
-        tree_kwargs = {"storage": storage, "document_processor": processor}
-        if acquisition_gateway is not None:
-            tree_kwargs["acquisition_gateway"] = acquisition_gateway
+        tree_kwargs = {
+            "storage": storage,
+            "document_processor": processor,
+            "acquisition_gateway": acquisition_gateway,
+        }
         with TreeCrawler(**tree_kwargs) as tree:
             crawl = tree.run_scope(scoped_run, institution=plan.display_name, download_files=download_files)
         result = RunResult(

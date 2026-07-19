@@ -1449,6 +1449,8 @@ def test_bootstrap_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch
     report_path = tmp_path / "reports" / "bootstrap.md"
     summary_path = tmp_path / "reports" / "bootstrap-summary.md"
     scope_path = tmp_path / "monitor_scope.yaml"
+    profile_path = tmp_path / "acquisition_profile.yaml"
+    profile_path.write_text("profile_id: test\n", encoding="utf-8")
     scope_path.write_text(
         """
 scope_fingerprint: demo
@@ -1505,6 +1507,8 @@ notes: []
             "bootstrap-scope",
             "--scope-path",
             str(scope_path),
+            "--acquisition-profile-path",
+            str(profile_path),
             "--report-path",
             str(report_path),
             "--summary-path",
@@ -1527,6 +1531,8 @@ notes: []
             "bootstrap-scope",
             "--scope-path",
             str(scope_path),
+            "--acquisition-profile-path",
+            str(profile_path),
             "--report-path",
             str(report_path),
             "--summary-path",
@@ -1553,10 +1559,167 @@ def test_governed_scope_commands_expose_authority_options(command):
     assert "--site-skill-root" in result.output
 
 
+@pytest.mark.parametrize(
+    ("command", "job_type"),
+    [("bootstrap-scope", "scope.bootstrap"), ("run-scope", "scope.run")],
+)
+def test_governed_scope_json_parser_errors_are_stable_redacted_and_stdout_only(command, job_type):
+    canary = "/tmp/SECRET-PARSER-CANARY-scope.yaml"
+    args = [command, "--scope-path", canary, "--json"]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code == 2
+    assert first.stdout == second.stdout
+    assert first.stderr == second.stderr == ""
+    payload = json.loads(first.stdout)
+    assert payload["contract_version"] == "job_delivery.v1"
+    assert payload["job"]["job_type"] == job_type
+    assert payload["job"]["status"] == "failed"
+    assert payload["error"] == {
+        "code": "parser.invalid",
+        "detail": {},
+        "is_retryable": False,
+        "message": "invalid command arguments",
+    }
+    assert payload["artifacts"] == {"produced": {}, "summary": {}}
+    assert payload["artifact_contract"]["path_map"] == {}
+    assert "SECRET-PARSER-CANARY" not in first.output
+
+
+@pytest.mark.parametrize(
+    ("command", "job_type"),
+    [("bootstrap-scope", "scope.bootstrap"), ("run-scope", "scope.run")],
+)
+def test_governed_scope_json_runtime_errors_are_stable_redacted_and_stdout_only(
+    command, job_type, tmp_path: Path, monkeypatch,
+):
+    canary = f"SECRET-RUNTIME-CANARY:{tmp_path / 'scope.yaml'}"
+    scope_path = tmp_path / "scope.yaml"
+    profile_path = tmp_path / "profile.yaml"
+    scope_path.write_text("site_key: demo\n", encoding="utf-8")
+    profile_path.write_text("profile_id: demo\n", encoding="utf-8")
+
+    def fail_after_parsing(_scope_path):
+        raise RuntimeError(canary)
+
+    monkeypatch.setattr(
+        "web_listening.blocks.monitor_scope_planner.load_monitor_scope_plan",
+        fail_after_parsing,
+    )
+    args = [
+        command,
+        "--scope-path",
+        str(scope_path),
+        "--acquisition-profile-path",
+        str(profile_path),
+        "--json",
+    ]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code == 1
+    assert first.stdout == second.stdout
+    assert first.stderr == second.stderr == ""
+    payload = json.loads(first.stdout)
+    assert payload["contract_version"] == "job_delivery.v1"
+    assert payload["job"]["job_type"] == job_type
+    assert payload["job"]["status"] == "failed"
+    assert payload["job"]["stage"] == "runtime"
+    assert payload["error"] == {
+        "code": "runtime.failed",
+        "detail": {},
+        "is_retryable": False,
+        "message": "command execution failed",
+    }
+    assert payload["artifacts"] == {"produced": {}, "summary": {}}
+    assert payload["artifact_contract"]["path_map"] == {}
+    assert "SECRET-RUNTIME-CANARY" not in first.output
+    assert str(tmp_path) not in first.output
+
+    human = runner.invoke(app, args[:-1])
+    assert human.exit_code == 1
+    assert isinstance(human.exception, RuntimeError)
+    assert str(human.exception) == canary
+    assert not human.stdout.lstrip().startswith("{")
+
+
+def test_bootstrap_failed_result_is_generic_runtime_failure_and_is_not_persisted(
+    tmp_path: Path, monkeypatch,
+):
+    canary = f"SECRET-BOOTSTRAP-CANARY:{tmp_path / 'private-report.md'}"
+    scope_path = tmp_path / "scope.yaml"
+    profile_path = tmp_path / "profile.yaml"
+    scope_path.write_text("site_key: demo\n", encoding="utf-8")
+    profile_path.write_text("profile_id: demo\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "web_listening.blocks.monitor_scope_planner.load_monitor_scope_plan",
+        lambda path: SimpleNamespace(scope_id=7),
+    )
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.bootstrap_scope",
+        lambda **kwargs: SimpleNamespace(
+            report_path=tmp_path / "private-report.md",
+            summary_path=None,
+            results=[SimpleNamespace(
+                status="failed", scope_id=7, run_id=11, notes=canary,
+            )],
+        ),
+    )
+    persisted = []
+    monkeypatch.setattr(
+        "web_listening.blocks.job_orchestration.persist_job_result",
+        lambda **kwargs: persisted.append(kwargs),
+    )
+    args = [
+        "bootstrap-scope", "--scope-path", str(scope_path),
+        "--acquisition-profile-path", str(profile_path), "--json",
+    ]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code == 1
+    assert first.stdout == second.stdout
+    assert first.stderr == second.stderr == ""
+    payload = json.loads(first.stdout)
+    assert payload["error"] == {
+        "code": "runtime.failed",
+        "detail": {},
+        "is_retryable": False,
+        "message": "command execution failed",
+    }
+    assert canary not in first.stdout
+    assert str(tmp_path) not in first.stdout
+    assert persisted == []
+
+    human = runner.invoke(app, args[:-1])
+    assert human.exit_code == 1
+    assert isinstance(human.exception, RuntimeError)
+    assert str(human.exception) == "bootstrap scope execution failed"
+    assert not human.stdout.lstrip().startswith("{")
+    assert canary not in human.stdout
+    assert str(tmp_path) not in human.stdout
+    assert persisted == []
+
+
+@pytest.mark.parametrize("command", ["bootstrap-scope", "run-scope"])
+def test_governed_scope_human_parser_errors_remain_human(command):
+    result = runner.invoke(app, [command])
+
+    assert result.exit_code == 2
+    assert "Usage:" in result.output
+    assert not result.output.lstrip().startswith("{")
+
+
 
 def test_run_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
     report_path = tmp_path / "reports" / "run.md"
     scope_path = tmp_path / "monitor_scope.yaml"
+    profile_path = tmp_path / "acquisition_profile.yaml"
+    profile_path.write_text("profile_id: test\n", encoding="utf-8")
     scope_path.write_text(
         """
 scope_fingerprint: demo
@@ -1611,6 +1774,8 @@ notes: []
             "run-scope",
             "--scope-path",
             str(scope_path),
+            "--acquisition-profile-path",
+            str(profile_path),
             "--report-path",
             str(report_path),
         ],
@@ -1628,6 +1793,8 @@ notes: []
             "run-scope",
             "--scope-path",
             str(scope_path),
+            "--acquisition-profile-path",
+            str(profile_path),
             "--report-path",
             str(report_path),
             "--json",

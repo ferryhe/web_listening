@@ -9,7 +9,7 @@ This smoke fixture documents the handoff from `web_listening` to downstream modu
 - Runtime API: `GET /api/v1/acquisition/tools`
 - Runtime CLI: `web-listening list-acquisition-tools --json`
 
-Delivery UIs and agents should treat the API/CLI catalog as the acquisition tool picker contract. The contract maps ordinary public HTML to `web_http`, dynamic JavaScript pages to `browser_rendered`, authorized stealth-browser/CDP-like contexts to `cloakbrowser`, bulk structured/site-specific scrape jobs to reserved `batch_python`, and discovery/feed cases to reserved `sitemap` or `rss`. The catalog is planning/probing metadata and does not change `bootstrap-scope` or `run-scope` execution.
+Delivery UIs and agents should treat the API/CLI catalog as the acquisition tool picker contract. The contract maps ordinary public HTML to `web_http`, dynamic JavaScript pages to `browser_rendered`, authorized stealth-browser/CDP-like contexts to `cloakbrowser`, bulk structured/site-specific scrape jobs to reserved `batch_python`, and discovery/feed cases to reserved `sitemap` or `rss`. The catalog is planning/probing metadata; formal `bootstrap-scope` and `run-scope` authority comes from the exact Site Skill binding and compiled acquisition profile.
 
 ## Fixture and runtime artifact
 

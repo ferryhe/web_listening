@@ -1,12 +1,20 @@
+import base64
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
+import pytest
 
-from web_listening.blocks.crawler import Crawler
+from web_listening.blocks.crawler import Crawler, FetchResult, HttpCrawler
+from web_listening.blocks.acquisition_gateway import AcquisitionOutcome, GovernedAcquisitionGateway
+from web_listening.blocks.staged_workflow import _compile_acquisition_gateway
 from web_listening.blocks.document import DocumentProcessor
 from web_listening.blocks.storage import Storage
+from web_listening.contracts import CaptureContent, CaptureResult
+from web_listening.executors.http_wrapper import HttpAcquisitionAdapter
 from web_listening.blocks.tree_crawler import (
     TreeCrawler,
     build_scope_from_site,
@@ -578,3 +586,445 @@ def test_tree_crawler_skips_pages_that_redirect_outside_scope(tmp_path):
     assert result.skipped_external_pages >= 1
 
     storage.close()
+
+
+def test_governed_tree_budget_bounds_requested_pages_and_readmits_results(tmp_path):
+    storage = Storage(tmp_path / "governed-budget.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Governed"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"], max_depth=2, max_pages=2, max_files=1,
+        fetch_mode="http",
+    )
+
+    class Gateway:
+        def __init__(self):
+            self.urls = []
+
+        def acquire(self, url, *, run_id, scope_id, content_kind="page"):
+            self.urls.append(url)
+            if len(self.urls) == 1:
+                html = (
+                    '<a href="/section/a">A</a><a href="/section/b">B</a>'
+                    '<a href="https://evil.example/out">out</a>'
+                    '<a href="/private/secret.pdf">bad doc</a>'
+                )
+                page = FetchResult(html, html, html, html, html, {}, url, 200)
+                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+            return AcquisitionOutcome(None, None, None, "timeout", ("timeout",), False)
+
+        def close(self):
+            return None
+
+    gateway = Gateway()
+    with TreeCrawler(storage=storage, acquisition_gateway=gateway) as tree:
+        result = tree.bootstrap_scope(scope, download_files=False)
+
+    assert gateway.urls == ["https://example.com/section", "https://example.com/section/a"]
+    assert [page.canonical_url for page in result.pages] == ["https://example.com/section"]
+    assert result.skipped_external_pages == 1
+    assert result.skipped_external_files == 1
+    assert len(storage.list_tracked_pages(result.scope.id)) == 1
+    storage.close()
+
+
+def test_incremental_failures_only_mark_exact_confirmed_not_found_missing(tmp_path):
+    storage = Storage(tmp_path / "governed-missing.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Governed Missing"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"], max_depth=1, max_pages=3, max_files=1,
+        fetch_mode="http",
+    )
+
+    class Gateway:
+        phase = "bootstrap"
+
+        def acquire(self, url, *, run_id, scope_id, content_kind="page"):
+            if url.endswith("/section"):
+                html = '<a href="/section/a">A</a><a href="/section/b">B</a>'
+                page = FetchResult(html, html, html, html, html, {}, url, 200)
+                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+            if self.phase == "bootstrap":
+                page = FetchResult("ok", "ok", "ok", "ok", "ok", {}, url, 200)
+                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+            classification = "not_found" if url.endswith("/a") else "timeout"
+            result = SimpleNamespace(final_url=url) if classification == "not_found" else None
+            return AcquisitionOutcome(None, result, None, classification, (classification,), classification == "not_found")
+
+        def close(self):
+            return None
+
+    gateway = Gateway()
+    tree = TreeCrawler(storage=storage, acquisition_gateway=gateway)
+    bootstrap = tree.bootstrap_scope(scope, download_files=False)
+    gateway.phase = "incremental"
+    incremental = tree.run_scope(bootstrap.scope, download_files=False)
+
+    assert incremental.missing_pages == ["https://example.com/section/a"]
+    assert "https://example.com/section/b" not in incremental.missing_pages
+    assert len(incremental.page_failures) == 2
+    tree.close()
+    storage.close()
+
+
+def test_incremental_out_of_prefix_same_origin_404_redirect_is_not_missing(tmp_path):
+    storage = Storage(tmp_path / "redirected-missing.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Redirected Missing"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"], max_depth=1, max_pages=2, max_files=1,
+        fetch_mode="http",
+    )
+
+    class Gateway:
+        phase = "bootstrap"
+
+        def acquire(self, url, *, run_id, scope_id, content_kind="page"):
+            if url.endswith("/section"):
+                html = '<a href="/section/a">A</a>'
+                page = FetchResult(html, html, html, html, html, {}, url, 200)
+                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+            if self.phase == "bootstrap":
+                page = FetchResult("ok", "ok", "ok", "ok", "ok", {}, url, 200)
+                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+            result = SimpleNamespace(final_url="https://example.com/elsewhere/missing", status_code=404)
+            return AcquisitionOutcome(None, result, None, "not_found", ("not_found",), True)
+
+        def close(self):
+            return None
+
+    gateway = Gateway()
+    tree = TreeCrawler(storage=storage, acquisition_gateway=gateway)
+    bootstrap = tree.bootstrap_scope(scope, download_files=False)
+    gateway.phase = "incremental"
+    incremental = tree.run_scope(bootstrap.scope, download_files=False)
+
+    assert incremental.missing_pages == []
+    assert len(incremental.page_failures) == 1
+    tree.close()
+    storage.close()
+
+
+@pytest.mark.parametrize("rejection", ["blocked", "out_of_scope_final"])
+def test_governed_document_rejection_consumes_budget_before_storage(tmp_path, rejection):
+    storage = Storage(tmp_path / f"governed-file-{rejection}.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Governed Files"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"], max_depth=1, max_pages=2, max_files=1,
+        fetch_mode="http",
+    )
+
+    class Processor:
+        def __init__(self):
+            self.processed = []
+
+        def process(self, url, **kwargs):
+            self.processed.append(url)
+            raise AssertionError("rejected governed file reached processor")
+
+        def close(self):
+            return None
+
+    class Gateway:
+        def __init__(self):
+            self.calls = []
+
+        def acquire(self, url, *, run_id, scope_id, content_kind="page"):
+            self.calls.append((url, content_kind))
+            if content_kind == "page":
+                html = '<a href="/files/a.pdf">A</a><a href="/files/b.pdf">B</a>'
+                page = FetchResult(html, html, html, html, html, {}, url, 200)
+                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+            if rejection == "blocked":
+                return AcquisitionOutcome(None, None, None, "blocked", ("blocked",), False)
+            page = FetchResult("pdf", "pdf", "pdf", "pdf", "pdf", {},
+                               "https://evil.example/files/a.pdf", 200)
+            return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+
+        def close(self):
+            return None
+
+    gateway = Gateway()
+    processor = Processor()
+    with TreeCrawler(
+        storage=storage, acquisition_gateway=gateway, document_processor=processor
+    ) as tree:
+        result = tree.bootstrap_scope(scope, download_files=True)
+
+    assert gateway.calls == [
+        ("https://example.com/section", "page"),
+        ("https://example.com/files/a.pdf", "document"),
+    ]
+    assert processor.processed == []
+    assert result.files == []
+    assert storage.list_tracked_files(result.scope.id) == []
+    storage.close()
+
+
+@pytest.mark.parametrize(
+    ("encoded", "digest"),
+    [
+        ("%%%not-base64%%%", hashlib.sha256(b"anything").hexdigest()),
+        (base64.b64encode(b"actual bytes").decode(), hashlib.sha256(b"other bytes").hexdigest()),
+    ],
+)
+def test_governed_document_integrity_failure_creates_no_file_state_without_downloads(
+    tmp_path, encoded, digest,
+):
+    storage = Storage(tmp_path / "governed-integrity.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Integrity"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"], max_depth=1, max_pages=1, max_files=1,
+        fetch_mode="http",
+    )
+    plan = SimpleNamespace(
+        mode="governed",
+        steps=({
+            "position": 0, "executor_id": "web_http", "executor_version": "1.0.0",
+            "recipe_id": "recipe", "script_sha256": "a" * 64, "config": {},
+        },),
+        acquisition_fingerprint="b" * 64, site_key="demo", site_skill_id="skill",
+        site_skill_version="1.0.0", site_skill_package_sha256="a" * 64,
+        quality_gates={"min_words": 1, "min_links": 0, "min_document_links": 0,
+                       "blocked_markers": ()},
+    )
+
+    class Registry:
+        def execute(self, request):
+            now = datetime.now(timezone.utc)
+            lineage = {field: getattr(request, field) for field in (
+                "request_id", "site_key", "site_skill_id", "site_skill_version",
+                "site_skill_digest", "recipe_id", "run_id", "scope_id", "executor_id",
+            )}
+            if request.metadata["content_kind"] == "page":
+                content = CaptureContent(
+                    media_type="text/html", text='<p>visible</p><a href="/files/report.pdf">R</a>',
+                )
+            else:
+                content = CaptureContent(
+                    media_type="application/pdf", text=encoded, sha256=digest,
+                    metadata={"representation": "base64", "sha256_scope": "decoded-bytes"},
+                )
+            return CaptureResult(
+                **lineage, state="succeeded", started_at=now, finished_at=now,
+                final_url=request.url, status_code=200, content=content,
+            )
+
+    gateway = GovernedAcquisitionGateway(plan, Registry())
+    with TreeCrawler(storage=storage, acquisition_gateway=gateway) as tree:
+        result = tree.bootstrap_scope(scope, download_files=False)
+
+    assert result.files == []
+    assert storage.list_tracked_files(result.scope.id) == []
+    assert storage.list_file_observations(result.scope.id) == []
+    assert storage.list_documents(site_id=site.id) == []
+    assert storage.list_changes(site_id=site.id) == []
+    assert storage.conn.execute("SELECT COUNT(*) FROM document_blobs").fetchone()[0] == 0
+    storage.close()
+
+
+def test_governed_document_persists_admitted_bytes_without_second_fetch(tmp_path):
+    storage = Storage(tmp_path / "governed-document.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Governed Document"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"], max_depth=1, max_pages=2, max_files=1,
+        fetch_mode="http",
+    )
+    admitted_text = "governed document bytes"
+    admitted_bytes = admitted_text.encode("utf-8")
+    admitted_sha = hashlib.sha256(admitted_bytes).hexdigest()
+    final_url = "https://example.com/files/final.pdf"
+
+    class Processor(DocumentProcessor):
+        def process(self, url, **kwargs):  # pragma: no cover - regression guard
+            raise AssertionError("governed persistence performed a second fetch")
+
+    class Gateway:
+        def __init__(self):
+            self.calls = []
+
+        def acquire(self, url, *, run_id, scope_id, content_kind="page"):
+            self.calls.append((url, content_kind))
+            if content_kind == "page":
+                html = '<a href="/files/original.pdf">A</a><a href="/files/ignored.pdf">B</a>'
+                page = FetchResult(html, html, html, html, html, {}, url, 200)
+                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+            now = datetime.now(timezone.utc)
+            capture = CaptureResult(
+                request_id="request", site_key="demo", site_skill_id="skill",
+                site_skill_version="1.0.0", site_skill_digest="a" * 64,
+                recipe_id="recipe", run_id=run_id, scope_id=scope_id,
+                executor_id="web_http", state="succeeded", started_at=now,
+                finished_at=now, final_url=final_url, status_code=200,
+                content=CaptureContent(media_type="application/pdf", text=admitted_text,
+                                       sha256=admitted_sha),
+            )
+            page = FetchResult(admitted_text, admitted_text, admitted_text, admitted_text,
+                               admitted_text, {}, final_url, 200)
+            return AcquisitionOutcome(None, capture, page, "accepted", ("accepted",), True)
+
+        def close(self):
+            return None
+
+    gateway = Gateway()
+    processor = Processor(storage=storage)
+    with patch("web_listening.blocks.document.settings") as doc_settings:
+        doc_settings.downloads_dir = tmp_path / "downloads"
+        with TreeCrawler(storage=storage, acquisition_gateway=gateway,
+                         document_processor=processor) as tree:
+            result = tree.bootstrap_scope(scope, download_files=True)
+
+    assert gateway.calls[0] == ("https://example.com/section", "page")
+    assert len(gateway.calls) == 2
+    assert gateway.calls[1][0] in {
+        "https://example.com/files/original.pdf", "https://example.com/files/ignored.pdf"
+    }
+    assert gateway.calls[1][1] == "document"
+    assert [item.canonical_url for item in result.files] == [final_url]
+    document = storage.list_documents(site_id=site.id)[0]
+    assert document.download_url == final_url
+    assert document.sha256 == admitted_sha
+    assert Path(document.local_path).read_bytes() == admitted_bytes
+    assert storage.list_file_observations(result.scope.id)[0].download_url == final_url
+    storage.close()
+
+
+def test_real_governed_http_document_preserves_non_utf8_response_bytes(tmp_path, monkeypatch):
+    storage = Storage(tmp_path / "governed-http-document.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="HTTP Bytes"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"], max_depth=1, max_pages=1, max_files=1,
+        fetch_mode="http",
+    )
+    payload = b"%PDF-1.7\n\xff\xfe\x00\x80binary\n%%EOF"
+    digest = hashlib.sha256(payload).hexdigest()
+    requests = []
+
+    def respond(request):
+        requests.append(str(request.url))
+        if request.url.path == "/section":
+            return httpx.Response(
+                200, request=request,
+                text='<p>visible page words</p><a href="/files/report.pdf">report</a>',
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
+        return httpx.Response(
+            200, request=request, content=payload,
+            headers={"content-type": "application/pdf; version=1.7"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(respond), follow_redirects=True)
+    adapter = HttpAcquisitionAdapter(HttpCrawler(client=client))
+    step = {
+        "position": 0, "executor_id": "web_http", "executor_version": "1.0.0",
+        "recipe_id": "recipe", "script_sha256": "a" * 64, "config": {},
+    }
+    compiled = SimpleNamespace(
+        mode="governed", steps=(step,), acquisition_fingerprint="b" * 64,
+        site_key="demo", site_skill_id="skill", site_skill_version="1.0.0",
+        site_skill_package_sha256="a" * 64,
+        quality_gates={"min_words": 1, "min_links": 0, "min_document_links": 0,
+                       "blocked_markers": ()},
+    )
+    monkeypatch.setattr("web_listening.blocks.acquisition_profile.load_acquisition_profile", lambda *a, **k: object())
+    monkeypatch.setattr("web_listening.site_skill_registry.resolve_site_skill_contract", lambda **k: object())
+    monkeypatch.setattr("web_listening.blocks.acquisition_execution_plan.compile_acquisition_execution_plan",
+                        lambda *a: compiled)
+    monkeypatch.setattr("web_listening.executors.http_wrapper.HttpAcquisitionAdapter", lambda: adapter)
+    plan = SimpleNamespace(site_key="demo", based_on={"acquisition_profile_id": "profile"})
+    gateway = _compile_acquisition_gateway(plan, acquisition_profile_path="profile.yaml")
+
+    class Processor(DocumentProcessor):
+        def process(self, url, **kwargs):  # pragma: no cover - no refetch guard
+            raise AssertionError("governed document was refetched")
+
+    processor = Processor(storage=storage)
+    with patch("web_listening.blocks.document.settings") as doc_settings:
+        doc_settings.downloads_dir = tmp_path / "downloads"
+        with TreeCrawler(storage=storage, acquisition_gateway=gateway,
+                         document_processor=processor) as tree:
+            result = tree.bootstrap_scope(scope, download_files=True)
+
+    document = storage.list_documents(site_id=site.id)[0]
+    assert requests == ["https://example.com/section", "https://example.com/files/report.pdf"]
+    assert Path(document.local_path).read_bytes() == payload
+    assert document.content_type == "application/pdf; version=1.7"
+    assert document.sha256 == digest
+    assert result.files[0].latest_sha256 == digest
+    client.close()
+    storage.close()
+
+
+def test_narrower_incremental_depth_does_not_infer_deeper_pages_missing(tmp_path):
+    storage = Storage(tmp_path / "depth-coverage.db")
+    transport = make_tree_transport()
+    client = httpx.Client(transport=transport, follow_redirects=True)
+    crawler = Crawler(client=client)
+    site = storage.add_site(Site(url="https://example.com/section", name="Depth Coverage"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"], max_depth=2, max_pages=10, max_files=1,
+        fetch_mode="http",
+    )
+
+    with TreeCrawler(storage=storage, crawler=crawler) as tree:
+        bootstrap = tree.bootstrap_scope(scope, download_files=False)
+        shallower = CrawlScope(**{**bootstrap.scope.model_dump(), "max_depth": 1})
+        incremental = tree.run_scope(shallower, download_files=False)
+
+    assert "https://example.com/section/page-b" not in incremental.missing_pages
+    storage.close()
+
+
+def test_governed_blob_publication_cleans_temp_after_publish_failure(tmp_path, monkeypatch):
+    destination = tmp_path / "blobs" / "payload.bin"
+    payload = b"complete governed bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+
+    def fail_publish(*args, **kwargs):
+        raise OSError("injected publish failure")
+
+    monkeypatch.setattr("web_listening.blocks.tree_crawler.os.link", fail_publish)
+    with pytest.raises(OSError, match="injected publish failure"):
+        TreeCrawler._publish_governed_blob(destination, payload, digest)
+
+    assert not destination.exists()
+    assert list(destination.parent.iterdir()) == []
+
+
+def test_tree_crawler_close_attempts_every_resource_and_is_idempotent():
+    closed = []
+
+    class Resource:
+        def __init__(self, name, fail=False):
+            self.name, self.fail = name, fail
+
+        def close(self):
+            closed.append(self.name)
+            if self.fail:
+                raise RuntimeError(f"{self.name} close failed")
+
+    tree = TreeCrawler(
+        storage=SimpleNamespace(), crawler=Resource("crawler", fail=True),
+        acquisition_gateway=Resource("gateway"), document_processor=Resource("document"),
+    )
+    tree._owns_crawler = True
+
+    with pytest.raises(RuntimeError, match="crawler close failed"):
+        tree.close()
+    tree.close()
+
+    assert closed == ["crawler", "gateway", "document"]

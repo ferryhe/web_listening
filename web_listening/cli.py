@@ -926,6 +926,8 @@ def bootstrap_scope(
     report_path: str = typer.Option("", "--report-path", help="Optional bootstrap Markdown report path."),
     summary_path: str = typer.Option("", "--summary-path", help="Optional bootstrap summary Markdown path."),
     include_summary: bool = typer.Option(False, "--include-summary", help="Also export bootstrap scope summary markdown."),
+    acquisition_profile_path: Optional[Path] = typer.Option(None, "--acquisition-profile-path", exists=True, file_okay=True, dir_okay=False, readable=True, help="Governed acquisition profile YAML."),
+    site_skill_root: Optional[Path] = typer.Option(None, "--site-skill-root", exists=True, file_okay=False, dir_okay=True, readable=True, help="Explicit Site Skill registry root."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
 ):
     """Bootstrap a stored monitor scope into the tracking database."""
@@ -945,6 +947,8 @@ def bootstrap_scope(
         report_path=report_path or None,
         summary_path=summary_path or None,
         include_summary=include_summary,
+        acquisition_profile_path=acquisition_profile_path,
+        site_skill_root=site_skill_root,
     )
     first = artifacts.results[0] if artifacts.results else None
     job = persist_job_result(
@@ -982,6 +986,8 @@ def run_scope(
     max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
     max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
     report_path: str = typer.Option("", "--report-path", help="Optional incremental run report path."),
+    acquisition_profile_path: Optional[Path] = typer.Option(None, "--acquisition-profile-path", exists=True, file_okay=True, dir_okay=False, readable=True, help="Governed acquisition profile YAML."),
+    site_skill_root: Optional[Path] = typer.Option(None, "--site-skill-root", exists=True, file_okay=False, dir_okay=True, readable=True, help="Explicit Site Skill registry root."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
 ):
     """Run an initialized monitor scope incrementally."""
@@ -998,6 +1004,8 @@ def run_scope(
         max_pages=max_pages,
         max_files=max_files,
         report_path=report_path or None,
+        acquisition_profile_path=acquisition_profile_path,
+        site_skill_root=site_skill_root,
     )
     job = persist_job_result(
         job_type="scope.run",

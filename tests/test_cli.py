@@ -1525,6 +1525,15 @@ notes: []
     assert json_payload["artifact_contract"]["path_map"]["summary_path"] == str(summary_path)
 
 
+@pytest.mark.parametrize("command", ["bootstrap-scope", "run-scope"])
+def test_governed_scope_commands_expose_authority_options(command):
+    result = runner.invoke(app, [command, "--help"])
+
+    assert result.exit_code == 0
+    assert "--acquisition-profile-path" in result.output
+    assert "--site-skill-root" in result.output
+
+
 
 def test_run_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
     report_path = tmp_path / "reports" / "run.md"

@@ -1,14 +1,18 @@
 # Docs Index
 
+> **Historical snapshot.** This was the active documentation index before the
+> July 2026 consolidation. Its status language is retained for provenance and
+> must not be treated as current authority; use the repository root `README.md`.
+
 ## Start Here
 
 - [AGENT_SCOPE_PLANNING_DESIGN.md](design/AGENT_SCOPE_PLANNING_DESIGN.md)
 - [TREE_MONITORING_DESIGN.md](design/TREE_MONITORING_DESIGN.md)
 - [AGENT_SITE_MONITORING_MASTER_PLAN.md](roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md)
 
-## What Is Active
+## What Was Active At This Snapshot
 
-These are the long-lived docs that describe the current system:
+These were the long-lived docs that described the then-current system:
 
 - design:
   - [AGENT_SCOPE_PLANNING_DESIGN.md](design/AGENT_SCOPE_PLANNING_DESIGN.md)
@@ -31,12 +35,12 @@ These are the long-lived docs that describe the current system:
   - [acquisition-profile-v1.md](contracts/acquisition-profile-v1.md)
   - [web-listening-manifest-v1.md](contracts/web-listening-manifest-v1.md)
 - testing fixtures:
-  - [site-skill-v1.sample.json](testing/fixtures/site-skill-v1.sample.json)
-  - [capture-request-v1.sample.json](testing/fixtures/capture-request-v1.sample.json)
-  - [capture-result-v1.sample.json](testing/fixtures/capture-result-v1.sample.json)
-  - [acquisition-attempt-v2.sample.json](testing/fixtures/acquisition-attempt-v2.sample.json)
-  - [acquisition-tools-v1.sample.json](testing/fixtures/acquisition-tools-v1.sample.json)
-  - [acquisition-profile-v1.sample.yaml](testing/fixtures/acquisition-profile-v1.sample.yaml)
+  - [site-skill-v1.sample.json](../../testing/fixtures/site-skill-v1.sample.json)
+  - [capture-request-v1.sample.json](../../testing/fixtures/capture-request-v1.sample.json)
+  - [capture-result-v1.sample.json](../../testing/fixtures/capture-result-v1.sample.json)
+  - [acquisition-attempt-v2.sample.json](../../testing/fixtures/acquisition-attempt-v2.sample.json)
+  - [acquisition-tools-v1.sample.json](../../testing/fixtures/acquisition-tools-v1.sample.json)
+  - [acquisition-profile-v1.sample.yaml](../../testing/fixtures/acquisition-profile-v1.sample.yaml)
   - [web-listening-contract-smoke.md](testing/web-listening-contract-smoke.md)
 - architecture decisions:
   - [ADR-001-site-skill-protocol-authority.md](architecture/ADR-001-site-skill-protocol-authority.md)
@@ -119,7 +123,7 @@ These legacy commands still work for site-level monitoring, while the staged tre
 
 ## Archive
 
-- [2026-04-roadmap-history/README.md](archive/2026-04-roadmap-history/README.md)
+- [2026-04-roadmap-history/README.md](../2026-04-roadmap-history/README.md)
 ## Optional BrowserAct adapter
 
 - [BrowserAct runtime policy](operations/BROWSERACT.md)

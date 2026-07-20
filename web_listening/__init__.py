@@ -1,3 +1,8 @@
 """Web Listening - monitor websites for changes and download documents."""
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("web-listening")
+except PackageNotFoundError:  # Source tree imported before installation.
+    __version__ = "0+unknown"

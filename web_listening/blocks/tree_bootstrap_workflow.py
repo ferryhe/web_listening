@@ -10,7 +10,7 @@ from web_listening.blocks.document import DocumentProcessor
 from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan, monitor_scope_to_tree_target
 from web_listening.blocks.storage import Storage
 from web_listening.blocks.tree_crawler import TreeCrawler, build_scope_from_site
-from web_listening.blocks.acquisition_gateway import AcquisitionGateway
+from web_listening.blocks.acquisition_gateway import AcquisitionGateway, LegacyCrawlerGateway
 from web_listening.config import settings
 from web_listening.models import CrawlScope, Site
 from web_listening.tree_defaults import PRODUCTION_TREE_LIMITS
@@ -140,6 +140,13 @@ def run_bootstrap(
                 effective_max_depth = target.tree_max_depth or max_depth
                 effective_max_pages = target.tree_max_pages or max_pages
                 effective_max_files = target.tree_max_files or max_files
+                if acquisition_gateway is None:
+                    tree.acquisition_gateway = LegacyCrawlerGateway(
+                        tree.crawler,
+                        fetch_mode=target.fetch_mode,
+                        fetch_config_json=target.fetch_config_json,
+                    )
+                    tree.pacing_config = dict(target.fetch_config_json or {})
                 site = ensure_tree_site(storage, target)
                 scope = ensure_tree_scope(
                     storage,

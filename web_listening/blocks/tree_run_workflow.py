@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from web_listening.blocks.acquisition_gateway import LegacyCrawlerGateway
 from web_listening.blocks.document import DocumentProcessor
 from web_listening.blocks.storage import Storage
 from web_listening.blocks.tree_crawler import TreeCrawler
@@ -126,6 +127,12 @@ def run_incremental(
                         "fetch_config_json": target.fetch_config_json,
                     }
                 )
+                tree.acquisition_gateway = LegacyCrawlerGateway(
+                    tree.crawler,
+                    fetch_mode=target.fetch_mode,
+                    fetch_config_json=target.fetch_config_json,
+                )
+                tree.pacing_config = dict(target.fetch_config_json or {})
                 try:
                     crawl = tree.run_scope(
                         scope,

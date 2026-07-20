@@ -680,3 +680,224 @@ def test_run_bootstrap_preserves_recorded_target_failure_and_attempts_all_cleanu
     assert results[0].status == "failed"
     assert results[0].notes == "ValueError: target acquisition failed"
     assert attempted == ["tree", "gateway", "processor", "storage"]
+
+
+def _legacy_target(site_key, fetch_mode, fetch_config_json):
+    return SimpleNamespace(
+        catalog="scope",
+        site_key=site_key,
+        display_name=site_key.title(),
+        seed_url=f"https://{site_key}.example/",
+        fetch_mode=fetch_mode,
+        fetch_config_json=fetch_config_json,
+        allowed_page_prefixes=["/"],
+        allowed_file_prefixes=["/"],
+        tree_max_depth=None,
+        tree_max_pages=None,
+        tree_max_files=None,
+        notes="",
+    )
+
+
+def _completed_tree_crawl(scope, run_id):
+    return SimpleNamespace(
+        scope=SimpleNamespace(id=scope.id),
+        run=SimpleNamespace(id=run_id, status="completed"),
+        pages=[],
+        files=[],
+        new_pages=[],
+        changed_pages=[],
+        missing_pages=[],
+        new_files=[],
+        changed_files=[],
+        missing_files=[],
+        page_failures=[],
+        file_failures=[],
+        skipped_external_pages=0,
+        skipped_external_files=0,
+        off_prefix_same_origin_files=0,
+    )
+
+
+def test_legacy_bootstrap_binds_target_gateway_and_pacing_before_mutation(monkeypatch):
+    targets = [
+        _legacy_target("alpha", "http", {"min_delay_seconds": 0.1, "headers": {"X-A": "1"}}),
+        _legacy_target("beta", "browser", {"min_delay_seconds": 0.7, "wait_until": "networkidle"}),
+    ]
+    events = []
+    crawler = SimpleNamespace(close=lambda: events.append(("crawler_close",)))
+
+    class FakeStorage:
+        def __init__(self, *args):
+            pass
+
+        def close(self):
+            events.append(("storage_close",))
+
+    class FakeTree:
+        def __init__(self, **kwargs):
+            self.crawler = crawler
+            self.acquisition_gateway = kwargs["acquisition_gateway"]
+            self.document_processor = kwargs["document_processor"]
+            self.pacing_config = {}
+
+        def __enter__(self):
+            return self
+
+        def bootstrap_scope(self, scope, **kwargs):
+            events.append(("bootstrap", scope.site_id, self.acquisition_gateway, dict(self.pacing_config)))
+            return _completed_tree_crawl(scope, scope.site_id + 10)
+
+        def close(self):
+            crawler.close()
+
+    def assert_bound(stage, target):
+        tree = active_tree[0]
+        gateway = tree.acquisition_gateway
+        events.append((stage, target.site_key, gateway, dict(tree.pacing_config)))
+        assert isinstance(gateway, tree_bootstrap_workflow.LegacyCrawlerGateway)
+        assert gateway.crawler is crawler
+        assert gateway.fetch_mode == target.fetch_mode
+        assert gateway.fetch_config_json == target.fetch_config_json
+        assert tree.pacing_config == target.fetch_config_json
+
+    active_tree = []
+
+    def make_tree(**kwargs):
+        tree = FakeTree(**kwargs)
+        active_tree.append(tree)
+        return tree
+
+    def ensure_site(storage, target):
+        assert_bound("site", target)
+        return SimpleNamespace(id=1 if target.site_key == "alpha" else 2)
+
+    def ensure_scope(storage, *, site, target, **kwargs):
+        assert_bound("scope", target)
+        return SimpleNamespace(id=site.id, site_id=site.id, is_initialized=False)
+
+    monkeypatch.setattr(tree_bootstrap_workflow, "Storage", FakeStorage)
+    monkeypatch.setattr(tree_bootstrap_workflow, "TreeCrawler", make_tree)
+    monkeypatch.setattr(tree_bootstrap_workflow, "ensure_tree_site", ensure_site)
+    monkeypatch.setattr(tree_bootstrap_workflow, "ensure_tree_scope", ensure_scope)
+
+    results = tree_bootstrap_workflow.run_bootstrap(
+        catalog="scope", max_depth=1, max_pages=1, max_files=1, targets=targets,
+    )
+
+    gateways = [event[2] for event in events if event[0] == "bootstrap"]
+    assert len(results) == 2
+    assert gateways[0] is not gateways[1]
+    assert [event[0] for event in events] == [
+        "site", "scope", "bootstrap", "site", "scope", "bootstrap", "crawler_close", "storage_close",
+    ]
+
+
+def test_legacy_incremental_binds_target_gateway_and_pacing_before_each_run(monkeypatch):
+    targets = [
+        _legacy_target("alpha", "http", {"min_delay_seconds": 0.2}),
+        _legacy_target("beta", "browser", {"min_delay_seconds": 0.8, "wait_until": "load"}),
+    ]
+    calls = []
+    crawler = SimpleNamespace()
+
+    class FakeStorage:
+        def __init__(self, *args):
+            pass
+
+        def close(self):
+            calls.append(("storage_close",))
+
+    class FakeTree:
+        def __init__(self, **kwargs):
+            self.crawler = crawler
+            self.acquisition_gateway = None
+            self.pacing_config = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def run_scope(self, scope, **kwargs):
+            gateway = self.acquisition_gateway
+            calls.append(("run", scope.site_id, gateway, dict(self.pacing_config)))
+            assert isinstance(gateway, tree_run_workflow.LegacyCrawlerGateway)
+            assert gateway.crawler is crawler
+            return _completed_tree_crawl(scope, scope.site_id + 20)
+
+    scopes = {
+        target.site_key: CrawlScope(
+            id=index, site_id=index, seed_url=target.seed_url,
+            allowed_origin=f"https://{target.site_key}.example",
+            allowed_page_prefixes=["/"], allowed_file_prefixes=["/"],
+            max_depth=1, max_pages=1, max_files=1, is_initialized=True,
+        )
+        for index, target in enumerate(targets, start=1)
+    }
+    monkeypatch.setattr(tree_run_workflow, "load_tree_targets", lambda catalog: targets)
+    monkeypatch.setattr(tree_run_workflow, "filter_tree_targets", lambda loaded, keys: loaded)
+    monkeypatch.setattr(tree_run_workflow, "Storage", FakeStorage)
+    monkeypatch.setattr(tree_run_workflow, "TreeCrawler", FakeTree)
+    monkeypatch.setattr(
+        tree_run_workflow, "find_scope",
+        lambda storage, target: (SimpleNamespace(id=scopes[target.site_key].site_id), scopes[target.site_key]),
+    )
+
+    results = tree_run_workflow.run_incremental(
+        catalog="scope", max_depth=1, max_pages=1, max_files=1,
+    )
+
+    run_calls = [call for call in calls if call[0] == "run"]
+    assert len(results) == 2
+    assert run_calls[0][2] is not run_calls[1][2]
+    for call, target in zip(run_calls, targets):
+        assert call[2].fetch_mode == target.fetch_mode
+        assert call[2].fetch_config_json == target.fetch_config_json
+        assert call[3] == target.fetch_config_json
+
+
+def test_governed_bootstrap_keeps_supplied_gateway_and_ignores_legacy_pacing(monkeypatch):
+    targets = [
+        _legacy_target("alpha", "browser", {"min_delay_seconds": 9}),
+        _legacy_target("beta", "http", {"min_delay_seconds": 17}),
+    ]
+    governed_gateway = SimpleNamespace(close=lambda: None)
+    observed = []
+
+    class FakeTree:
+        def __init__(self, **kwargs):
+            self.acquisition_gateway = kwargs["acquisition_gateway"]
+            self.document_processor = kwargs["document_processor"]
+            self.pacing_config = {"governed": True}
+
+        def __enter__(self):
+            return self
+
+        def close(self):
+            pass
+
+        def bootstrap_scope(self, scope, **kwargs):
+            observed.append((self.acquisition_gateway, dict(self.pacing_config)))
+            return _completed_tree_crawl(scope, scope.site_id + 30)
+
+    monkeypatch.setattr(tree_bootstrap_workflow, "Storage", lambda *args: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(tree_bootstrap_workflow, "TreeCrawler", FakeTree)
+    monkeypatch.setattr(tree_bootstrap_workflow, "ensure_tree_site", lambda storage, target: SimpleNamespace(id=1))
+    monkeypatch.setattr(
+        tree_bootstrap_workflow, "ensure_tree_scope",
+        lambda storage, *, target, **kwargs: SimpleNamespace(
+            id=1, site_id=1, is_initialized=False,
+        ),
+    )
+
+    tree_bootstrap_workflow.run_bootstrap(
+        catalog="scope", max_depth=1, max_pages=1, max_files=1,
+        targets=targets, acquisition_gateway=governed_gateway,
+    )
+
+    assert observed == [
+        (governed_gateway, {"governed": True}),
+        (governed_gateway, {"governed": True}),
+    ]

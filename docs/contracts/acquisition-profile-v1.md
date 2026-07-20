@@ -12,9 +12,9 @@ discover -> classify -> select -> task -> bootstrap -> run -> report -> manifest
 
 That sequence is intentionally stable. Site-to-site variation belongs in the acquisition layer, where an operator or future probe can say whether a site should start with plain HTTP, rendered browser capture, sitemap/feed ingestion, an authorized stealth browser, or an explicit batch script.
 
-PR1 defines the profile and capture-attempt contracts only. It does not integrate these contracts into crawler execution, staged workflow commands, reports, manifests, or CloakBrowser dependencies.
+Historically, PR1 defined the profile and capture-attempt contracts only; at that point it did not integrate them into crawler execution, staged workflow commands, reports, manifests, or CloakBrowser dependencies.
 
-PR2 adds standalone capture evaluation helpers and built-in adapter wrappers for the existing HTTP and rendered-browser crawlers. These helpers evaluate `FetchResult` objects into `capture-attempt.v1` records, but they still do not alter crawler behavior or wire acquisition into CLI/API/staged workflow execution.
+Historically, PR2 added standalone capture evaluation helpers and built-in adapter wrappers for the existing HTTP and rendered-browser crawlers without changing formal staged execution. The current formal `bootstrap-scope` and `run-scope` runtime requires this profile as governed compilation input and dispatches only the compiled Site Skill step chain.
 
 ## File Format
 
@@ -124,7 +124,7 @@ Safety rule:
 - `evaluate_fetch_result(adapter, url, result, quality_gates)` converts a crawler `FetchResult` into a `CaptureAttempt`.
 - `evaluate_capture_attempt(attempt, quality_gates)` re-evaluates count/status/metadata gates while preserving existing blocked or error evidence that cannot be reconstructed from a stored attempt alone.
 - `run_capture_attempt(url, adapter, profile, prior_attempts=None)` executes one adapter, catches adapter exceptions as `status: error`, and records the next adapter recommended by `recommend_next_adapter`.
-- `build_builtin_adapters()` exposes `web_http`, `browser_rendered`, and optional safety-gated `cloakbrowser` probe adapters. `cloakbrowser` remains limited to explicit authorized acquisition probing and is not used by `bootstrap-scope` or `run-scope`.
+- `build_builtin_adapters()` exposes `web_http`, `browser_rendered`, and optional safety-gated `cloakbrowser` probe adapters. Formal `bootstrap-scope` and `run-scope` require this profile as governed compilation input; only adapters in the compiled Site Skill step chain can execute.
 
 Evaluation passes only when required HTTP status is a 2xx response, extracted word count meets `min_words`, metadata link counts meet `min_links`, metadata document-link counts meet `min_document_links`, and no blocked marker is found case-insensitively in captured text or metadata.
 
@@ -139,11 +139,10 @@ Current limitation: `FetchResult` does not expose extracted link objects directl
 - explicitly disabled adapters in `profile.adapters` are skipped
 - an empty string when every adapter in that sequence has already been attempted
 
-## Future Extensions
+## Extensions
 
-Later PRs may:
+Later PRs may still:
 
-- wire profiles into bootstrap/run commands
 - persist capture attempts in reports or manifests
 - add more acquisition tool runtimes behind explicit contracts and safety rules
 

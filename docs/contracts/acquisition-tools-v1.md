@@ -55,7 +55,7 @@ Agents should use this catalog as a decision and probe-planning contract:
 6. Run `probe-acquisition` or `POST /api/v1/acquisition/probe`.
 7. Store the probe result as acquisition evidence for operator review, reports, and manifests.
 
-Picker/probe selection is not execution routing for the staged crawler. `bootstrap-scope` and `run-scope` remain the fixed production crawl path in this build.
+Picker/probe selection alone is not execution routing for the staged crawler. Formal `bootstrap-scope` and `run-scope` execute only a validated governed plan compiled from the scope's complete Site Skill binding and the explicitly supplied acquisition profile.
 
 ## Tool Entry Fields
 

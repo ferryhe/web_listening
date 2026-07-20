@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from web_listening.blocks.acquisition_gateway import LegacyCrawlerGateway
 from web_listening.blocks.storage import Storage
 from web_listening.blocks.tree_crawler import TreeCrawler, build_scope_from_site
 from web_listening.models import Site
@@ -66,6 +67,12 @@ def run_validation(
             with TreeCrawler(storage=storage) as tree:
                 for entry in entries:
                     seed_url = entry.get("tree_seed_url") or entry.get("monitor_url") or entry["homepage_url"]
+                    tree.acquisition_gateway = LegacyCrawlerGateway(
+                        tree.crawler,
+                        fetch_mode=entry["fetch_mode"],
+                        fetch_config_json=entry["fetch_config_json"],
+                    )
+                    tree.pacing_config = dict(entry["fetch_config_json"] or {})
                     site = storage.add_site(
                         Site(
                             url=seed_url,

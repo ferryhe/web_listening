@@ -18,7 +18,6 @@ from web_listening.blocks.crawler import Crawler, resolve_request_headers
 from web_listening.blocks.acquisition_gateway import (
     AcquisitionGateway,
     AcquisitionOutcome,
-    LegacyCrawlerGateway,
     legacy_document_runtime_attempt,
 )
 from web_listening.blocks.diff import compute_hash, extract_links, find_document_links, select_compare_artifact
@@ -161,11 +160,13 @@ class TreeCrawler:
         crawler: Crawler | None = None,
         acquisition_gateway: AcquisitionGateway | None = None,
         document_processor: DocumentProcessor | None = None,
+        pacing_config: dict | None = None,
     ):
         self.storage = storage
         self.crawler = crawler if crawler is not None else (None if acquisition_gateway is not None else Crawler())
         self.acquisition_gateway = acquisition_gateway
         self.document_processor = document_processor
+        self.pacing_config = dict(pacing_config or {})
         self._owns_crawler = crawler is None and self.crawler is not None
         self._closed = False
 
@@ -199,6 +200,13 @@ class TreeCrawler:
             if exc_type is None:
                 raise
 
+    @staticmethod
+    def _accepted_fetch_mode(outcome: AcquisitionOutcome, legacy_fetch_mode: str) -> str:
+        attempt = outcome.accepted_attempt
+        if attempt is not None and attempt.authority_mode == "governed":
+            return attempt.executor_id
+        return legacy_fetch_mode
+
     def bootstrap_scope(
         self,
         scope: CrawlScope,
@@ -206,6 +214,8 @@ class TreeCrawler:
         institution: str = "",
         download_files: bool = True,
     ) -> TreeCrawlResult:
+        if self.acquisition_gateway is None:
+            raise ValueError("acquisition_gateway is required for formal tree bootstrap")
         stored_scope = self.storage.add_crawl_scope(scope) if scope.id is None else self.storage.update_crawl_scope(scope)
         run = self.storage.add_crawl_run(
             CrawlRun(
@@ -216,7 +226,7 @@ class TreeCrawler:
             )
         )
         result = TreeCrawlResult(scope=stored_scope, run=run, pages=[], files=[])
-        pacer = PolitePacer.from_config(stored_scope.fetch_config_json)
+        pacer = PolitePacer.from_config(self.pacing_config)
         queued_pages: deque[tuple[str, int, Optional[int]]] = deque([(stored_scope.seed_url, 0, None)])
         seed_canonical_url = canonicalize_tracked_url(stored_scope.seed_url)
         queued_page_urls = {seed_canonical_url}
@@ -231,11 +241,8 @@ class TreeCrawler:
                 queued_url, depth, from_page_id = queued_pages.popleft()
                 request_url = sanitize_request_url(queued_url) or queued_url
                 requested_pages += 1
-                gateway = self.acquisition_gateway or LegacyCrawlerGateway(
-                    self.crawler, fetch_mode=stored_scope.fetch_mode,
-                    fetch_config_json=stored_scope.fetch_config_json)
                 pacer.wait_for_request("page")
-                outcome = gateway.acquire(request_url, run_id=str(run.id), scope_id=str(stored_scope.id))
+                outcome = self.acquisition_gateway.acquire(request_url, run_id=str(run.id), scope_id=str(stored_scope.id))
                 outcome = self._persist_acquisition_outcome(
                     outcome, requested_url=request_url, run_id=run.id, scope_id=stored_scope.id,
                     content_kind="page")
@@ -298,7 +305,7 @@ class TreeCrawler:
                                 "hash_normalization": "whitespace-normalized-v1",
                                 "tree_depth": depth,
                             },
-                            fetch_mode=stored_scope.fetch_mode,
+                            fetch_mode=self._accepted_fetch_mode(outcome, stored_scope.fetch_mode),
                             final_url=page.final_url,
                             status_code=page.status_code,
                             links=page_links,
@@ -447,6 +454,8 @@ class TreeCrawler:
         institution: str = "",
         download_files: bool = True,
     ) -> TreeCrawlResult:
+        if self.acquisition_gateway is None:
+            raise ValueError("acquisition_gateway is required for formal tree run")
         if scope.id is None:
             raise ValueError("scope.id must not be None for incremental tree runs")
 
@@ -465,7 +474,7 @@ class TreeCrawler:
             )
         )
         result = TreeCrawlResult(scope=stored_scope, run=run, pages=[], files=[])
-        pacer = PolitePacer.from_config(stored_scope.fetch_config_json)
+        pacer = PolitePacer.from_config(self.pacing_config)
         queued_pages: deque[tuple[str, int, Optional[int]]] = deque([(stored_scope.seed_url, 0, None)])
         seed_canonical_url = canonicalize_tracked_url(stored_scope.seed_url)
         queued_page_urls = {seed_canonical_url}
@@ -484,11 +493,8 @@ class TreeCrawler:
                 queued_url, depth, from_page_id = queued_pages.popleft()
                 request_url = sanitize_request_url(queued_url) or queued_url
                 requested_pages += 1
-                gateway = self.acquisition_gateway or LegacyCrawlerGateway(
-                    self.crawler, fetch_mode=stored_scope.fetch_mode,
-                    fetch_config_json=stored_scope.fetch_config_json)
                 pacer.wait_for_request("page")
-                outcome = gateway.acquire(request_url, run_id=str(run.id), scope_id=str(stored_scope.id))
+                outcome = self.acquisition_gateway.acquire(request_url, run_id=str(run.id), scope_id=str(stored_scope.id))
                 outcome = self._persist_acquisition_outcome(
                     outcome, requested_url=request_url, run_id=run.id, scope_id=stored_scope.id,
                     content_kind="page")
@@ -569,7 +575,7 @@ class TreeCrawler:
                                 "hash_normalization": "whitespace-normalized-v1",
                                 "tree_depth": depth,
                             },
-                            fetch_mode=stored_scope.fetch_mode,
+                            fetch_mode=self._accepted_fetch_mode(outcome, stored_scope.fetch_mode),
                             final_url=page.final_url,
                             status_code=page.status_code,
                             links=page_links,

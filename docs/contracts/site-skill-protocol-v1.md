@@ -9,8 +9,11 @@ This document freezes four additive JSON contracts:
 - `capture-result.v1`
 - `acquisition-attempt.v2`
 
-They define portable control and evidence records only. They do not change
-`bootstrap-scope`, `run-scope`, storage, CLI, API, MCP, or database behavior.
+The initial protocol freeze defined portable control and evidence records only
+and did not itself change runtime behavior. The current formal `bootstrap-scope`
+and `run-scope` implementation uses governed Site Skill authority as described
+under "Legacy mapping and retirement" below; API, MCP, and database contracts
+remain outside this protocol document.
 `acquisition-profile.v1` and `capture-attempt.v1` remain unchanged compatibility
 contracts.
 
@@ -78,10 +81,12 @@ The accepted executor IDs are `web_http`, `browser_rendered`, `browseract`,
 `sitemap`, `rss`, `cloakbrowser`, and `batch_python`.
 
 `browser_rendered` remains the ID of the existing Playwright compatibility
-adapter. `browseract` is a separate accepted protocol ID. This freeze does not
-import, install, register, or execute a BrowserAct runtime, and does not alias it
-to Playwright. Acceptance by a schema is not evidence that a runtime is
-available.
+adapter. `browseract` is a separate accepted protocol ID and is not an alias for
+Playwright. BrowserAct is optional and is not bundled or guaranteed to be
+available. Formal execution validates runtime availability and may construct
+and dispatch BrowserAct only when the compiled governed Site Skill step and all
+safety and runtime requirements authorize it. Acceptance by a schema alone is
+not evidence that a runtime is available.
 
 The governed direct entrypoints are `Model.model_validate(...)` for Python input
 and `Model.model_validate_json(...)` for complete wire JSON. Both reject
@@ -176,7 +181,13 @@ it does not change or infer crawler quality-gate behavior.
 
 ## Legacy mapping and retirement
 
-The existing staged fields keep their current meaning:
+Formal packaged `bootstrap-scope` and `run-scope` require the acquisition profile
+and all six governed binding fields. Exact Site Skill resolution, governed plan
+compilation and validation, runtime availability checks, and gateway construction
+finish before Storage is opened. A governed fingerprint excludes `fetch_mode` and
+`fetch_config_json`; those fields no longer select formal execution.
+
+The existing fields keep their compatibility and rollback meaning:
 
 | Legacy value | Contract executor | Current behavior |
 |---|---|---|

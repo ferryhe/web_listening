@@ -72,13 +72,13 @@ def test_scope_fingerprint_excludes_all_acquisition_authority_but_tracks_scope_a
 
 
 @pytest.mark.parametrize(("field", "value"), [("fetch_mode", "browser"), ("fetch_config_json", {"render": True})])
-def test_fetch_authority_changes_acquisition_but_not_scope_fingerprint(field, value):
+def test_legacy_fetch_fields_do_not_change_governed_fingerprints(field, value):
     scope, profile, skill, registry = inputs()
     changed = replace(scope, **{field: value})
     original = compile_acquisition_execution_plan(scope, profile, skill, registry)
     updated = compile_acquisition_execution_plan(changed, profile, skill, registry)
     assert updated.scope_fingerprint == original.scope_fingerprint
-    assert updated.acquisition_fingerprint != original.acquisition_fingerprint
+    assert updated.acquisition_fingerprint == original.acquisition_fingerprint
 
 
 def test_plan_nested_authority_is_deeply_immutable_and_serialization_stays_consistent():

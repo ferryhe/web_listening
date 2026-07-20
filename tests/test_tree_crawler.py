@@ -10,9 +10,10 @@ import httpx
 import pytest
 
 from web_listening.blocks.crawler import Crawler, FetchResult, HttpCrawler
-from web_listening.blocks.acquisition_gateway import AcquisitionOutcome, GovernedAcquisitionGateway
+from web_listening.blocks.acquisition_gateway import AcquisitionOutcome, GovernedAcquisitionGateway, LegacyCrawlerGateway
 from web_listening.blocks.staged_workflow import _compile_acquisition_gateway
 from web_listening.blocks.document import DocumentProcessor
+from web_listening.blocks.polite import PolitePacer
 from web_listening.blocks.storage import Storage
 from web_listening.contracts import CaptureContent, CaptureResult
 from web_listening.executors.http_wrapper import HttpAcquisitionAdapter
@@ -296,7 +297,7 @@ def test_tree_crawler_bootstrap_tracks_pages_files_and_edges(tmp_path):
     with patch("web_listening.blocks.document.settings") as mock_doc_settings:
         mock_doc_settings.user_agent = "test-agent"
         mock_doc_settings.downloads_dir = tmp_path / "downloads"
-        with TreeCrawler(storage=storage, crawler=crawler, document_processor=processor) as tree:
+        with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={}), document_processor=processor) as tree:
             result = tree.bootstrap_scope(scope, institution="Example", download_files=True)
 
     assert result.scope.is_initialized is True
@@ -345,7 +346,7 @@ def test_tree_crawler_uses_out_of_scope_seed_as_entrypoint_only(tmp_path):
         fetch_mode="http",
     )
 
-    with TreeCrawler(storage=storage, crawler=crawler) as tree:
+    with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})) as tree:
         result = tree.bootstrap_scope(scope, institution="Example", download_files=False)
 
     tracked_pages = storage.list_tracked_pages(result.scope.id)
@@ -427,7 +428,7 @@ def test_tree_crawler_preserves_seed_trailing_slash(tmp_path):
     site = storage.add_site(Site(url="https://example.com/section/", name="Example Slash"))
     scope = build_scope_from_site(site, allowed_page_prefixes=["/section"], allowed_file_prefixes=["/"], max_depth=2)
 
-    with TreeCrawler(storage=storage, crawler=crawler) as tree:
+    with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})) as tree:
         result = tree.bootstrap_scope(scope, institution="Example Slash", download_files=False)
 
     assert result.run.status == "completed"
@@ -459,7 +460,7 @@ def test_tree_crawler_incremental_reports_new_changed_and_missing_items(tmp_path
     with patch("web_listening.blocks.document.settings") as mock_doc_settings:
         mock_doc_settings.user_agent = "test-agent"
         mock_doc_settings.downloads_dir = tmp_path / "downloads"
-        with TreeCrawler(storage=storage, crawler=crawler, document_processor=processor) as tree:
+        with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={}), document_processor=processor) as tree:
             bootstrap = tree.bootstrap_scope(scope, institution="Example Incremental", download_files=True)
             state["phase"] = "incremental"
             incremental = tree.run_scope(bootstrap.scope, institution="Example Incremental", download_files=True)
@@ -518,7 +519,7 @@ def test_tree_crawler_bootstrap_tolerates_file_download_failures(tmp_path):
     with patch("web_listening.blocks.document.settings") as mock_doc_settings:
         mock_doc_settings.user_agent = "test-agent"
         mock_doc_settings.downloads_dir = tmp_path / "downloads"
-        with TreeCrawler(storage=storage, crawler=crawler, document_processor=processor) as tree:
+        with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={}), document_processor=processor) as tree:
             result = tree.bootstrap_scope(scope, institution="File Failure", download_files=True)
             incremental = tree.run_scope(result.scope, institution="File Failure", download_files=True)
 
@@ -534,7 +535,7 @@ def test_tree_crawler_bootstrap_tolerates_file_download_failures(tmp_path):
         assert len(document_attempts) == 1
         assert document_attempts[0].authority_mode == "legacy_runtime"
         assert document_attempts[0].accepted is False
-        assert document_attempts[0].classification == "not_found"
+        assert document_attempts[0].classification == "executor_error"
         assert document_attempts[0].final_url is None
         assert json.loads(document_attempts[0].canonical_json)["result"]["final_url"] is None
         assert document_attempts[0].executor_id != "legacy_compatibility_import"
@@ -589,7 +590,7 @@ def test_tree_crawler_skips_pages_that_redirect_outside_scope(tmp_path):
         fetch_mode="http",
     )
 
-    with TreeCrawler(storage=storage, crawler=crawler) as tree:
+    with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})) as tree:
         result = tree.bootstrap_scope(scope, institution="Redirect Example", download_files=False)
 
     tracked_pages = storage.list_tracked_pages(result.scope.id)
@@ -640,6 +641,93 @@ def test_governed_tree_budget_bounds_requested_pages_and_readmits_results(tmp_pa
     assert result.skipped_external_pages == 1
     assert result.skipped_external_files == 1
     assert len(storage.list_tracked_pages(result.scope.id)) == 1
+    storage.close()
+
+
+def test_governed_snapshot_fetch_mode_uses_accepted_executor_for_bootstrap_and_incremental(tmp_path):
+    storage = Storage(tmp_path / "governed-snapshot-mode.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Governed Mode"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"], max_depth=0, max_pages=1, max_files=0,
+        fetch_mode="http",
+    )
+
+    class Gateway:
+        attempt_ids = []
+
+        def acquire(self, url, *, run_id, scope_id, content_kind="page"):
+            page = FetchResult("ok", "ok", "ok", "ok", "ok", {}, url, 200)
+            legacy = LegacyCrawlerGateway(
+                SimpleNamespace(fetch_page=lambda *args, **kwargs: page),
+                fetch_mode="http", fetch_config_json={},
+            ).acquire(url, run_id=run_id, scope_id=scope_id, content_kind=content_kind)
+            canonical = json.loads(legacy.attempt_records[0].canonical_json)
+            canonical["request"]["executor_id"] = "browser_rendered"
+            canonical["request"]["metadata"].update({
+                "authority_mode": "governed", "acquisition_fingerprint": None,
+                "scope_fingerprint": None, "entrypoint": None, "script_sha256": None,
+                "required_capabilities": [], "executor_capabilities": [],
+                "requires_authorized_access": False, "verification_rules": [],
+                "resource_limits": {}, "quality_gates": {}, "scope_budgets": {},
+            })
+            canonical["result"]["executor_id"] = "browser_rendered"
+            attempt = legacy.attempt_records[0].model_copy(update={
+                "executor_id": "browser_rendered",
+                "authority_mode": "governed",
+                "canonical_json": json.dumps(canonical),
+            })
+            self.attempt_ids.append(attempt.attempt_id)
+            return AcquisitionOutcome(
+                legacy.request, legacy.result, page, "accepted", ("accepted",), True, (attempt,)
+            )
+
+        def close(self):
+            return None
+
+    tree = TreeCrawler(storage=storage, acquisition_gateway=Gateway())
+    bootstrap = tree.bootstrap_scope(scope, download_files=False)
+    incremental = tree.run_scope(bootstrap.scope, download_files=False)
+
+    bootstrap_snapshot = storage.list_page_snapshots_for_run(bootstrap.scope.id, bootstrap.run.id)[0]
+    incremental_snapshot = storage.list_page_snapshots_for_run(incremental.scope.id, incremental.run.id)[0]
+    assert (bootstrap_snapshot.fetch_mode, bootstrap_snapshot.attempt_id) == (
+        "browser_rendered", tree.acquisition_gateway.attempt_ids[0]
+    )
+    assert (incremental_snapshot.fetch_mode, incremental_snapshot.attempt_id) == (
+        "browser_rendered", tree.acquisition_gateway.attempt_ids[1]
+    )
+    for snapshot in (bootstrap_snapshot, incremental_snapshot):
+        attempt = storage.get_acquisition_attempt(snapshot.attempt_id)
+        assert attempt.authority_mode == "governed"
+        assert attempt.executor_id == "browser_rendered"
+    tree.close()
+    storage.close()
+
+
+def test_legacy_snapshot_fetch_mode_remains_scope_value(tmp_path):
+    storage = Storage(tmp_path / "legacy-snapshot-mode.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Legacy Mode"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"], max_depth=0, max_pages=1, max_files=0,
+        fetch_mode="browser",
+    )
+    page = FetchResult("ok", "ok", "ok", "ok", "ok", {}, scope.seed_url, 200)
+    crawler = SimpleNamespace(fetch_page=lambda *args, **kwargs: page)
+    gateway = LegacyCrawlerGateway(crawler, fetch_mode="browser", fetch_config_json={})
+
+    tree = TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=gateway)
+    result = tree.bootstrap_scope(scope, download_files=False)
+    snapshot = storage.list_page_snapshots_for_run(result.scope.id, result.run.id)[0]
+
+    assert snapshot.fetch_mode == "browser"
+    assert snapshot.attempt_id == gateway.acquire(
+        scope.seed_url, run_id=str(result.run.id), scope_id=str(result.scope.id)
+    ).accepted_attempt.attempt_id
+    tree.close()
     storage.close()
 
 
@@ -995,7 +1083,11 @@ def test_real_governed_http_document_preserves_non_utf8_response_bytes(tmp_path,
     monkeypatch.setattr("web_listening.blocks.acquisition_execution_plan.compile_acquisition_execution_plan",
                         lambda *a: compiled)
     monkeypatch.setattr("web_listening.executors.http_wrapper.HttpAcquisitionAdapter", lambda: adapter)
-    plan = SimpleNamespace(site_key="demo", based_on={"acquisition_profile_id": "profile"})
+    plan = SimpleNamespace(site_key="demo", based_on={
+        "acquisition_profile_id": "profile", "site_skill_version": "1.0.0",
+        "site_skill_package_sha256": "a" * 64, "site_skill_recipe_id": "recipe",
+        "site_skill_script_sha256": "a" * 64, "executor_version": "1.0.0",
+    })
     gateway = _compile_acquisition_gateway(plan, acquisition_profile_path="profile.yaml")
 
     class Processor(DocumentProcessor):
@@ -1032,7 +1124,7 @@ def test_narrower_incremental_depth_does_not_infer_deeper_pages_missing(tmp_path
         fetch_mode="http",
     )
 
-    with TreeCrawler(storage=storage, crawler=crawler) as tree:
+    with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})) as tree:
         bootstrap = tree.bootstrap_scope(scope, download_files=False)
         shallower = CrawlScope(**{**bootstrap.scope.model_dump(), "max_depth": 1})
         incremental = tree.run_scope(shallower, download_files=False)
@@ -1055,6 +1147,119 @@ def test_governed_blob_publication_cleans_temp_after_publish_failure(tmp_path, m
 
     assert not destination.exists()
     assert list(destination.parent.iterdir()) == []
+
+
+@pytest.mark.parametrize("operation", ["bootstrap_scope", "run_scope"])
+def test_tree_crawler_rejects_missing_gateway_before_scope_or_run_mutation(operation):
+    class MutationGuardStorage:
+        def add_crawl_scope(self, scope):
+            raise AssertionError("scope added")
+
+        def update_crawl_scope(self, scope):
+            raise AssertionError("scope updated")
+
+        def add_crawl_run(self, run):
+            raise AssertionError("run added")
+
+    scope = CrawlScope(
+        id=1 if operation == "run_scope" else None,
+        site_id=1,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"],
+        max_depth=1,
+        max_pages=1,
+        max_files=1,
+        is_initialized=operation == "run_scope",
+    )
+    tree = TreeCrawler(storage=MutationGuardStorage())
+
+    with pytest.raises(ValueError, match="acquisition_gateway is required"):
+        getattr(tree, operation)(scope, download_files=False)
+
+    tree.close()
+
+
+@pytest.mark.parametrize("operation", ["bootstrap_scope", "run_scope"])
+@pytest.mark.parametrize(
+    ("pacing_config", "expected"),
+    [
+        (None, (0, None, 0)),
+        (
+            {
+                "request_delay_ms": 17,
+                "file_request_delay_ms": 23,
+                "request_jitter_ms": 5,
+            },
+            (17, 23, 5),
+        ),
+    ],
+)
+def test_formal_tree_pacing_ignores_legacy_scope_config(
+    tmp_path, monkeypatch, operation, pacing_config, expected
+):
+    observed = []
+
+    def record_wait(self, request_kind="page"):
+        observed.append(
+            (
+                request_kind,
+                self.request_delay_ms,
+                self.file_request_delay_ms,
+                self.request_jitter_ms,
+            )
+        )
+
+    monkeypatch.setattr(PolitePacer, "wait_for_request", record_wait)
+    storage = Storage(tmp_path / f"{operation}-pacing.db")
+    client = httpx.Client(transport=make_tree_transport(), follow_redirects=True)
+    crawler = Crawler(client=client)
+    site = storage.add_site(Site(url="https://example.com/section", name="Pacing"))
+    scope = CrawlScope(
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"],
+        max_depth=0,
+        max_pages=1,
+        max_files=1,
+        fetch_mode="http",
+        fetch_config_json={
+            "request_delay_ms": 10_000,
+            "file_request_delay_ms": 20_000,
+            "request_jitter_ms": 30_000,
+        },
+    )
+    gateway = LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})
+
+    with TreeCrawler(
+        storage=storage,
+        crawler=crawler,
+        acquisition_gateway=gateway,
+        pacing_config=pacing_config,
+    ) as tree:
+        bootstrap = tree.bootstrap_scope(scope, download_files=False)
+        if operation == "run_scope":
+            observed.clear()
+            changed_legacy_scope = CrawlScope(
+                **{
+                    **bootstrap.scope.model_dump(),
+                    "fetch_config_json": {
+                        "request_delay_ms": 40_000,
+                        "file_request_delay_ms": 50_000,
+                        "request_jitter_ms": 60_000,
+                    },
+                }
+            )
+            tree.run_scope(changed_legacy_scope, download_files=False)
+
+    assert observed
+    assert {(delay, file_delay, jitter) for _, delay, file_delay, jitter in observed} == {
+        expected
+    }
+    storage.close()
 
 
 def test_tree_crawler_close_attempts_every_resource_and_is_idempotent():

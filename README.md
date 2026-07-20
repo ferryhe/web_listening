@@ -1,430 +1,313 @@
 # web_listening
 
-`web_listening` is a staged website monitoring project for human operators and AI agents.
+`web_listening` 1.0 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
 
-The current product direction is:
+The supported 1.0 scope is complete and stable. Future changes follow the semantic-version policy below. The canonical product flow is:
 
 ```text
-discover -> classify -> select -> task -> bootstrap -> run -> report -> manifest
+discover -> classify -> select -> plan-scope -> bootstrap/run -> report/export
 ```
 
-Instead of monitoring a whole site blindly from the homepage, the repo now supports:
+The packaged `web-listening` CLI is the canonical operator and agent interface. The REST API provides site-level, acquisition, job, execution, report, document, and analysis surfaces, but it does **not** provide full REST parity for the discover/classify/select/plan-scope planning flow.
 
-- structure-first section discovery
-- section classification and scope planning
-- bounded tree bootstrap for the selected scope
-- later reruns against the same scope
-- SHA-256 file dedupe with source-oriented tracked paths
-- YAML artifacts for agent handoff plus Markdown reports for human review
+## Product model and authority
 
-Documentation index: [docs/README.md](docs/README.md)
+The system separates three kinds of input:
 
-## Current Status
+- **Monitoring intent and scope**: section inventories, classifications, reviewed selections, monitor tasks, and compiled monitor scopes define what to observe.
+- **Acquisition authority**: an `acquisition-profile.v1` defines quality gates, allowed domains, adapter availability, and safety approvals.
+- **Site-specific authority**: a versioned `site-skill.v1` package defines governed domains, recipes, executor bindings, scripts, capabilities, and verification rules.
 
-What is production-usable now:
+Formal `bootstrap-scope` and `run-scope` execution requires an acquisition profile and the complete six-field Site Skill binding in `monitor_scope.yaml`:
 
-- packaged staged workflow commands:
-  - `web-listening discover`
-  - `web-listening classify`
-  - `web-listening select`
-  - `web-listening plan-scope`
-  - `web-listening bootstrap-scope`
-  - `web-listening run-scope`
-  - `web-listening report-scope`
-  - `web-listening export-manifest`
-  - `web-listening list-jobs`
-  - `web-listening get-job`
-  - `web-listening create-monitor-task`
-  - `web-listening export-tracking-report`
-  - `web-listening list-site-skills`
-  - `web-listening inspect-site-skill`
-  - `web-listening validate-site-skill`
-- staged planning artifacts:
-  - `section_selection.yaml`
-  - `monitor_scope.yaml`
-  - `monitor_task.yaml`
-- scope-driven tree bootstrap and reruns
-- page snapshots, page edges, tracked files, and file observations in SQLite
-- canonical blob storage under `data/downloads/_blobs`
-- source-oriented tracked file views under `data/downloads/_tracked`
-- bootstrap summary, bootstrap quality summary, tracking report, and document manifest export for AI or operator review
+1. `acquisition_profile_id`
+2. `site_skill_version`
+3. `site_skill_package_sha256`
+4. `site_skill_recipe_id`
+5. `site_skill_script_sha256`
+6. `executor_version`
 
-What still remains future-facing:
+The package resolves and validates the exact Site Skill, compiles a non-empty `acquisition-execution-plan.v1`, verifies executor capability and runtime policy, and constructs the gateway **before opening Storage or mutating state**. The compiled plan—not picker metadata, a probe result, `fetch_mode`, or `fetch_config_json`—is formal executor authority. Partial governed bindings fail closed. Legacy fetch fields retain compatibility and lineage meaning only.
 
-- persistent jobs and webhooks for longer-running or external delivery workflows
-- richer incremental change bundles and conversion routing
-- REST/API expansion beyond the current staged workflow and compatibility surfaces
+Packaged Site Skills are discovered and validated statically: registry inspection does not import scripts, execute code, access the network, or resolve DNS. Package versions and SHA-256 digests make the selected authority reproducible.
 
 ## Install
 
-Python 3.12.x is required; Python 3.11 and Python 3.13 are not supported as runtime
-targets. On Windows, confirm the selected interpreter before creating the project
-environment:
+Python 3.12.x is required. Create a fresh environment with an approved 3.12 interpreter.
 
-```powershell
-py -3.12 --version
-py -3.12 -m venv .venv
-.venv\Scripts\activate
-pip install -e ".[dev]"
-```
-
-On Linux or macOS, use the approved Python 3.12 executable:
+Linux/macOS:
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
 ```
 
-Optional browser support:
+Windows PowerShell:
 
 ```powershell
-pip install -e ".[browser]"
-playwright install chromium
+py -3.12 --version
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
 ```
 
-Optional CloakBrowser acquisition probing support:
+Optional installations are additive:
 
-```powershell
-pip install -e ".[cloakbrowser]"
+```bash
+# Playwright rendered-browser support
+python -m pip install -e ".[browser]"
+python -m playwright install chromium
+
+# Explicitly authorized CloakBrowser probing
+python -m pip install -e ".[cloakbrowser]"
+
+# MCP stdio server without the development extra
+python -m pip install -e ".[mcp]"
 ```
 
-`probe-acquisition --adapter cloakbrowser` is only for explicitly authorized access contexts. CloakBrowser is optional, not bundled, and may be unavailable at runtime. Formal `bootstrap-scope` and `run-scope` may construct and dispatch it only when the exact compiled governed Site Skill step, profile safety approvals, and runtime checks authorize it; picker or probe selection alone is not formal authority. CloakBrowser may download a browser binary on first launch.
+There is no `core` extra: `python -m pip install .` installs the base package. BrowserAct is not a project dependency and must not be installed in the project environment; see [Version and Runtime Compatibility](#version-and-runtime-compatibility).
 
 ## Configuration
 
-Copy the template:
+Copy `.env.example` to `.env` (`cp .env.example .env` on POSIX or `Copy-Item .env.example .env` in PowerShell).
 
-```powershell
-Copy-Item .env.example .env
-```
-
-Important notes:
-
-- `WL_OPENAI_API_KEY` is optional
-- tree crawling, downloads, SHA-256 dedupe, and manifest export work without an API key
-- the API key is only needed for OpenAI-backed explanation or summary layers
-
-Main settings:
-
-| Variable | Default | Description |
+| Variable | Default | Purpose |
 |---|---|---|
-| `WL_DATA_DIR` | `./data` | Root data directory |
-| `WL_DB_PATH` | `./data/web_listening.db` | SQLite database path |
-| `WL_DOWNLOADS_DIR` | `./data/downloads` | Download root |
-| `WL_OPENAI_API_KEY` | *(empty)* | Optional OpenAI API key |
-| `WL_OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model for optional explanation |
-| `WL_OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible base URL |
+| `WL_DATA_DIR` | `./data` | Control, report, and evidence root |
+| `WL_DB_PATH` | `./data/web_listening.db` | SQLite database |
+| `WL_DOWNLOADS_DIR` | `./data/downloads` | Download storage root |
+| `WL_OPENAI_API_KEY` | empty | Optional OpenAI-backed explanation/summary only |
+| `WL_OPENAI_MODEL` | `gpt-4o-mini` | Optional explanation model |
+| `WL_OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
 | `WL_USER_AGENT` | `web-listening-bot/1.0` | Default HTTP user agent |
 | `WL_REQUEST_TIMEOUT` | `30` | Request timeout in seconds |
 
-## Recommended Workflow
+Discovery, crawling, downloads, SHA-256 deduplication, reports, and manifests do not require an OpenAI key.
 
-The packaged `web-listening` CLI is the canonical agent and operator entrypoint for the staged tree workflow.
-The older `tools/*.py` scripts still exist, but they should be treated as lower-level compatibility entrypoints and developer-oriented wrappers.
+## Quick start
 
-### First-time initialization rule
+A new catalog must be initialized through review rather than sent directly to production acquisition:
 
-For a new site list or a newly imported catalog, **do not jump straight into bootstrap or recurring runs**.
-The initialization sequence should always be:
+1. Run broad smoke/tree validation to identify reachable, blocked, thin-HTML, or section-seed-sensitive sites.
+2. Run discovery and classification.
+3. Generate draft selections and scopes, using profiles such as `blocked_hold`, `thin_html_watch`, `section_news`, `section_documents`, or `homepage_standard` where useful.
+4. Have an operator review and confirm the monitoring boundary.
+5. Bind the confirmed scope to the exact acquisition profile and Site Skill authority.
+6. Preview the execution plan, then bootstrap the baseline.
+7. Run incremental checks and export reports/manifests.
 
-1. run a broad smoke or tree-validation pass to understand what is reachable and what kind of site shape we are dealing with
-2. classify the sites into suggested scope profiles such as `blocked_hold`, `thin_html_watch`, `section_news`, `section_documents`, or `homepage_standard`
-3. generate draft `section_selection.yaml` and `monitor_scope.yaml` artifacts from those suggestions
-4. send the draft scope artifacts to a human operator for confirmation or adjustment
-5. only after that confirmation, run `bootstrap-scope`, later `run-scope`, and then generate tracking reports
+Draft selection and scope files are review artifacts, not implicit production approval.
 
-Why this matters:
+After discovery, classification, and operator review have produced a selection, scope, and acquisition profile, use their actual paths in the canonical flow below:
 
-- first-pass smoke results are often enough to tell us the site is blocked, thin HTML, or should start from a better section seed
-- the correct monitoring boundary is a product decision, not just a crawler default
-- generating a draft scope first avoids wasting bootstrap runs on the wrong homepage or the wrong subtree
+```bash
+SITE_KEY=example
+RUN_DATE="$(date +%F)"
+SELECTION_PATH="data/plans/section_selection_${SITE_KEY}_${RUN_DATE}.yaml"
+SCOPE_PATH="data/plans/monitor_scope_${SITE_KEY}_${RUN_DATE}.yaml"
+PROFILE_PATH="data/plans/acquisition_profile_${SITE_KEY}_${RUN_DATE}.yaml"
 
-### Suggested initialization flow for large catalogs
-
-For large lists such as the 30+ or 37-site smoke catalog, the expected sequence is:
-
-```text
-smoke / tree validation -> suggested scope profiles -> draft section_selection + monitor_scope -> human review -> bootstrap -> rerun -> tracking report
-```
-
-The draft scope artifacts are therefore **review artifacts**, not final production monitoring state.
-They become production-ready only after explicit confirmation.
-
-### 1. Discover site sections
-
-```powershell
 web-listening discover --catalog dev
-```
-
-This produces a structure-first picture of reachable level-2 sections and sampled level-3 branches.
-
-### 2. Classify sections
-
-```powershell
 web-listening classify --catalog dev
+web-listening select --selection-path "$SELECTION_PATH"
+web-listening plan-scope --selection-path "$SELECTION_PATH" --yaml-path "$SCOPE_PATH"
+web-listening preview-execution-plan \
+  --scope-path "$SCOPE_PATH" \
+  --profile-path "$PROFILE_PATH" \
+  --json
+web-listening bootstrap-scope \
+  --scope-path "$SCOPE_PATH" \
+  --acquisition-profile-path "$PROFILE_PATH" \
+  --download-files --include-summary
+web-listening run-scope \
+  --scope-path "$SCOPE_PATH" \
+  --acquisition-profile-path "$PROFILE_PATH" \
+  --download-files
+web-listening report-scope --scope-path "$SCOPE_PATH"
+web-listening export-manifest --scope-path "$SCOPE_PATH"
 ```
 
-This adds business categories and importance hints such as:
+`SITE_KEY`, `RUN_DATE`, and all three paths above are templates: replace them with the artifacts generated and approved for the target site. Use `build-acquisition-profile --site-key ... --allowed-domain ... --output "$PROFILE_PATH"` to create the draft profile before review and Site Skill binding.
 
-- `research_publications`
-- `news_announcements`
-- `finance_reports`
-- `membership_operations`
+Use `web-listening COMMAND --help` for complete options. The lower-level `tools/*.py` programs remain compatibility/developer wrappers, not a second product authority.
 
-The current default project posture is conservative:
+## Full CLI inventory
 
-- recognize `exam_education`
-- recognize `governance_management`
-- but do not prioritize them unless the monitoring goal explicitly requires them
+### Canonical staged workflow
 
-### 3. Review the section selection artifact
+- `discover` — inventory reachable site sections.
+- `classify` — attach categories and priority hints.
+- `select` — inspect a reviewed section selection.
+- `plan-scope` — compile a selection into a monitor scope.
+- `bootstrap-scope` — create a governed baseline for the selected scope.
+- `run-scope` — perform a later governed change-detection run.
+- `report-scope` — produce a scope tracking report.
+- `export-manifest` — export document and `web-listening-manifest.v1` handoff artifacts.
+- `create-monitor-task` — create the monitoring-intent artifact.
+- `export-tracking-report` — export tracking output from stored evidence.
 
-```powershell
-web-listening select --selection-path data\plans\section_selection_soa_2026-04-07.yaml
-```
+### Governance and acquisition
 
-This surfaces the reviewed selection artifact clearly before scope compilation.
+- `list-site-skills`, `inspect-site-skill`, `validate-site-skill` — statically inspect governed Site Skill packages.
+- `list-acquisition-tools` — return the stable acquisition picker catalog.
+- `build-acquisition-profile` — create a reviewed profile input.
+- `probe-acquisition` — collect one adapter probe as evidence; it does not grant formal run authority.
+- `preview-execution-plan` — compile and inspect formal authority without executing it.
+- `inspect-browseract` — perform the isolated, read-only BrowserAct identity/capability handshake.
 
-### 4. Plan the monitoring scope
+### Jobs and delivery
 
-```powershell
-web-listening plan-scope --selection-path data\plans\section_selection_soa_2026-04-07.yaml
-```
+- `list-jobs`, `get-job` — inspect persisted job state, progress, artifacts, and delivery envelopes.
 
-This compiles the chosen sections into a runnable `monitor_scope.yaml`.
+### Site-level compatibility and service
 
-### 5. Bootstrap the selected scope
+- `add-site`, `list-sites` — manage monitored sites.
+- `check`, `list-changes` — run/check site-level monitoring and inspect changes.
+- `download-docs`, `list-docs` — acquire and inspect documents.
+- `analyze` — generate analysis from stored evidence.
+- `serve` — run the FastAPI service.
 
-```powershell
-web-listening bootstrap-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --acquisition-profile-path data\plans\acquisition_profile_soa.yaml --download-files --include-summary
-```
+## MCP server
 
-Formal `bootstrap-scope` and `run-scope` require a complete six-field governed Site Skill binding in the scope plus an acquisition profile. Authority is compiled into a non-empty governed execution plan and runtime-checked before Storage is opened. The packaged Site Skill registry is the default.
+Install the `mcp` extra and run `web-listening-mcp` for stdio transport. The server exposes exactly ten thin wrappers around shared package services:
 
-`bootstrap-scope` also supports a bootstrap summary output with baseline quality signals, including coverage, budget truncation hints, confidence, and recommended follow-up actions.
+1. `web_listening_list_acquisition_tools`
+2. `web_listening_probe_tool_once`
+3. `web_listening_recommend_next_tool`
+4. `web_listening_acquire_with_fallback`
+5. `web_listening_bootstrap_scope`
+6. `web_listening_run_scope`
+7. `web_listening_report_scope`
+8. `web_listening_export_manifest`
+9. `web_listening_get_job`
+10. `web_listening_read_artifact`
 
-### 6. Export summaries for people and agents
+MCP tool responses use the stable `web-listening-tool-result.v1` envelope where applicable. Acquisition fallback and recommendation surfaces remain bounded by profile quality and safety rules; they do not supersede governed scope authority.
 
-```powershell
-web-listening report-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
-web-listening export-manifest --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml
-web-listening create-monitor-task --task-name soa-research-watch --site-url https://example.com --task-description "Track research updates" --goal "Find new pages and downloadable reports"
-```
+## REST API
 
-### 7. Run later incremental checks
+Run `web-listening serve`; routes are under `/api/v1`. Current API groups are:
 
-```powershell
-web-listening run-scope --scope-path data\plans\monitor_scope_soa_2026-04-07.yaml --acquisition-profile-path data\plans\acquisition_profile_soa.yaml --download-files
-```
+- **Acquisition**: tool catalog, default profile building, one-off probes, and execution-plan preview.
+- **Sites**: create/list/get/deactivate sites, latest snapshots, rescue checks, and queued checks.
+- **Jobs and delivery**: monitor-task creation, job status/payload retrieval, and a job-delivery webhook registration stub.
+- **Scoped execution and artifacts**: bootstrap/run/report jobs plus latest report and manifest retrieval for stored scopes.
+- **Evidence and analysis**: changes, documents, document-content updates/downloads, analysis creation, and analysis listing.
 
-## Data Layout
+The CLI remains canonical for `discover`, `classify`, `select`, and `plan-scope`; do not infer full planning REST parity from the scoped execution routes.
 
-The repo now uses three layers of artifacts:
+## Stable schemas and artifacts
 
-- control plane:
-  - `data/plans/*.yaml`
-- explanation plane:
-  - `data/reports/*.md`
-- evidence plane:
-  - `data/web_listening.db`
-  - `data/downloads/_blobs`
-  - `data/downloads/_tracked`
+Stable machine contracts in the 1.0 surface include:
 
-File storage rules:
+- `site-skill.v1`
+- `capture-request.v1`
+- `capture-result.v1`
+- `acquisition-attempt.v2`
+- `acquisition-profile.v1`
+- `acquisition-tools.v1`
+- `acquisition-probe.v1`
+- `acquisition-execution-plan.v1` and `acquisition-execution-plan-preview.v1`
+- `acquisition-evidence.v1`
+- `web-listening-manifest.v1`
+- `web-listening-tool-result.v1`
+- `artifact_contract.v1` and `job_delivery.v1`
+- `site-skill-list.v1`, `site-skill-inspect.v1`, and `site-skill-validation.v1`
+- `browseract-inspection.v1`
 
-- `_blobs` is the canonical SHA-256 deduped store
-- `_tracked` is a source-oriented browsing view
-- `documents.local_path` points at the canonical blob path
-- `tracked_local_path` points at the source-oriented tracked path
-- `preferred_display_path` prefers `_tracked` and falls back to `_blobs`
+Canonical machine-readable examples remain active under `docs/testing/fixtures/`:
 
-## Key Outputs
+- [site-skill-v1.sample.json](docs/testing/fixtures/site-skill-v1.sample.json)
+- [capture-request-v1.sample.json](docs/testing/fixtures/capture-request-v1.sample.json)
+- [capture-result-v1.sample.json](docs/testing/fixtures/capture-result-v1.sample.json)
+- [acquisition-attempt-v2.sample.json](docs/testing/fixtures/acquisition-attempt-v2.sample.json)
+- [acquisition-profile-v1.sample.yaml](docs/testing/fixtures/acquisition-profile-v1.sample.yaml)
+- [acquisition-tools-v1.sample.json](docs/testing/fixtures/acquisition-tools-v1.sample.json)
+- [acquisition-execution-plan-v1.sample.json](docs/testing/fixtures/acquisition-execution-plan-v1.sample.json)
+- [web-listening-manifest-v1.sample.json](docs/testing/fixtures/web-listening-manifest-v1.sample.json)
 
-Typical artifacts from the staged workflow:
+Typical durable workflow artifacts are:
 
-- `section_inventory_<site>_<date>.yaml`
-- `section_classification_<site>_<date>.yaml`
-- `section_selection_<site>_<date>.yaml`
-- `monitor_scope_<site>_<date>.yaml`
-- `monitor_task_<task>_<date>.yaml`
-- `tree_bootstrap_scope_<site>_<date>.md`
-- `bootstrap_scope_summary_<site>_<date>.md`
-- `tracking_report_<site>_<date>.md`
-- `tracking_report_<site>_<date>.yaml`
-- `web_listening_manifest_<site>_<date>.json`
-- `document_manifest_<site>_<date>.yaml`
-- `document_manifest_<site>_<date>.md`
-- handoff contract docs:
-  - `docs/contracts/site-skill-protocol-v1.md`
-  - `docs/architecture/ADR-001-site-skill-protocol-authority.md`
-  - `docs/testing/fixtures/site-skill-v1.sample.json`
-  - `docs/testing/fixtures/capture-request-v1.sample.json`
-  - `docs/testing/fixtures/capture-result-v1.sample.json`
-  - `docs/testing/fixtures/acquisition-attempt-v2.sample.json`
+- control: `section_inventory_<site>_<date>.yaml`, `section_classification_<site>_<date>.yaml`, `section_selection_<site>_<date>.yaml`, `monitor_scope_<site>_<date>.yaml`, `monitor_task_<task>_<date>.yaml`, `acquisition_profile_<site>_<date>.yaml`
+- evidence: SQLite page snapshots/edges, tracked files and observations, `capture-attempt.v1` compatibility records, and acquisition evidence
+- reports: `tree_bootstrap_scope_<site>_<date>.md`, `bootstrap_scope_summary_<site>_<date>.md`, `tracking_report_<site>_<date>.md` or `.yaml`
+- handoff: `web_listening_manifest_<site>_<date>.json`, `document_manifest_<site>_<date>.yaml` or `.md`
 
-Packaged Site Skills are discovered and validated statically: registry commands
-perform no imports, script execution, network access, or DNS resolution. See
-`docs/contracts/site-skill-package-v1.md` for digest, path, URL, secret-reference,
-and explicit registry-root rules.
-  - `docs/contracts/acquisition-tools-v1.md`
-  - `docs/testing/fixtures/acquisition-tools-v1.sample.json`
-  - `docs/contracts/acquisition-profile-v1.md`
-  - `docs/testing/fixtures/acquisition-profile-v1.sample.yaml`
-  - `docs/contracts/web-listening-manifest-v1.md`
-  - `docs/testing/fixtures/web-listening-manifest-v1.sample.json`
+## Storage, safety, and initialization rules
 
-## MCP Acquisition Fallback
+Data is split into three planes:
 
-Agents can connect to the optional MCP stdio server when they need acquisition fallback behavior through a tool protocol instead of the local CLI/API:
+- control: `data/plans/*.yaml`
+- explanation: `data/reports/*.md` and report YAML
+- evidence: `data/web_listening.db` and `data/downloads/`
 
-```powershell
-pip install -e '.[mcp]'
-web-listening-mcp
-```
+Storage rules:
 
-Hermes config example:
+- `data/downloads/_blobs` is the canonical SHA-256-addressed deduplicated store.
+- `data/downloads/_tracked` is a source-oriented browsing view.
+- `documents.local_path` points to the canonical blob; `tracked_local_path` points to the source view.
+- `preferred_display_path` prefers the tracked view and falls back to the blob.
+- Preserve `scope_id`, `run_id`, source/final URLs, timestamps, executor and Site Skill lineage, and SHA-256 values in agent-facing output.
 
-```yaml
-mcp_servers:
-  web_listening:
-    command: "web-listening-mcp"
-    args: []
-    timeout: 300
-    connect_timeout: 60
-```
+Safety rules:
 
-The server exposes thin wrappers around the shared acquisition core:
+- Keep scopes bounded with explicit/effective `max_depth`, `max_pages`, and `max_files`; never expand a whole site blindly.
+- Profile domains must be a non-empty subset of the governed Site Skill domains.
+- Stealth or authorization-requiring executors need explicit profile approvals and runtime availability checks.
+- CloakBrowser is optional and only for explicitly authorized probing or governed execution; it may download a browser binary on first launch.
+- BrowserAct is disabled by default, excluded from automatic fallback, isolated from the project environment, and limited to its validated read-only contract.
+- Treat acquisition picker/probe results as planning evidence, never as permission to bypass the reviewed scope, profile, Site Skill, or compiled plan.
+- A bootstrap creates the baseline; a later run performs change detection.
 
-- `web_listening_list_acquisition_tools`
-- `web_listening_probe_tool_once`
-- `web_listening_recommend_next_tool`
-- `web_listening_acquire_with_fallback`
+## Version and Runtime Compatibility
 
-Example agent-facing fallback call:
+Compatibility inventory last reviewed on **2026-07-20**.
 
-```json
-{
-  "url": "https://example.com/reports",
-  "site_key": "example",
-  "goal": "find public report/document links",
-  "strategy": "document_discovery",
-  "quality_gates": {
-    "min_words": 120,
-    "min_links": 3,
-    "min_document_links": 1
-  },
-  "safety": {
-    "allowed_domains": ["example.com"],
-    "allow_stealth_browser": false,
-    "require_authorized_access": false
-  },
-  "max_attempts": 4
-}
-```
+| Component | 1.0 policy / observation |
+|---|---|
+| `web-listening` | `1.0.0` |
+| Python | Declared `>=3.12,<3.13`; verified with 3.12.3 |
+| FastAPI | Project environment verified at 0.139.2 |
+| MCP | Project environment verified at 1.28.1 |
+| BrowserAct | Exact isolated contract `browser-act-cli==1.0.6`; latest observed 1.0.6 |
+| Playwright | Declared `>=1.52.0`; external host observed 1.59.0; latest observed 1.61.0 |
+| CloakBrowser | Declared `>=0.3.26`; external host observed 0.3.27; latest observed 0.4.12 |
 
-See [MCP_FALLBACK_CHAIN_DESIGN.md](docs/design/MCP_FALLBACK_CHAIN_DESIGN.md) for the full response contract, safety policy, and usage guidance.
+External-host and latest-version observations are inventory signals, **not compatibility certification**. Do not raise lower bounds or upgrade deployed runtimes from those observations alone. Every upgrade requires qualification in an isolated environment, focused adapter/contract tests, the full project suite, and a rollback decision.
 
-## Acquisition Tool Picker Contract
+BrowserAct has an exact isolated contract: it must run from a separate Python 3.12 tool environment, must not be added to project dependencies, and must pass `web-listening inspect-browseract --json` as version 1.0.6 with the expected read-only capabilities. Playwright and CloakBrowser remain optional extras governed by their declared minimums and runtime safety rules.
 
-Delivery UIs and agents should use `acquisition-tools.v1` as the stable picker contract for acquisition tool selection:
+### Semantic-version decision rubric
 
-```powershell
-web-listening list-acquisition-tools --json
-GET /api/v1/acquisition/tools
-```
+- **Patch (`1.0.x`)**: backward-compatible bug, security, documentation, or packaging correction; no intended contract or workflow expansion.
+- **Minor (`1.x.0`)**: backward-compatible capability, command/field/tool addition, optional integration, or additive schema evolution.
+- **Major (`x.0.0`)**: incompatible CLI/API/MCP/schema/artifact/storage behavior, changed authority semantics, removed supported behavior, or a runtime/dependency change that requires consumer migration.
 
-The catalog maps ordinary public HTML to `web_http`, dynamic JavaScript pages to `browser_rendered`, authorized stealth-browser/CDP-like contexts to `cloakbrowser`, bulk structured or site-specific scrape jobs to reserved `batch_python`, and discovery/feed cases to reserved `sitemap` or `rss`. This picker contract is planning/probing metadata only; it does not change `bootstrap-scope` or `run-scope` crawl execution.
+Dependency qualification can trigger any level: use patch only when the supported contract is unchanged, minor for additive newly supported runtime capability, and major when consumers or persisted artifacts must migrate.
 
-Agent usage sequence:
+### Weekly review policy
 
-1. Load the picker contract through one of these surfaces:
-
-   CLI:
-
-   ```powershell
-   web-listening list-acquisition-tools --json
-   ```
-
-   API:
-
-   ```text
-   GET /api/v1/acquisition/tools
-   ```
-2. Match page signals against `tool_selection_rules`, then choose a `tools[].adapter` whose `runtime_status`, `probe_capable`, and safety requirements are satisfied.
-3. Collect the listed `operator_inputs`; use either a reviewed `profile_path` or inline fields such as `url` and conditional `site_key`.
-4. Build or provide an `acquisition-profile.v1`, then probe with `web-listening probe-acquisition --adapter <adapter> ...` or `POST /api/v1/acquisition/probe`.
-5. Keep probe output as acquisition evidence for operator review and downstream reports; do not treat picker/probe selection as changing the fixed staged workflow execution path.
-
-Frontends should render `frontend_control` for labels, groups, ordering, and selectable state. Agents should treat `safety_notes`, `requires_profile_safety`, and `optional_runtime` as hard gates before executing a probe.
-
-## Interface Authority Map
-
-The packaged CLI and REST API still exist and are useful for site-level monitoring.
-For the staged agent workflow, use the packaged `web-listening` CLI as the canonical authority path:
-
-- `web-listening discover`
-- `web-listening classify`
-- `web-listening select`
-- `web-listening plan-scope`
-- `web-listening bootstrap-scope`
-- `web-listening run-scope`
-- `web-listening report-scope`
-- `web-listening export-manifest`
-
-Additional staged artifact helpers exposed by the packaged CLI:
-
-- `web-listening create-monitor-task`
-- `web-listening export-tracking-report`
-
-Compatibility and lower-level entrypoints remain available:
-
-- `tools/discover_site_sections.py`
-- `tools/classify_site_sections.py`
-- `tools/plan_monitor_scope.py`
-- `tools/bootstrap_site_tree.py`
-- `tools/summarize_scope_bootstrap.py`
-- `tools/export_scope_document_manifest.py`
-- `tools/explain_tree_bootstrap.py`
-- `tools/run_site_tree.py`
-
-Legacy site-level packaged commands also remain:
-
-- `web-listening add-site`
-- `web-listening check`
-- `web-listening download-docs`
-- `web-listening analyze`
-- `web-listening serve`
-
-Current status:
-
-- the packaged `web-listening` CLI is the current canonical entrypoint for the staged discover/classify/select/plan/bootstrap/run/report/manifest flow
-- the lower-level `tools/*.py` scripts still exist as compatibility entrypoints and developer-oriented wrappers around the same workflow
+Once each week, maintainers review the project version, supported Python range, resolved project-environment versions, optional-runtime observations, upstream security/release notes, and available latest versions. Record whether each change is **observe**, **qualify**, **adopt**, **defer**, or **reject**. Adoption requires the qualification gates above and an explicit SemVer decision; the weekly review does not automatically modify dependency bounds.
 
 ## Validation
 
-Use the live validation commands instead of relying on committed point-in-time snapshots:
+From the project environment:
 
-```powershell
-.venv\Scripts\pytest tests -q
-.venv\Scripts\python tools\validate_real_sites.py
-.venv\Scripts\python tools\run_dev_regression.py
-.venv\Scripts\python tools\run_smoke_site_catalog.py --report-only
-.venv\Scripts\python tools\run_tree_catalog_validation.py
-.venv\Scripts\python tools\run_agent_rescue_validation.py
+```bash
+python -m pytest tests -q
+python tools/validate_real_sites.py
+python tools/run_dev_regression.py
+python tools/run_smoke_site_catalog.py --report-only
+python tools/run_tree_catalog_validation.py
+python tools/run_agent_rescue_validation.py
+web-listening --help
 ```
 
-Validation guide: [docs/validation/README.md](docs/validation/README.md)
-Runtime compatibility and deployment inventory: [docs/operations/PYTHON_RUNTIME.md](docs/operations/PYTHON_RUNTIME.md)
+Network/live catalog commands should be run only in an authorized environment. Contract and package checks should use the committed fixtures and offline test suite first.
 
-## Active Docs
+## Documentation and archive policy
 
-Start with:
+This root `README.md` is the sole active human-facing product document. Executable Markdown assets (`AGENTS.md`, `.codex/**/SKILL.md`, `skills/**/SKILL.md`, and packaged Site Skill `SKILL.md` files) remain active as runtime/agent instructions, not parallel product documentation. Machine-readable fixtures under `docs/testing/fixtures/` remain active contracts/examples.
 
-- [AGENT_SCOPE_PLANNING_DESIGN.md](docs/design/AGENT_SCOPE_PLANNING_DESIGN.md)
-- [TREE_MONITORING_DESIGN.md](docs/design/TREE_MONITORING_DESIGN.md)
-- [AGENT_SITE_MONITORING_MASTER_PLAN.md](docs/roadmap/AGENT_SITE_MONITORING_MASTER_PLAN.md)
-- [SMOKE_SITE_MANAGEMENT.md](docs/operations/SMOKE_SITE_MANAGEMENT.md)
-- [PYTHON_RUNTIME.md](docs/operations/PYTHON_RUNTIME.md)
-- [TREE_BUDGET_RULES.md](docs/operations/TREE_BUDGET_RULES.md)
-- [OPENCLAW_SKILL_USAGE.md](docs/skills/OPENCLAW_SKILL_USAGE.md)
+Historical designs, plans, reports, contract prose, and operations notes are retained under `docs/archive/` for provenance only. They may contain superseded paths, versions, limitations, or future-phase language and are not current authority. The prior April roadmap history remains unchanged under `docs/archive/2026-04-roadmap-history/`; the final consolidation snapshot is under `docs/archive/2026-07-readme-consolidation/`. New product guidance must update this README rather than create another active prose document under `docs/`.

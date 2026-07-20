@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "web-listening"
-version = "0.1.0"
+version = "1.0.0"
 description = "Monitor websites for changes, download documents, generate AI summaries"
 requires-python = ">=3.12,<3.13"
 dependencies = [

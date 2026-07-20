@@ -493,6 +493,51 @@ def test_optional_browser_runtime_preflight_rejects_missing_or_malformed_runtime
     assert stopped == ([True] if condition == "malformed" and runtime == "browser_rendered" else [])
 
 
+def test_cloakbrowser_runtime_preflight_launches_headless_and_closes():
+    events = []
+
+    class Browser:
+        def close(self):
+            events.append("close")
+
+    def launch(**kwargs):
+        events.append(("launch", kwargs))
+        return Browser()
+
+    _preflight_optional_browser_runtimes(
+        {"cloakbrowser"}, importer=lambda name: SimpleNamespace(launch=launch)
+    )
+
+    assert events == [("launch", {"headless": True}), "close"]
+
+
+@pytest.mark.parametrize("failure", ["launch", "malformed", "close"])
+def test_cloakbrowser_runtime_preflight_rejects_initialization_failures(failure):
+    events = []
+
+    class Browser:
+        def close(self):
+            events.append("close")
+            if failure == "close":
+                raise OSError("close failed")
+
+    def launch(**kwargs):
+        events.append(("launch", kwargs))
+        if failure == "launch":
+            raise OSError("launch failed")
+        if failure == "malformed":
+            return object()
+        return Browser()
+
+    with pytest.raises(RuntimeError, match="^governed optional browser runtime unavailable$"):
+        _preflight_optional_browser_runtimes(
+            {"cloakbrowser"}, importer=lambda name: SimpleNamespace(launch=launch)
+        )
+
+    assert events[0] == ("launch", {"headless": True})
+    assert events.count("close") == (1 if failure == "close" else 0)
+
+
 @pytest.mark.parametrize("formal_entrypoint", [bootstrap_scope, run_scope])
 @pytest.mark.parametrize("runtime", ["browser_rendered", "cloakbrowser"])
 def test_formal_scope_optional_runtime_preflight_precedes_storage_and_report(

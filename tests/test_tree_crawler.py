@@ -644,6 +644,93 @@ def test_governed_tree_budget_bounds_requested_pages_and_readmits_results(tmp_pa
     storage.close()
 
 
+def test_governed_snapshot_fetch_mode_uses_accepted_executor_for_bootstrap_and_incremental(tmp_path):
+    storage = Storage(tmp_path / "governed-snapshot-mode.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Governed Mode"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"], max_depth=0, max_pages=1, max_files=0,
+        fetch_mode="http",
+    )
+
+    class Gateway:
+        attempt_ids = []
+
+        def acquire(self, url, *, run_id, scope_id, content_kind="page"):
+            page = FetchResult("ok", "ok", "ok", "ok", "ok", {}, url, 200)
+            legacy = LegacyCrawlerGateway(
+                SimpleNamespace(fetch_page=lambda *args, **kwargs: page),
+                fetch_mode="http", fetch_config_json={},
+            ).acquire(url, run_id=run_id, scope_id=scope_id, content_kind=content_kind)
+            canonical = json.loads(legacy.attempt_records[0].canonical_json)
+            canonical["request"]["executor_id"] = "browser_rendered"
+            canonical["request"]["metadata"].update({
+                "authority_mode": "governed", "acquisition_fingerprint": None,
+                "scope_fingerprint": None, "entrypoint": None, "script_sha256": None,
+                "required_capabilities": [], "executor_capabilities": [],
+                "requires_authorized_access": False, "verification_rules": [],
+                "resource_limits": {}, "quality_gates": {}, "scope_budgets": {},
+            })
+            canonical["result"]["executor_id"] = "browser_rendered"
+            attempt = legacy.attempt_records[0].model_copy(update={
+                "executor_id": "browser_rendered",
+                "authority_mode": "governed",
+                "canonical_json": json.dumps(canonical),
+            })
+            self.attempt_ids.append(attempt.attempt_id)
+            return AcquisitionOutcome(
+                legacy.request, legacy.result, page, "accepted", ("accepted",), True, (attempt,)
+            )
+
+        def close(self):
+            return None
+
+    tree = TreeCrawler(storage=storage, acquisition_gateway=Gateway())
+    bootstrap = tree.bootstrap_scope(scope, download_files=False)
+    incremental = tree.run_scope(bootstrap.scope, download_files=False)
+
+    bootstrap_snapshot = storage.list_page_snapshots_for_run(bootstrap.scope.id, bootstrap.run.id)[0]
+    incremental_snapshot = storage.list_page_snapshots_for_run(incremental.scope.id, incremental.run.id)[0]
+    assert (bootstrap_snapshot.fetch_mode, bootstrap_snapshot.attempt_id) == (
+        "browser_rendered", tree.acquisition_gateway.attempt_ids[0]
+    )
+    assert (incremental_snapshot.fetch_mode, incremental_snapshot.attempt_id) == (
+        "browser_rendered", tree.acquisition_gateway.attempt_ids[1]
+    )
+    for snapshot in (bootstrap_snapshot, incremental_snapshot):
+        attempt = storage.get_acquisition_attempt(snapshot.attempt_id)
+        assert attempt.authority_mode == "governed"
+        assert attempt.executor_id == "browser_rendered"
+    tree.close()
+    storage.close()
+
+
+def test_legacy_snapshot_fetch_mode_remains_scope_value(tmp_path):
+    storage = Storage(tmp_path / "legacy-snapshot-mode.db")
+    site = storage.add_site(Site(url="https://example.com/section", name="Legacy Mode"))
+    scope = CrawlScope(
+        site_id=site.id, seed_url="https://example.com/section",
+        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"], max_depth=0, max_pages=1, max_files=0,
+        fetch_mode="browser",
+    )
+    page = FetchResult("ok", "ok", "ok", "ok", "ok", {}, scope.seed_url, 200)
+    crawler = SimpleNamespace(fetch_page=lambda *args, **kwargs: page)
+    gateway = LegacyCrawlerGateway(crawler, fetch_mode="browser", fetch_config_json={})
+
+    tree = TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=gateway)
+    result = tree.bootstrap_scope(scope, download_files=False)
+    snapshot = storage.list_page_snapshots_for_run(result.scope.id, result.run.id)[0]
+
+    assert snapshot.fetch_mode == "browser"
+    assert snapshot.attempt_id == gateway.acquire(
+        scope.seed_url, run_id=str(result.run.id), scope_id=str(result.scope.id)
+    ).accepted_attempt.attempt_id
+    tree.close()
+    storage.close()
+
+
 def test_incremental_failures_only_mark_exact_confirmed_not_found_missing(tmp_path):
     storage = Storage(tmp_path / "governed-missing.db")
     site = storage.add_site(Site(url="https://example.com/section", name="Governed Missing"))

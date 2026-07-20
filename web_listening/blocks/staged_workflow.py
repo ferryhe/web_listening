@@ -59,8 +59,14 @@ def _preflight_optional_browser_runtimes(planned, *, importer=import_module) -> 
                 driver.stop()
         if "cloakbrowser" in planned:
             cloakbrowser = importer("cloakbrowser")
-            if not callable(getattr(cloakbrowser, "launch", None)):
+            launch = getattr(cloakbrowser, "launch", None)
+            if not callable(launch):
                 raise RuntimeError(_OPTIONAL_BROWSER_RUNTIME_ERROR)
+            browser = launch(headless=True)
+            close = getattr(browser, "close", None)
+            if not callable(close):
+                raise RuntimeError(_OPTIONAL_BROWSER_RUNTIME_ERROR)
+            close()
     except Exception as exc:
         raise RuntimeError(_OPTIONAL_BROWSER_RUNTIME_ERROR) from exc
 

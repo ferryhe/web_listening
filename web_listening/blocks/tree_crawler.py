@@ -200,6 +200,13 @@ class TreeCrawler:
             if exc_type is None:
                 raise
 
+    @staticmethod
+    def _accepted_fetch_mode(outcome: AcquisitionOutcome, legacy_fetch_mode: str) -> str:
+        attempt = outcome.accepted_attempt
+        if attempt is not None and attempt.authority_mode == "governed":
+            return attempt.executor_id
+        return legacy_fetch_mode
+
     def bootstrap_scope(
         self,
         scope: CrawlScope,
@@ -298,7 +305,7 @@ class TreeCrawler:
                                 "hash_normalization": "whitespace-normalized-v1",
                                 "tree_depth": depth,
                             },
-                            fetch_mode=stored_scope.fetch_mode,
+                            fetch_mode=self._accepted_fetch_mode(outcome, stored_scope.fetch_mode),
                             final_url=page.final_url,
                             status_code=page.status_code,
                             links=page_links,
@@ -568,7 +575,7 @@ class TreeCrawler:
                                 "hash_normalization": "whitespace-normalized-v1",
                                 "tree_depth": depth,
                             },
-                            fetch_mode=stored_scope.fetch_mode,
+                            fetch_mode=self._accepted_fetch_mode(outcome, stored_scope.fetch_mode),
                             final_url=page.final_url,
                             status_code=page.status_code,
                             links=page_links,

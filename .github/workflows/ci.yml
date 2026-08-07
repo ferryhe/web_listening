@@ -56,13 +56,14 @@ jobs:
       - name: Verify installed MCP compatibility
         run: |
           python - <<'PY'
+          from importlib import import_module
           from importlib.metadata import version
-
-          from mcp.server.fastmcp import FastMCP
 
           mcp_version = version("mcp")
           assert mcp_version.startswith("1."), f"Expected MCP 1.x, got {mcp_version}"
-          assert FastMCP is not None
+
+          fastmcp_module = import_module("mcp.server.fastmcp")
+          assert fastmcp_module.FastMCP is not None
           PY
 
       - name: Smoke installed CLI

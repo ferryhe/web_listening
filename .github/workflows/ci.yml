@@ -53,6 +53,18 @@ jobs:
           )"
           python -m pip install "web-listening[dev] @ ${wheel_uri}"
 
+      - name: Verify installed MCP compatibility
+        run: |
+          python - <<'PY'
+          from importlib.metadata import version
+
+          from mcp.server.fastmcp import FastMCP
+
+          mcp_version = version("mcp")
+          assert mcp_version.startswith("1."), f"Expected MCP 1.x, got {mcp_version}"
+          assert FastMCP is not None
+          PY
+
       - name: Smoke installed CLI
         run: |
           web-listening --help > /dev/null

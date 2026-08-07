@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "web-listening"
-version = "1.0.0"
+version = "1.0.1"
 description = "Monitor websites for changes, download documents, generate AI summaries"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -28,7 +28,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "httpx",
-    "mcp>=1.0.0",
+    "mcp>=1.28.1,<2.0.0",
 ]
 browser = [
     "playwright>=1.52.0",
@@ -37,7 +37,7 @@ cloakbrowser = [
     "cloakbrowser>=0.3.26",
 ]
 mcp = [
-    "mcp>=1.0.0",
+    "mcp>=1.28.1,<2.0.0",
 ]
 
 [project.scripts]

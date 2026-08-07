@@ -262,19 +262,21 @@ Safety rules:
 
 ## Version and Runtime Compatibility
 
-Compatibility inventory last reviewed on **2026-07-20**.
+Compatibility inventory last reviewed on **2026-08-07**.
 
 | Component | 1.0 policy / observation |
 |---|---|
-| `web-listening` | `1.0.0` |
+| `web-listening` | `1.0.1` |
 | Python | Declared `>=3.12,<3.13`; verified with 3.12.3 |
 | FastAPI | Project environment verified at 0.139.2 |
-| MCP | Project environment verified at 1.28.1 |
+| MCP | Declared `>=1.28.1,<2.0.0`; verified at 1.28.1; 2.x is not qualified |
 | BrowserAct | Exact isolated contract `browser-act-cli==1.0.6`; latest observed 1.0.6 |
 | Playwright | Declared `>=1.52.0`; external host observed 1.59.0; latest observed 1.61.0 |
 | CloakBrowser | Declared `>=0.3.26`; external host observed 0.3.27; latest observed 0.4.12 |
 
 External-host and latest-version observations are inventory signals, **not compatibility certification**. Do not raise lower bounds or upgrade deployed runtimes from those observations alone. Every upgrade requires qualification in an isolated environment, focused adapter/contract tests, the full project suite, and a rollback decision.
+
+The `dev` and `mcp` extras both declare `mcp>=1.28.1,<2.0.0`. The stdio server uses the qualified MCP 1.x `FastMCP` API; MCP 2.x must not be installed until it is separately qualified.
 
 BrowserAct has an exact isolated contract: it must run from a separate Python 3.12 tool environment, must not be added to project dependencies, and must pass `web-listening inspect-browseract --json` as version 1.0.6 with the expected read-only capabilities. Playwright and CloakBrowser remain optional extras governed by their declared minimums and runtime safety rules.
 

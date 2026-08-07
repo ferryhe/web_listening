@@ -1,16 +1,18 @@
 # Project Status
 
-- Date: 2026-06-11
-- Project: web_listening
-- Repo path: `/root/.hermes/projects/web_listening`
-- Branch: `feat/goal-aware-quality-policies`
-- Run type: PR8 goal-aware quality policies implementation.
-- Scope: narrow core/MCP fallback goal preset support and focused fake-adapter tests; sibling repositories are off-limits.
-- Starting state: `git status --short --branch` showed branch `feat/goal-aware-quality-policies` with a clean working tree after PR6 was merged.
-- Changes: added first-class `goal_preset` support for `page_text`, `section_discovery`, `document_discovery`, and `change_monitoring`; mapped presets to default quality gates only when explicit `quality_gates` are absent; preserved explicit caller gates; exposed/validated `goal_preset` through `web_listening_acquire_with_fallback`; preserved free-form `goal` metadata behavior; added focused core and MCP tests proving preset-driven fallback behavior and validation.
-- Reviewer fixes: ensured `meta.goal_preset` is preserved on early terminal paths (`unsafe_url`, `unsafe_escalation`, `no_available_adapter`) and removed implicit `strategy` to `goal_preset` inference to avoid changing existing strategy semantics.
-- PR feedback fixes: added deterministic non-string `goal_preset` validation in both core and MCP paths, and reconciled this project-status reviewer state with the actual final Hermes reviewer gate result.
-- Verification: `git diff --check` passed. `python -m pytest tests/test_acquisition_fallback.py tests/test_mcp_server.py -q` passed (61 passed, 0.90s). `python -m pytest -q` passed (322 passed, 23.10s). `python -m compileall -q web_listening tests/test_acquisition_fallback.py tests/test_mcp_server.py` passed.
-- Reviewer gate: Hermes spec/scope reviewer PASS; Hermes code quality/security reviewer APPROVED.
-- PR: https://github.com/ferryhe/web_listening/pull/29
-- Next recommended action: run focused/full verification after PR feedback fixes, push follow-up commit, wait for CI/Copilot/review feedback, and merge when clean.
+- Date: 2026-08-07
+- Project: `web_listening`
+- Branch: `fix/mcp-1x-compatibility`
+- Run type: managed multi-PR CI compatibility repair.
+- Program scope: first merge an independent MCP 1.x dependency fix, then sync and complete documentation PR #41; sibling repositories are off-limits.
+- Starting state: clean latest `main` at `570236c`; the task branch was created before implementation.
+- Root cause: PR #41 CI run `31199325852` resolved unbounded `mcp>=1.0.0` to incompatible `mcp 2.0.0`, where `mcp.server.fastmcp` is unavailable.
+- Changes: bump the patch release to `1.0.1`; constrain both `dev` and `mcp` extras to `mcp>=1.28.1,<2.0.0`; add exact packaging/version tests; add a wheel-installed MCP version/import CI smoke; document the qualified compatibility range.
+- Verification: TDD red was 2 expected failures, then the focused packaging test passed (2 passed); reviewer MCP coverage passed (35 passed, with one async case unavailable in the documented stale environment); `git diff --check`, CI YAML parsing/order, exact source metadata inspection, and local `FastMCP` import/`create_server()` smoke passed.
+- Environment limitation: this checkout has only unsupported Windows/Python 3.11 and stale installed `web-listening 0.1.0` metadata. Full pytest reported 1184 passed, 483 failed, 32 skipped, with failures led by unavailable POSIX APIs such as `os.O_DIRECTORY`; the release-version test also sees that stale metadata. No local Python 3.12/build environment exists, so the authoritative wheel install/version/import regression must pass in GitHub CI.
+- Reviewer gates: initial fresh read-only spec reviewer PASS and quality/security reviewer APPROVED; the remote-feedback follow-up also passed fresh spec and quality gates with no Critical or Important findings. The mandatory `codex review --uncommitted` launch was attempted but WindowsApps returned `Access is denied`; this tooling blocker is recorded explicitly, and both fresh agent reviews completed successfully.
+- PR #42 remote verification: authoritative Python 3.12 wheel install and full-suite CI passed. The 10-minute review window produced one valid inline diagnostic-order comment; the CI smoke now asserts the installed MCP major version before importing `mcp.server.fastmcp`. The summary review was informational only.
+- Remote state: documentation PR #41 remains open; its only observed check failure is the MCP 2.0 resolution above, with no comments/reviews/threads at the time of diagnosis.
+- Managed-program heartbeat: active until the fix PR and PR #41 are merged or a blocker requires user direction; controller provides milestone updates and polls remote state during mandatory feedback windows.
+- Files in scope: `pyproject.toml`, `.github/workflows/ci.yml`, `README.md`, `tests/test_packaging_dependencies.py`, `tests/test_release_version.py`, and this status file.
+- Next recommended action: validate the PR #42 review fix, repeat both local reviewer gates, push it, and restart the required remote CI/feedback window before merge; then sync PR #41.

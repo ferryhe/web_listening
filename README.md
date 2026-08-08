@@ -1,6 +1,6 @@
 # web_listening
 
-`web_listening` 1.0 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
+`web_listening` 1.1 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
 
 The supported 1.0 scope is complete and stable. Future changes follow the semantic-version policy below. The canonical product flow is:
 
@@ -9,6 +9,30 @@ discover -> classify -> select -> plan-scope -> bootstrap/run -> report/export
 ```
 
 The packaged `web-listening` CLI is the canonical operator and agent interface. The REST API provides site-level, acquisition, job, execution, report, document, and analysis surfaces, but it does **not** provide full REST parity for the discover/classify/select/plan-scope planning flow.
+
+Version 1.1 adds a producer-only, robots-first diagnostic command for new Agentic planning paths. It does not change the supported 1.0 `discover -> classify -> select -> plan-scope` behavior or grant acquisition authority.
+
+## Robots and sitemap diagnosis
+
+Before a new Agentic planning path proposes discovery or acquisition, run a bounded diagnosis with exact operator-supplied network boundaries:
+
+```bash
+web-listening diagnose-site \
+  --url https://example.com/news \
+  --site-key example \
+  --allowed-domain example.com \
+  --allowed-document-origin https://example.com \
+  --output data/plans/site_diagnostic_example_2026-08-08.json \
+  --json
+```
+
+`diagnose-site` always normalizes the requested origin and makes its first HTTP request to that canonical origin's `/robots.txt`. It then evaluates declared sitemap locations, or the single same-origin `/sitemap.xml` fallback when robots is absent or declares none. Sitemap indexes are processed FIFO. A cross-origin sitemap document is fetched only when its exact scheme/host/effective port was supplied in `--allowed-document-origin` and that exact origin has first passed its own robots preflight with the same identity. Page `<loc>` values are planning seeds only: the command never fetches them, accepts only canonical-origin page seeds, and records cross-origin pages as requiring a separate diagnosis.
+
+The production transport is browser-free, proxy-free, credential-free, and fail-closed. Every robots, retry, redirect, and sitemap request repeats exact-origin gating and all-address public DNS validation, connects only to the validated address set, preserves the normalized `Host` and HTTPS SNI/certificate hostname, and verifies the actual public peer before sending HTTP request bytes. Canonical public IPv4/IPv6 literals are supported as allowed hosts (IPv6 URL and `Host` authorities remain bracketed); private, loopback, link-local, reserved, multicast, and unspecified literals are rejected before the first HTTP byte. Redirects cannot expand authority or downgrade HTTPS. Governed non-2xx status outcomes—including authority, empty, redirect, retryable, and terminal classes—are decided before body reads. Only 2xx response bodies are streamed under wire and decoded limits with bounded single-member gzip handling; unsafe XML constructs and non-sitemap roots are rejected.
+
+The resulting `site-diagnostic.v1` is planning evidence, not permission, operator review, or an execution profile. Each origin policy includes the selected ordered `Allow`/`Disallow` rules, source line numbers, robots digest, and identity digest; `policy_id` and `policy_sha256` are recomputed from that visible evidence so later consumers can verify and replay the exact matching policy. Accepted page seeds carry their source sitemap queue ordinal, parent document digest, and source entry ordinal. Rejected scheduled sitemap documents likewise retain a normalized URL or raw rejected value, reason, queue ordinal, parent digest, and source entry ordinal; rejected scheduling consumes a bounded request slot without opening the network. Request-slot ordinals and non-secret counted-occurrence lineage let readers recompute the HTTP request, sitemap-document, and URL occurrence usage rather than trusting aggregate counters. Each accepted redirect attempt records its canonical, approved `redirect_target_url`; the next attempt and any redirect-policy rejection are bound to that exact target rather than merely its origin. The contract validates FIFO sitemap evidence, robots-to-root and index-to-child digest lineage, and requires a sitemap-seeded recommendation to contain matching accepted evidence. The artifact's canonical SHA-256 excludes only `artifact_sha256`; readers must verify that digest and freshness. Writes are atomic and idempotent, and refuse to replace a different existing artifact. PR1 will add the separate, digest-bound operator review and diagnosis consumer; 1.1 does not modify `discover`, REST, MCP, scope/profile/Site Skill authority, or the reserved sitemap acquisition adapter.
+
+When `--output` is omitted, the CLI derives a safe filename component from `site_key` and includes the generated `diagnostic_id`, so separate same-day diagnoses do not collide. An explicit `--output` remains no-overwrite and may be repeated only for the byte-identical artifact.
 
 ## Product model and authority
 
@@ -149,6 +173,7 @@ Use `web-listening COMMAND --help` for complete options. The lower-level `tools/
 
 ### Governance and acquisition
 
+- `diagnose-site` — probe robots.txt first and emit bounded, digest-verifiable sitemap planning evidence; it does not run discovery or grant authority.
 - `list-site-skills`, `inspect-site-skill`, `validate-site-skill` — statically inspect governed Site Skill packages.
 - `list-acquisition-tools` — return the stable acquisition picker catalog.
 - `build-acquisition-profile` — create a reviewed profile input.
@@ -199,8 +224,9 @@ The CLI remains canonical for `discover`, `classify`, `select`, and `plan-scope`
 
 ## Stable schemas and artifacts
 
-Stable machine contracts in the 1.0 surface include:
+Stable machine contracts in the current surface include:
 
+- `site-diagnostic.v1` (additive in 1.1; producer-only planning evidence)
 - `site-skill.v1`
 - `capture-request.v1`
 - `capture-result.v1`
@@ -226,6 +252,7 @@ Canonical machine-readable examples remain active under `docs/testing/fixtures/`
 - [acquisition-tools-v1.sample.json](docs/testing/fixtures/acquisition-tools-v1.sample.json)
 - [acquisition-execution-plan-v1.sample.json](docs/testing/fixtures/acquisition-execution-plan-v1.sample.json)
 - [web-listening-manifest-v1.sample.json](docs/testing/fixtures/web-listening-manifest-v1.sample.json)
+- [site-diagnostic-v1.sample.json](docs/testing/fixtures/site-diagnostic-v1.sample.json)
 
 Typical durable workflow artifacts are:
 
@@ -264,9 +291,9 @@ Safety rules:
 
 Compatibility inventory last reviewed on **2026-08-07**.
 
-| Component | 1.0 policy / observation |
+| Component | Compatibility policy / observation |
 |---|---|
-| `web-listening` | `1.0.1` |
+| `web-listening` | `1.1.0` |
 | Python | Declared `>=3.12,<3.13`; verified with 3.12.3 |
 | FastAPI | Project environment verified at 0.139.2 |
 | MCP | Declared `>=1.28.1,<2.0.0`; verified at 1.28.1; 2.x is not qualified |

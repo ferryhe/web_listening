@@ -23,7 +23,8 @@
 - 前三批工作不改变现有十个 MCP 工具；UI 和维护流程先使用共享服务及 REST API。新增 MCP 合同必须另行决策。
 - 首版 UI 仅作为本地操作台，不做公网部署、账号系统或复杂前端框架。
 - Skill 状态权限固定为：探测服务只能推进到 `probed`；`reviewed` 必须保存经过验证的操作员主体、时间和被审核 digest；只有 digest 未变化的 reviewed 包才能由激活服务推进到 `active`。维护 Agent 和工作 Agent 均不得自审或自激活。
-- PR1 即提供独立 operator/maintenance capability：review/activate 必须持有 operator capability；maintenance capability 只能 probe、生成候选和完成 request。Capability 从运行时 secret 注入，不写文件、不回显、不记录原值，审核记录只保存验证后的主体 ID。
+- PR1 即提供独立 operator/maintenance capability：review/activate 必须持有 operator capability；maintenance capability 只能执行 discover/classify、probe、生成候选和处理 maintenance request，不能写 selection、scope、profile，也不能 review/activate。Capability 从运行时 secret 注入，不写文件、不回显、不记录原值，审核记录只保存验证后的主体 ID。
+- PR1 新增的 planning/Site Skill 端点默认服务于 loopback 本地操作台；显式绑定非 loopback 时必须配置认证，否则服务启动 fail closed，请求鉴权层也必须拒绝漏配或无效凭据。该要求只约束新增端点，不强制迁移现有 1.0 路由。
 - 内置 registry 保持只读；data-root registry 只包含已激活的用户包。服务端 resolver 同时读取两者，同一 `site_key/version` 冲突时 fail closed；CLI 调试用户包必须显式传 `--root` 或 `--site-skill-root`。
 - Acquisition profile 持久化后可按 `acquisition_profile_id` 解析；新增 ID 字段/端点是向后兼容能力，UI 默认使用 ID。现有 1.0 `scope_path/profile_path` 请求继续支持并保留回归 fixture，但仍只能解析受控输入目录，不能用任意路径绕过控制面。
 - 所有 `site_key/version` 先规范化并拒绝路径穿越、绝对路径和 symlink 越界；候选列表、生成和静态验证不得导入或执行候选脚本；候选写入、激活复制和最终 digest 固化必须原子化，active 包不可覆盖。
@@ -67,6 +68,7 @@
 - Acquisition profile 写入控制目录并按 ID 解析；新增 ID 请求与现有受控 path 请求共存并走同一 resolver，不能改变已有 1.0 成功/失败 envelope。
 - 激活前完成静态校验、verification、profile/domain 一致性、安全路径检查和操作员审核记录校验。
 - 在 PR1 增加独立 operator/maintenance capability 校验；review/activate 从 capability 取得主体，不能信任请求体自报身份。
+- 新增端点默认仅供 loopback 本地操作台使用；非 loopback 绑定必须同时配置认证，缺失配置时启动失败，且请求层对缺失/错误 capability fail closed。现有 1.0 路由保持原认证兼容性，不在本批强制迁移。
 - 状态转换使用独立 probe/review/activate 操作，不提供可任意跳转的通用 promote 接口。
 - CLI、REST 复用同一业务服务；现有 CLI 和 MCP 行为保持兼容。
 
@@ -84,16 +86,29 @@
 - `POST /api/v1/site-skills/{site_key}/{version}/review`
 - `POST /api/v1/site-skills/{site_key}/{version}/activate`
 
+PR1 新增端点的角色/capability 矩阵如下；operator 和 maintenance 是独立运行时 capability，矩阵之外不隐式扩大权限：
+
+| 端点/操作 | loopback 本地调用 | 非 loopback 调用 |
+|---|---|---|
+| `GET /api/v1/site-skills`、`GET /api/v1/site-skills/{site_key}/{version}`、无副作用的静态 `validate` | 可无 capability | 必须通过 maintenance 或 operator capability 认证 |
+| `POST /api/v1/planning/discover`、`POST /api/v1/planning/classify` | maintenance 或 operator capability | maintenance 或 operator capability，并通过非 loopback 认证配置 |
+| `record-probe`、`candidates`；以及 PR3 增加的 request claim/heartbeat/complete | maintenance 或 operator capability | maintenance 或 operator capability，并通过非 loopback 认证配置 |
+| `POST /api/v1/planning/selections`、`POST /api/v1/planning/monitor-scopes`、acquisition profile 创建/更新 | 仅 operator capability | 仅 operator capability，并通过非 loopback 认证配置 |
+| `review`、`activate` | 仅 operator capability | 仅 operator capability，并通过非 loopback 认证配置 |
+
+`validate` 在此矩阵中仅指不写状态、不执行候选脚本的静态校验；任何会创建 job、artifact、候选或状态记录的操作都不属于本地只读豁免。
+
 提交什么：
 
 - 共享 planning/Site Skill 服务、API models/routes、存储支持。
-- 离线 API/CLI parity、生命周期、capability 权限拒绝、1.0 path 回归、路径/symlink/冲突、原子写入和 contract fixture 测试。
+- 离线 API/CLI parity、生命周期、上述角色矩阵、loopback/非 loopback fail-closed、capability 权限拒绝、1.0 path 回归、路径/symlink/冲突、原子写入和 contract fixture 测试。
 - 根 `README.md` 的新增接口、候选目录和 SemVer 决策说明：本批采用向后兼容的 Minor 能力，不删除或强制迁移现有 path 请求。
 
 完成标准：
 
 - 同一 fixture 经 CLI 和 REST 产生语义一致的 inventory、classification、selection 和 scope。
 - 可从候选生成走到 `draft -> probed -> reviewed -> active`；缺少/错误 capability、maintenance token 调用 review/activate、缺少操作员审核、digest 已变化或 Agent 直接激活都被稳定拒绝且不改文件。
+- loopback 无 capability 只能调用矩阵中的只读操作；maintenance capability 可完成 discover/classify/probe/candidate/request 操作，但不能创建 selection、scope、profile 或执行 review/activate；新增端点在非 loopback 未配置认证时不能启动或处理请求。
 - data-root active Skill 和持久化 profile 可通过新增 ID 请求完成 REST preview + bootstrap/run；现有 1.0 受控 path fixture 继续通过；内置/data-root 冲突、部分或错误绑定仍 fail closed。
 - 静态操作不执行候选脚本，路径穿越和 symlink 越界被拒绝，失败写入不会留下半激活包。
 - 现有 CLI/MCP 回归测试和完整测试通过，`git diff --check` 通过。
@@ -135,7 +150,7 @@
 - 连续序列键固定为 `{site_key, skill_version, probe_target, adapter, check_kind}`；默认阈值为 3，可按站点配置，成功只清零同一序列。
 - 开放 request 以序列键加 failure epoch 建数据库唯一约束；重复/并发调度不得生成第二个开放 request。
 - 领取使用原子 `open -> claimed` 转换、owner、lease expiry 和 attempt；进程崩溃后过期 lease 可重领，完成操作幂等。
-- 维护 Agent 是 REST 的外部消费者：claim request 后调用 planning/probe/candidate API，把 source request、job、artifact 和 candidate digest lineage 写回，并完成为 `awaiting_review`；它不能 review/activate。
+- 维护 Agent 是 REST 的外部消费者：持有 maintenance capability，claim request 后只调用 `discover`、`classify`、probe 和 candidate API，把 source request、job、artifact 和 candidate digest lineage 写回，并完成为 `awaiting_review`；它没有 operator capability，不能创建/重绑 selection、scope、profile，也不能 review/activate。
 - 阈值达到后只创建 request，不自动改包、不自动激活、不自动重绑 scope。
 - 提供手工触发、结果查询、request claim/heartbeat/complete 接口，供维护 Agent 和 UI 使用。
 
@@ -179,9 +194,21 @@
 先离线验证合同，再做单站 probe，最后才运行正式 scope：
 
 ```powershell
+$ErrorActionPreference = "Stop"
 $WebListening = ".\.venv\Scripts\web-listening.exe"
+$Python = ".\.venv\Scripts\python.exe"
+
+function Invoke-WebListening {
+    & $WebListening @args
+    $ExitCode = $LASTEXITCODE
+    if ($ExitCode -ne 0) {
+        throw "web-listening exited with code ${ExitCode}: $($args -join ' ')"
+    }
+}
+
 $SiteKey = "replace-with-catalog-site-key" # 必须替换为所选 catalog 中已存在的 site_key
-$SkillVersion = "1.0.0"
+$SkillVersion = "replace-with-version-from-selected-active-entry"
+$SkillPackageDigest = "replace-with-package_sha256-from-same-selected-active-entry"
 $SkillRoot = ".\data\site-skills-active"
 $Domain = "www.example.org"
 $RootUrl = "https://www.example.org/"
@@ -189,29 +216,53 @@ $SelectionPath = ".\data\plans\section_selection_example.yaml"
 $ScopePath = ".\data\plans\monitor_scope_example.yaml"
 $ProfilePath = ".\data\plans\acquisition_profile_example.yaml"
 
-& $WebListening discover --catalog dev --site-key $SiteKey
-& $WebListening classify --catalog dev --site-key $SiteKey
-& $WebListening list-site-skills --root $SkillRoot --json
-& $WebListening validate-site-skill --root $SkillRoot --site-key $SiteKey --version $SkillVersion --json
-& $WebListening build-acquisition-profile --site-key $SiteKey --allowed-domain $Domain --output $ProfilePath --json
-& $WebListening probe-acquisition --url $RootUrl --site-key $SiteKey --json
+Invoke-WebListening discover --catalog dev --site-key $SiteKey
+Invoke-WebListening classify --catalog dev --site-key $SiteKey
+Invoke-WebListening list-site-skills --root $SkillRoot --json
+
+# 继续前，用上面同一条 active registry entry 的 version 和 package_sha256 替换两个 Skill 占位值。
+Invoke-WebListening validate-site-skill --root $SkillRoot --site-key $SiteKey --version $SkillVersion --package-digest $SkillPackageDigest --json
+Invoke-WebListening build-acquisition-profile --site-key $SiteKey --allowed-domain $Domain --output $ProfilePath --json
+Invoke-WebListening probe-acquisition --url $RootUrl --site-key $SiteKey --json
 
 # 在 UI/API 中选择 exact active Skill/profile，审核并生成 $SelectionPath。
-# section_selection.based_on 必须含 acquisition_profile_id 和五个 Skill/executor 绑定字段。
-$RequiredBindings = @(
-    "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
-    "site_skill_recipe_id", "site_skill_script_sha256", "executor_version"
+Invoke-WebListening select --selection-path $SelectionPath
+Invoke-WebListening plan-scope --selection-path $SelectionPath --yaml-path $ScopePath
+
+# plan-scope 生成的 monitor_scope.based_on 必须含 acquisition_profile_id 和五个 Skill/executor 绑定字段。
+$ScopeBindingCheck = @'
+import sys
+
+from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
+
+required = (
+    "acquisition_profile_id",
+    "site_skill_version",
+    "site_skill_package_sha256",
+    "site_skill_recipe_id",
+    "site_skill_script_sha256",
+    "executor_version",
 )
-foreach ($Field in $RequiredBindings) {
-    if (-not (Select-String -LiteralPath $SelectionPath -SimpleMatch $Field -Quiet)) {
-        throw "$SelectionPath 缺少正式执行绑定字段: $Field"
-    }
+plan = load_monitor_scope_plan(sys.argv[1], strict_limits=True)
+invalid = [
+    field
+    for field in required
+    if type(plan.based_on.get(field)) is not str or not plan.based_on[field].strip()
+]
+if invalid:
+    raise SystemExit(
+        "monitor_scope.based_on requires exact non-empty string values for: "
+        + ", ".join(invalid)
+    )
+'@
+$ScopeBindingCheck | & $Python -c 'import sys; exec(sys.stdin.buffer.read().decode().lstrip(chr(0xfeff)))' $ScopePath
+$PythonExitCode = $LASTEXITCODE
+if ($PythonExitCode -ne 0) {
+    throw "monitor scope binding validation exited with code $PythonExitCode"
 }
-& $WebListening select --selection-path $SelectionPath
-& $WebListening plan-scope --selection-path $SelectionPath --yaml-path $ScopePath
-& $WebListening preview-execution-plan --scope-path $ScopePath --profile-path $ProfilePath --site-skill-root $SkillRoot --json
-& $WebListening bootstrap-scope --scope-path $ScopePath --acquisition-profile-path $ProfilePath --site-skill-root $SkillRoot --json
-& $WebListening run-scope --scope-path $ScopePath --acquisition-profile-path $ProfilePath --site-skill-root $SkillRoot --json
+Invoke-WebListening preview-execution-plan --scope-path $ScopePath --profile-path $ProfilePath --site-skill-root $SkillRoot --json
+Invoke-WebListening bootstrap-scope --scope-path $ScopePath --acquisition-profile-path $ProfilePath --site-skill-root $SkillRoot --json
+Invoke-WebListening run-scope --scope-path $ScopePath --acquisition-profile-path $ProfilePath --site-skill-root $SkillRoot --json
 ```
 
 排错时按此顺序定位：

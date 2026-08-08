@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -169,6 +170,12 @@ def _csv_list(value: str) -> list[str]:
     return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
+def _safe_filename_component(value: str, *, fallback: str) -> str:
+    component = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip(" .-_")
+    component = component.replace("..", ".")[:80]
+    return component or fallback
+
+
 def _validate_http_url(value: str, *, field_name: str) -> str:
     normalized_value = (value or "").strip()
     parsed = urlparse(normalized_value)
@@ -197,6 +204,71 @@ def _emit_job(job: _DeliveryPayloadJob, *, json_output: bool, human_text: object
         typer.echo(json.dumps(job.to_delivery_payload(), ensure_ascii=False, indent=2))
     else:
         _print_job_result(human_text=human_text)
+
+
+@app.command("diagnose-site")
+def diagnose_site_command(
+    requested_url: str = typer.Option(..., "--url", help="Website URL whose normalized origin will be diagnosed."),
+    site_key: str = typer.Option(..., "--site-key", help="Stable site identifier for the planning evidence."),
+    allowed_domains: list[str] = typer.Option(
+        ..., "--allowed-domain", help="Operator-supplied allowed host/domain; repeat for more than one."
+    ),
+    allowed_document_origins: list[str] = typer.Option(
+        ...,
+        "--allowed-document-origin",
+        help="Exact approved HTTP(S) origin including any non-default port; repeat for more than one.",
+    ),
+    user_agent: str = typer.Option(
+        "web-listening-bot/1.1", "--user-agent", help="Actual User-Agent used for every diagnostic request."
+    ),
+    product_token: str = typer.Option(
+        "web-listening-bot", "--product-token", help="RFC 9309 product token contained in the User-Agent."
+    ),
+    identity_id: str = typer.Option(
+        "web-listening-default", "--identity-id", help="Stable identifier for the exact diagnostic identity."
+    ),
+    freshness_hours: float = typer.Option(
+        24.0, "--freshness-hours", min=0.01, max=24.0, help="Evidence lifetime; may only tighten the 24-hour default."
+    ),
+    output: str = typer.Option("", "--output", help="New artifact path; an existing different artifact is never overwritten."),
+    json_output: bool = typer.Option(False, "--json", help="Also emit canonical site-diagnostic.v1 JSON to stdout."),
+):
+    """Probe robots.txt first and produce bounded sitemap planning evidence."""
+    from datetime import timedelta
+
+    from web_listening.blocks.site_diagnostic import diagnose_site, write_site_diagnostic
+    from web_listening.config import settings
+    from web_listening.contracts.site_diagnostic import canonical_json
+
+    try:
+        artifact = diagnose_site(
+            requested_url=requested_url,
+            site_key=site_key,
+            allowed_domains=allowed_domains,
+            allowed_document_origins=allowed_document_origins,
+            user_agent=user_agent,
+            product_token=product_token,
+            identity_id=identity_id,
+            freshness=timedelta(hours=freshness_hours),
+        )
+        safe_site_key = _safe_filename_component(site_key, fallback="site")
+        safe_diagnostic_id = _safe_filename_component(artifact.diagnostic_id, fallback="diagnostic")
+        output_path = Path(output) if output else (
+            settings.data_dir / "plans" / f"site_diagnostic_{safe_site_key}_{safe_diagnostic_id}.json"
+        )
+        write_site_diagnostic(artifact, output_path)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if json_output:
+        typer.echo(canonical_json(artifact.model_dump(mode="json")))
+    else:
+        console.print(Panel(
+            f"[green]Saved site diagnostic[/green]\n"
+            f"Path: {output_path}\n"
+            f"Status: {artifact.diagnostic_status}\n"
+            f"Recommendation: {artifact.recommendation}\n"
+            f"Digest: {artifact.artifact_sha256}"
+        ))
 
 
 @app.command("list-site-skills")

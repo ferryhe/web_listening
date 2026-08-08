@@ -1,0 +1,171 @@
+{
+  "schema_version": "site-diagnostic.v1",
+  "diagnostic_id": "diag-00000000-0000-0000-0000-000000000001",
+  "site_key": "example",
+  "requested_url": "https://example.com/",
+  "normalized_requested_url": "https://example.com/",
+  "requested_origin": {
+    "scheme": "https",
+    "host": "example.com",
+    "effective_port": 443
+  },
+  "canonical_origin": {
+    "scheme": "https",
+    "host": "example.com",
+    "effective_port": 443
+  },
+  "allowed_domains": [
+    "example.com"
+  ],
+  "allowed_document_origins": [
+    {
+      "scheme": "https",
+      "host": "example.com",
+      "effective_port": 443
+    }
+  ],
+  "started_at": "2026-08-08T12:00:00Z",
+  "completed_at": "2026-08-08T12:00:00Z",
+  "expires_at": "2026-08-09T12:00:00Z",
+  "tool_version": "1.1.0",
+  "identity": {
+    "identity_id": "web-listening-default",
+    "user_agent": "web-listening-bot/1.1",
+    "product_token": "web-listening-bot",
+    "identity_sha256": "aa15957b1e8ff744f9093439308f63d4d6b6b579fdf7c599257f293dad55de8b"
+  },
+  "budgets": {
+    "redirect_hops_per_document": 5,
+    "http_requests": 64,
+    "robots_wire_bytes_per_attempt": 1048576,
+    "robots_decoded_bytes_per_attempt": 1048576,
+    "robots_wire_bytes_total": 3145728,
+    "robots_decoded_bytes_total": 3145728,
+    "sitemap_wire_bytes_per_document": 10485760,
+    "sitemap_decoded_bytes_per_document": 52428800,
+    "sitemap_wire_bytes_total": 33554432,
+    "sitemap_decoded_bytes_total": 134217728,
+    "sitemap_depth": 3,
+    "sitemap_documents": 32,
+    "url_occurrences": 50000
+  },
+  "budget_usage": {
+    "http_requests": 2,
+    "robots_wire_bytes": 0,
+    "robots_decoded_bytes": 0,
+    "sitemap_wire_bytes": 0,
+    "sitemap_decoded_bytes": 0,
+    "sitemap_document_occurrences": 1,
+    "url_occurrences": 1
+  },
+  "diagnostic_status": "complete",
+  "recommendation": "bounded_homepage_fallback",
+  "decisive_priority": 5,
+  "next_action": "submit_bounded_homepage_fallback_for_operator_review",
+  "robots_sitemap_directives": [],
+  "robots_warnings": [],
+  "origin_policy_evidence": [
+    {
+      "origin": {
+        "scheme": "https",
+        "host": "example.com",
+        "effective_port": 443
+      },
+      "policy_id": "robots-policy-0d5d3e700b466d31",
+      "policy_sha256": "0d5d3e700b466d31d7111c4bd1b70e16c9e67bf5fd2f9ee30a4a3ec0ecd4f79b",
+      "robots_status": "absent",
+      "robots_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "selected_rules": [],
+      "declared_sitemaps": [],
+      "warnings": [],
+      "fetched_at": "2026-08-08T12:00:00Z",
+      "expires_at": "2026-08-09T12:00:00Z",
+      "identity_id": "web-listening-default",
+      "identity_sha256": "aa15957b1e8ff744f9093439308f63d4d6b6b579fdf7c599257f293dad55de8b"
+    }
+  ],
+  "attempts": [
+    {
+      "attempt_ordinal": 1,
+      "request_slot_ordinal": 1,
+      "queue_ordinal": null,
+      "retry_ordinal": 0,
+      "redirect_ordinal": 0,
+      "document_kind": "robots",
+      "parent_sha256": null,
+      "requested_url": "https://example.com/robots.txt",
+      "redirect_chain": [],
+      "redirect_target_url": null,
+      "final_url": "https://example.com/robots.txt",
+      "http_status": 404,
+      "fetched_at": "2026-08-08T12:00:00Z",
+      "media_type": null,
+      "content_type_parameters": {},
+      "content_encoding": null,
+      "wire_bytes": 0,
+      "decoded_bytes": 0,
+      "content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "outcome": "completed_empty",
+      "actual_user_agent": "web-listening-bot/1.1",
+      "product_token": "web-listening-bot",
+      "identity_sha256": "aa15957b1e8ff744f9093439308f63d4d6b6b579fdf7c599257f293dad55de8b"
+    },
+    {
+      "attempt_ordinal": 2,
+      "request_slot_ordinal": 2,
+      "queue_ordinal": 1,
+      "retry_ordinal": 0,
+      "redirect_ordinal": 0,
+      "document_kind": "sitemap",
+      "parent_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested_url": "https://example.com/sitemap.xml",
+      "redirect_chain": [],
+      "redirect_target_url": null,
+      "final_url": "https://example.com/sitemap.xml",
+      "http_status": 404,
+      "fetched_at": "2026-08-08T12:00:00Z",
+      "media_type": null,
+      "content_type_parameters": {},
+      "content_encoding": null,
+      "wire_bytes": 0,
+      "decoded_bytes": 0,
+      "content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "outcome": "completed_empty",
+      "actual_user_agent": "web-listening-bot/1.1",
+      "product_token": "web-listening-bot",
+      "identity_sha256": "aa15957b1e8ff744f9093439308f63d4d6b6b579fdf7c599257f293dad55de8b"
+    }
+  ],
+  "sitemap_evidence": [
+    {
+      "queue_ordinal": 1,
+      "url": "https://example.com/sitemap.xml",
+      "final_url": "https://example.com/sitemap.xml",
+      "parent_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "parent_entry_ordinal": null,
+      "depth": 0,
+      "document_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "root_type": "empty",
+      "outcome": "completed_empty"
+    }
+  ],
+  "accepted_page_urls": [],
+  "accepted_page_evidence": [],
+  "rejected_urls": [],
+  "duplicate_urls": [],
+  "counted_url_occurrences": [
+    {
+      "occurrence_ordinal": 1,
+      "source": "fallback",
+      "source_origin": "https://example.com/",
+      "counts_sitemap_document": true,
+      "queue_ordinal": 1,
+      "parent_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "entry_ordinal": null
+    }
+  ],
+  "robots_errors": [],
+  "truncation_reasons": [],
+  "outcome_reasons": [],
+  "artifact_sha256": "25ea216c588bae8697a7b5ffd414cff9cfde198b4c2d113ed0afe2ce609388bc"
+}

@@ -16,6 +16,16 @@ from web_listening.contracts.site_skill import (
     SiteSkillStatus,
     VerificationRule,
 )
+from web_listening.contracts.site_diagnostic import (
+    AcceptedPageEvidence,
+    CountedUrlOccurrence,
+    RobotsErrorEvidence,
+    RobotsPolicyRule,
+    SiteDiagnostic,
+    derive_policy_preflight_classification,
+    document_duplicate_reason,
+    redirect_transition_allowed,
+)
 from web_listening.contracts.tool_result import (
     TOOL_RESULT_CONTRACT_VERSION,
     ToolResult,
@@ -27,16 +37,24 @@ from web_listening.contracts.tool_result import (
 
 __all__ = [
     "AcquisitionAttempt",
+    "AcceptedPageEvidence",
+    "CountedUrlOccurrence",
+    "RobotsErrorEvidence",
     "CaptureContent",
     "CaptureError",
     "CaptureRequest",
     "CaptureResult",
     "RuntimeRequirement",
+    "RobotsPolicyRule",
     "SecretPolicy",
     "SiteSkill",
     "SiteSkillExecutor",
     "SiteSkillRecipe",
     "SiteSkillStatus",
+    "SiteDiagnostic",
+    "derive_policy_preflight_classification",
+    "document_duplicate_reason",
+    "redirect_transition_allowed",
     "VerificationRule",
     "TOOL_RESULT_CONTRACT_VERSION",
     "ToolResult",

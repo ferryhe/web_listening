@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from web_listening.blocks.site_diagnostic import load_site_diagnostic
 from web_listening.cli import app
+from web_listening.contracts.site_diagnostic import canonical_json
 
 
 runner = CliRunner()
@@ -34,6 +35,7 @@ def test_diagnose_site_json_writes_the_stable_artifact(monkeypatch, tmp_path: Pa
     payload = json.loads(result.output)
     assert payload["schema_version"] == "site-diagnostic.v1"
     assert payload["artifact_sha256"] == fixture.artifact_sha256
+    assert result.output == canonical_json(fixture.model_dump(mode="json")) + "\n"
     assert load_site_diagnostic(output).artifact_sha256 == fixture.artifact_sha256
 
     second = runner.invoke(app, [

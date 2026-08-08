@@ -238,6 +238,7 @@ def diagnose_site_command(
 
     from web_listening.blocks.site_diagnostic import diagnose_site, write_site_diagnostic
     from web_listening.config import settings
+    from web_listening.contracts.site_diagnostic import canonical_json
 
     try:
         artifact = diagnose_site(
@@ -259,7 +260,7 @@ def diagnose_site_command(
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     if json_output:
-        typer.echo(json.dumps(artifact.model_dump(mode="json"), ensure_ascii=False, indent=2, sort_keys=True))
+        typer.echo(canonical_json(artifact.model_dump(mode="json")))
     else:
         console.print(Panel(
             f"[green]Saved site diagnostic[/green]\n"

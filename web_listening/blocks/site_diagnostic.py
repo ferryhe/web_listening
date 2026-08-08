@@ -160,15 +160,6 @@ class SafePinnedTransport:
             try:
                 raw = socket.create_connection((address, origin.effective_port), timeout=self.timeout)
                 break
-            except ssl.SSLError as exc:
-                classification = _classify_tls_failure(exc)
-                assert classification is not None
-                raise TransportFailure(
-                    classification.transport_kind,
-                    str(exc),
-                    retryable=classification.retryable,
-                    safety=classification.safety,
-                ) from exc
             except (TimeoutError, OSError) as exc:
                 last_error = exc
         if raw is None:

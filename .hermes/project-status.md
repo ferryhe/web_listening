@@ -2,17 +2,18 @@
 
 - Date: 2026-08-07
 - Project: `web_listening`
-- Branch: `fix/mcp-1x-compatibility`
-- Run type: managed multi-PR CI compatibility repair.
-- Program scope: first merge an independent MCP 1.x dependency fix, then sync and complete documentation PR #41; sibling repositories are off-limits.
-- Starting state: clean latest `main` at `570236c`; the task branch was created before implementation.
-- Root cause: PR #41 CI run `31199325852` resolved unbounded `mcp>=1.0.0` to incompatible `mcp 2.0.0`, where `mcp.server.fastmcp` is unavailable.
-- Changes: bump the patch release to `1.0.1`; constrain both `dev` and `mcp` extras to `mcp>=1.28.1,<2.0.0`; add exact packaging/version tests; add a wheel-installed MCP version/import CI smoke; document the qualified compatibility range.
-- Verification: TDD red was 2 expected failures, then the focused packaging test passed (2 passed); reviewer MCP coverage passed (35 passed, with one async case unavailable in the documented stale environment); `git diff --check`, CI YAML parsing/order, exact source metadata inspection, and local `FastMCP` import/`create_server()` smoke passed.
-- Environment limitation: this checkout has only unsupported Windows/Python 3.11 and stale installed `web-listening 0.1.0` metadata. Full pytest reported 1184 passed, 483 failed, 32 skipped, with failures led by unavailable POSIX APIs such as `os.O_DIRECTORY`; the release-version test also sees that stale metadata. No local Python 3.12/build environment exists, so the authoritative wheel install/version/import regression must pass in GitHub CI.
-- Reviewer gates: initial fresh read-only spec reviewer PASS and quality/security reviewer APPROVED; the remote-feedback follow-up also passed fresh spec and quality gates with no Critical or Important findings. The mandatory `codex review --uncommitted` launch was attempted but WindowsApps returned `Access is denied`; this tooling blocker is recorded explicitly, and both fresh agent reviews completed successfully.
-- PR #42 remote verification: authoritative Python 3.12 wheel install and full-suite CI passed. The 10-minute review window produced one valid inline diagnostic-order comment; the CI smoke now asserts the installed MCP major version before importing `mcp.server.fastmcp`. The summary review was informational only.
-- Remote state: documentation PR #41 remains open; its only observed check failure is the MCP 2.0 resolution above, with no comments/reviews/threads at the time of diagnosis.
-- Managed-program heartbeat: active until the fix PR and PR #41 are merged or a blocker requires user direction; controller provides milestone updates and polls remote state during mandatory feedback windows.
-- Files in scope: `pyproject.toml`, `.github/workflows/ci.yml`, `README.md`, `tests/test_packaging_dependencies.py`, `tests/test_release_version.py`, and this status file.
-- Next recommended action: validate the PR #42 review fix, repeat both local reviewer gates, push it, and restart the required remote CI/feedback window before merge; then sync PR #41.
+- Branch: `docs/agentic-site-monitoring-plan`
+- Run type: managed multi-PR documentation completion.
+- Program scope: merge the independent MCP compatibility repair first, then sync, revalidate, and complete Agentic Site Monitoring plan PR #41; sibling repositories are off-limits.
+- Baseline: merged `main` at `279452a`, including PR #42 and release `1.0.1`.
+- PR #42 result: both MCP extras are constrained to `mcp>=1.28.1,<2.0.0`; wheel install/import regression and the full Python 3.12 CI suite passed; the only valid remote comment was fixed and became outdated before merge.
+- Scope: `.hermes/plans/agentic-site-monitoring.md` defines staged planning/Site Skill APIs, a three-page local operator UI, an independent Skill health loop, and later downstream adapter integration.
+- Current state: merge commit `d15b62a` synced latest `main` without plan changes. Both unresolved Copilot threads were classified as valid and fixed locally. The first post-sync quality gate then found three Important issues and one Minor issue; all were accepted and fixed by adding PR1 authentication/capability boundaries, fail-fast CLI calls, semantic scope binding validation, and same-entry Skill version/digest selection.
+- Verification: `git diff --check` passed; all documented CLI help checks exited 0; PowerShell and embedded Python syntax passed; the CLI wrapper stopped on exit code 7; focused CLI binding failures passed (4 tests), strict scope loading/propagation passed (29 tests), selector contract/help passed (5 tests), and inherited MCP packaging constraints passed (2 tests).
+- Environment limitation: local checkout has unsupported Windows/Python 3.11, so GitHub Python 3.12 CI remains authoritative. A direct 15-case execution-plan binding run is blocked before its assertions because Windows lacks `os.O_DIRECTORY`; this is the known platform limitation, not a plan regression.
+- Reviewer gates: the first post-sync spec gate passed; the first quality/security gate returned CHANGES REQUIRED, and all three Important plus one Minor findings were fixed. Fresh second-round gates are now clean: spec PASS and quality/security APPROVED, with no Critical, Important, or Minor findings. `codex review --uncommitted` previously failed to launch because WindowsApps returned `Access is denied`, and this tooling blocker remains recorded.
+- Remote state: PR #41 is open and not yet updated. Its historical CI failure was caused by MCP 2.0 resolution; two Copilot threads remain unresolved remotely until the gated fix is pushed and the comments become outdated or are explicitly resolved.
+- Managed-program heartbeat: active through post-sync validation, the required remote feedback window, and final PR #41 merge.
+- Files in scope: `.hermes/plans/agentic-site-monitoring.md` and this status file; the MCP code/test files are inherited unchanged from merged `main`.
+- Uncommitted/untracked state: only the scoped plan review fix and this status update are pending; no unrelated files or untracked files are present.
+- Next recommended action: commit and push the gated PR #41 update, then wait at least 10 minutes and merge only when CI and all valid feedback are clean.

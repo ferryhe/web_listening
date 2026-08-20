@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Annotated, Any, Literal, Self
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from pydantic import (
     BaseModel,
@@ -30,6 +30,8 @@ ExecutorId = Literal[
     "cloakbrowser",
     "batch_python",
 ]
+
+
 def _serialize_json_value(value: JsonValue) -> JsonValue:
     if isinstance(value, Mapping):
         return {key: _serialize_json_value(child) for key, child in value.items()}
@@ -55,22 +57,65 @@ _DOMAIN_RE = re.compile(
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
 )
 _SECRET_KEY_PARTS = {
-    "authorization", "cookie", "credential", "key", "password", "secret", "token"
+    "authorization",
+    "cookie",
+    "credential",
+    "key",
+    "password",
+    "secret",
+    "token",
 }
 _SECRET_KEY_NAMES = {
-    "accesskey", "apikey", "awsaccesskeyid", "clientapikey", "privatekey",
-    "proxyauth", "proxycredential", "proxycredentials", "proxypassword",
-    "proxyuser", "proxyusername", "xapikey",
+    "accesskey",
+    "apikey",
+    "awsaccesskeyid",
+    "clientapikey",
+    "privatekey",
+    "proxyauth",
+    "proxycredential",
+    "proxycredentials",
+    "proxypassword",
+    "proxyuser",
+    "proxyusername",
+    "xapikey",
 }
-_SECRET_COMPACT_SUFFIXES = (
-    "accesskeyid", "accesskey", "apikey", "authorization", "cookie", "credential",
-    "credentials", "password", "secret", "token",
+_SECRET_COMPACT_SUFFIXES = tuple(
+    sorted(
+        _SECRET_KEY_NAMES
+        | {
+            "accesskeyid",
+            "accesskey",
+            "apikey",
+            "authorization",
+            "cookie",
+            "credential",
+            "credentials",
+            "password",
+            "secret",
+            "token",
+        }
+    )
 )
 _WINDOWS_INVALID_FILENAME_CHARS = frozenset('<>:"/\\|?*')
 _WINDOWS_RESERVED_NAME_RE = re.compile(
     r"^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|"
-    r"lpt[1-9\u00b9\u00b2\u00b3])(?:\..*)?$", re.IGNORECASE
+    r"lpt[1-9\u00b9\u00b2\u00b3])(?:\..*)?$",
+    re.IGNORECASE,
 )
+
+
+def is_secret_like_key(value: str) -> bool:
+    """Return whether a key name has a normalized credential-bearing shape."""
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", normalized)
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", normalized).lower()
+    parts = {part for part in normalized.split("_") if part}
+    compact = normalized.replace("_", "")
+    return bool(
+        parts & _SECRET_KEY_PARTS
+        or compact in _SECRET_KEY_NAMES
+        or compact.endswith(_SECRET_COMPACT_SUFFIXES)
+    )
 
 
 class ImmutableJsonMapping(Mapping[str, JsonValue]):
@@ -143,6 +188,8 @@ def _validate_unique_json_object_keys(json_data: str | bytes | bytearray) -> Non
 
     try:
         json.loads(json_data, object_pairs_hook=reject_duplicate_keys)
+    except RecursionError as exc:
+        raise ValueError("governed contract JSON nesting limit exceeded") from exc
     except (json.JSONDecodeError, UnicodeDecodeError):
         # Pydantic below retains its normal JSON parse-error shape and location.
         pass
@@ -179,9 +226,7 @@ class StrictContractModel(BaseModel):
             raise TypeError("strict=False is not supported for governed contract JSON")
         extra = kwargs.pop("extra", None)
         if extra not in (None, "forbid"):
-            raise TypeError(
-                "extra must be None or 'forbid' for governed contract JSON"
-            )
+            raise TypeError("extra must be None or 'forbid' for governed contract JSON")
         _validate_unique_json_object_keys(json_data)
         return super().model_validate_json(json_data, **kwargs)
 
@@ -208,22 +253,85 @@ def _urlsplit_for_userinfo_detection(value: str):
     return urlsplit(detection_value)
 
 
+_HIERARCHICAL_PROXY_SCHEME_RE = re.compile(
+    r"(?<![A-Za-z0-9+.-])(?:https?|socks(?:4a?|5h?)?):",
+    re.IGNORECASE,
+)
+_NETWORK_PATH_RE = re.compile(r"[/\\]{2}")
+_URI_AUTHORITY_TERMINATORS = frozenset('/\\?#<>"{}')
+_INVALID_URI_TEXT_BOUNDARIES = frozenset("|^`")
+# Invalid text punctuation both opens a network-path candidate and ends its authority.
+_URI_AUTHORITY_TERMINATORS |= _INVALID_URI_TEXT_BOUNDARIES
+_NETWORK_PATH_BOUNDARIES = frozenset("=?&#;,([{<>'\"") | _INVALID_URI_TEXT_BOUNDARIES
+
+
+def _contains_embedded_authority_userinfo(value: str) -> bool:
+    """Inspect every governed scheme/network authority in one linear pass."""
+    length = len(value)
+    next_stop = [length] * (length + 1)
+    next_at = [length] * (length + 1)
+    stop_index = length
+    at_index = length
+    for index in range(length - 1, -1, -1):
+        character = value[index]
+        if (
+            character in _URI_AUTHORITY_TERMINATORS
+            or character.isspace()
+            or ord(character) < 32
+            or ord(character) == 127
+        ):
+            stop_index = index
+        if character == "@":
+            at_index = index
+        next_stop[index] = stop_index
+        next_at[index] = at_index
+
+    for match in _HIERARCHICAL_PROXY_SCHEME_RE.finditer(value):
+        authority_start = match.end()
+        while authority_start < length and value[authority_start] in "/\\":
+            authority_start += 1
+        if next_at[authority_start] < next_stop[authority_start]:
+            return True
+    for match in _NETWORK_PATH_RE.finditer(value):
+        start = match.start()
+        if start > 0:
+            boundary = value[start - 1]
+            if not (
+                boundary in _NETWORK_PATH_BOUNDARIES
+                or boundary.isspace()
+                or ord(boundary) < 32
+                or ord(boundary) == 127
+            ):
+                continue
+        authority_start = match.end()
+        if next_at[authority_start] < next_stop[authority_start]:
+            return True
+    return False
+
+
+def contains_uri_userinfo(value: str) -> bool:
+    """Return whether raw, once-, or twice-decoded text contains URI userinfo."""
+    candidate = value
+    for _ in range(3):
+        normalized = unicodedata.normalize("NFKC", candidate)
+        parsed = _urlsplit_for_userinfo_detection(normalized)
+        if parsed.netloc and (
+            parsed.username is not None or parsed.password is not None
+        ):
+            return True
+        if _contains_embedded_authority_userinfo(normalized):
+            return True
+        candidate = unquote(candidate)
+    return False
+
+
 def validate_portable_json(
     value: JsonObject, *, location: str = "JSON value"
 ) -> JsonObject:
     def visit(item: JsonValue, location: str) -> None:
         if isinstance(item, Mapping):
             for key, child in item.items():
-                normalized = unicodedata.normalize("NFKC", key)
-                normalized = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", normalized)
-                normalized = re.sub(r"[^a-zA-Z0-9]+", "_", normalized).lower()
-                parts = {part for part in normalized.split("_") if part}
-                compact = normalized.replace("_", "")
-                if (
-                    parts & _SECRET_KEY_PARTS
-                    or compact in _SECRET_KEY_NAMES
-                    or compact.endswith(_SECRET_COMPACT_SUFFIXES)
-                ):
+                if is_secret_like_key(key):
                     raise ValueError(
                         f"{location} contains forbidden secret-like key: {key}"
                     )
@@ -251,9 +359,7 @@ def validate_portable_json(
     return freeze(value)  # type: ignore[return-value]
 
 
-def validate_portable_json_field(
-    value: JsonObject, info: ValidationInfo
-) -> JsonObject:
+def validate_portable_json_field(value: JsonObject, info: ValidationInfo) -> JsonObject:
     return validate_portable_json(value, location=info.field_name)
 
 

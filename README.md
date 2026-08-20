@@ -1,6 +1,6 @@
 # web_listening
 
-`web_listening` 1.1 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
+`web_listening` 1.2 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
 
 The supported 1.0 scope is complete and stable. Future changes follow the semantic-version policy below. The canonical product flow is:
 
@@ -11,6 +11,8 @@ discover -> classify -> select -> plan-scope -> bootstrap/run -> report/export
 The packaged `web-listening` CLI is the canonical operator and agent interface. The REST API provides site-level, acquisition, job, execution, report, document, and analysis surfaces, but it does **not** provide full REST parity for the discover/classify/select/plan-scope planning flow.
 
 Version 1.1 adds a producer-only, robots-first diagnostic command for new Agentic planning paths. It does not change the supported 1.0 `discover -> classify -> select -> plan-scope` behavior or grant acquisition authority.
+
+Version 1.2 adds strict, offline `access-policy.v1` and `access-decision.v1` contracts for future read-path migration. It does not migrate or change any current network, crawler, sitemap, download, REST, or MCP execution path.
 
 ## Robots and sitemap diagnosis
 
@@ -33,6 +35,44 @@ The production transport is browser-free, proxy-free, credential-free, and fail-
 The resulting `site-diagnostic.v1` is planning evidence, not permission, operator review, or an execution profile. Each origin policy includes the selected ordered `Allow`/`Disallow` rules, source line numbers, robots digest, and identity digest; `policy_id` and `policy_sha256` are recomputed from that visible evidence so later consumers can verify and replay the exact matching policy. Accepted page seeds carry their source sitemap queue ordinal, parent document digest, and source entry ordinal. Rejected scheduled sitemap documents likewise retain a normalized URL or raw rejected value, reason, queue ordinal, parent digest, and source entry ordinal; rejected scheduling consumes a bounded request slot without opening the network. Request-slot ordinals and non-secret counted-occurrence lineage let readers recompute the HTTP request, sitemap-document, and URL occurrence usage rather than trusting aggregate counters. Each accepted redirect attempt records its canonical, approved `redirect_target_url`; the next attempt and any redirect-policy rejection are bound to that exact target rather than merely its origin. The contract validates FIFO sitemap evidence, robots-to-root and index-to-child digest lineage, and requires a sitemap-seeded recommendation to contain matching accepted evidence. The artifact's canonical SHA-256 excludes only `artifact_sha256`; readers must verify that digest and freshness. Writes are atomic and idempotent, and refuse to replace a different existing artifact. PR1 will add the separate, digest-bound operator review and diagnosis consumer; 1.1 does not modify `discover`, REST, MCP, scope/profile/Site Skill authority, or the reserved sitemap acquisition adapter.
 
 When `--output` is omitted, the CLI derives a safe filename component from `site_key` and includes the generated `diagnostic_id`, so separate same-day diagnoses do not collide. An explicit `--output` remains no-overwrite and may be repeated only for the byte-identical artifact.
+
+## Access policy and decision contracts
+
+`access-policy.v1` freezes one canonical-origin robots observation for one transparent identity. The identity contains `identity_id`, the actual `user_agent`, the RFC 9309 `product_token`, and a recomputable SHA-256 over exactly those three visible fields. The policy embeds and revalidates the existing strict `site-diagnostic.v1` `OriginPolicyEvidence` model for valid 200 and 404 observations; it does not copy or reinterpret the diagnostic rule model. The embedded evidence must match origin, identity, robots digest, observation time, expiry, policy ID, and policy digest. Other observations require that field to be JSON `null`. Before an access artifact can be serialized, every access URL—including declared sitemap URLs inside the embedded evidence—is checked for NFKC-normalized delimiter, compact, and camel-case secret-key forms. Every frozen compact exact credential name also remains secret-like when appended to a namespace, including `privatekey`, `proxyauth`, `proxyuser`, and `proxyusername`. Query inspection covers raw plus two percent-decoding passes; each inspection copy is NFKC-normalized before treating `?`, `&`, `;`, and `=` as key boundaries, so encoded or raw fullwidth delimiters and nested decoded URL queries cannot hide credential keys. Identity/evidence free-text inspection likewise covers the raw, once-percent-decoded, and twice-percent-decoded NFKC copies. It rejects header assignments and credential-key/value pairs separated by `:`, `=`, whitespace, or true punctuation boundaries, including a credential token nested after an earlier non-secret assignment; token inspection has no arbitrary key-length cutoff and scans each complete token in a fixed linear pass. URI-userinfo inspection checks the same three NFKC copies for every HTTP(S), SOCKS/SOCKS4/SOCKS4a/SOCKS5/SOCKS5h, and boundary-qualified `//` network-path authority. Network paths may begin after governed assignment/separator/text punctuation or RFC-invalid text punctuation such as `|`, `^`, and backtick, but not in the middle of a path or scheme token. Those RFC-invalid characters are paired as both candidate-start boundaries and authority terminators, so an invalid separator inside the candidate cannot expose a later `@`. RFC-valid userinfo characters such as `(`, `)`, and `'` do not prematurely end an authority inspection; only genuine authority terminators, whitespace/control, or invalid text URI boundaries do. The work is fixed bounded linear scanning, with backslash and special-scheme normalization, rather than recursive decoding. This access-layer validation does not change the diagnostic producer contract.
+
+Access query canonicalization preserves parameter order and reserved percent-encoding semantics. A canonical query contains only visible ASCII RFC 3986 query characters or well-formed percent triplets; percent hex digits are uppercase, percent-encoded unreserved bytes are written literally, and percent-encoded reserved/non-unreserved bytes remain encoded. Raw whitespace, controls, non-ASCII, malformed escapes, and other non-query ASCII characters fail closed. The submitted URL must already equal this complete canonical representation; validation never silently rewrites a signed artifact.
+
+The access-policy cache-key digest is SHA-256 over canonical JSON containing exactly `canonical_origin` as its canonical origin URL string, `identity_sha256`, and fixed `policy_version: access-policy.v1`. The policy SHA-256 covers every policy field except `policy_id` and `policy_sha256`; `policy_id` is `access-policy-` plus the first 16 digest characters. Diagnostic artifact digest and origin-policy references are evidence bindings only: `site-diagnostic.v1` remains planning evidence and never becomes execution authority by itself.
+
+`access-decision.v1` evaluates one canonical URL under an embedded, fully revalidated `access-policy.v1`. Its decision SHA-256 covers every decision field except `decision_id` and `decision_sha256`; `decision_id` is `access-decision-` plus the first 16 digest characters. A decision is fresh only from the policy observation time through its expiry. It records the decision time, exact rule source, longest matching source-line numbers, and non-sensitive digest/origin/freshness/robots-observation evidence. Each consumed redirect request contains a finite, digest-bound `access-decision-proof.v1` allow proof with its exact canonical source URL/origin, complete revalidated policy and evidence, decision time, disposition, request-slot reservation, and per-origin pacing/budget reservation. The hop separately binds request start, response observation, redirect status, and canonical target URL/origin. Every allow reservation's earliest execution time (`not_before`) must remain within its bound policy authority through `expires_at`. Every consumed redirect request must start at or after `not_before`, inside that reservation's half-open budget window, and no later than the bound policy expiry. Proof decision/reservation, request, response, the next proof decision, and the final decision must form a strictly causal sequence; source/target continuity and contiguous request-slot ordinals are mandatory, and HTTPS downgrade redirects fail validation. Proofs do not embed prior redirect history, so the artifact remains finite and deterministic.
+
+The robots matrix is fixed as follows. Every reject or error fails closed; retryability is part of the contract rather than caller policy.
+
+| Observation | Required policy evidence | Outcome | Reason code | Retryable | Rule source |
+|---|---|---|---|---|---|
+| Valid 200, selected rules allow | available `OriginPolicyEvidence` | `allow` | `robots.allowed` | no | `origin_policy_evidence` |
+| Valid 200, selected rules disallow | available `OriginPolicyEvidence` | `reject` | `robots.disallowed` | no | `origin_policy_evidence` |
+| 404 | `OriginPolicyEvidence` with `robots_status: absent` | `allow` | `robots.absent` | no | `robots_absent` |
+| 401 | JSON `null` | `reject` | `robots.auth_required` | no | `http_status` |
+| 403 | JSON `null` | `reject` | `robots.forbidden` | no | `http_status` |
+| Timeout | JSON `null` | `error` | `robots.timeout` | yes | `transport` |
+| DNS failure | JSON `null` | `error` | `robots.dns_error` | yes | `transport` |
+| Network failure | JSON `null` | `error` | `robots.network_error` | yes | `transport` |
+| Parse failure | JSON `null` | `error` | `robots.parse_error` | no | `parser` |
+
+Only `allow` decisions may reserve the target request. They require both a final `request_slot_reservation` and a matching `origin_reservation`; reject and error decisions require both fields to be JSON `null`. The origin reservation freezes reservation/pacing times, pacing interval, budget window, limit, prior usage, one reserved unit, and its per-origin budget ordinal. Its active budget window is half-open: `budget_window_started_at <= reserved_at < window_end`, and `not_before` must also remain inside that window. Pacing lineage is tracked by canonical origin independently of budget-window identity: every later same-origin reservation preserves the pacing interval and schedules `not_before` no earlier than the prior same-origin request start plus that interval. Exact budget windows preserve their limit and monotonically advance prior usage. Same-origin windows with different shapes must not overlap; only a genuinely later non-overlapping window may begin an independently proven budget lineage. Different origins still require independent complete proofs.
+
+Reservation arithmetic has fixed portable maxima: timestamps are no later than `9998-12-31T23:59:59.999999Z`, request/hop/budget ordinals are at most `1,000,000`, pacing is at most `86,400,000` milliseconds, a budget window is at most `86,400` seconds, and the budget limit and prior usage are each at most `1,000,000`. Arithmetic outside those bounds is a governed validation error and the offline CLI emits the shared canonical error envelope. These fields describe a reservation contract only—1.2 implements no network request, cache, concurrency control, pacing, or budget enforcement. Reject and error decisions carry the same strict `access-rejection-error.v1` envelope intended for later CLI/API/MCP consumers, and that envelope is also a standalone loadable access contract. Its evidence independently requires typed non-sensitive IDs derived from their policy digests, a cache key recomputed from canonical origin + identity digest + fixed policy version, zero-to-24-hour ordered freshness, an all-null or all-present origin-policy ID/digest/robots-digest trio, and the exact reason/outcome/retryability/robots-observation/evidence-nullability matrix. `contract.invalid` alone requires null evidence.
+
+Validate or inspect either committed or producer-generated contract without network access:
+
+```bash
+web-listening validate-access-contract --path docs/testing/fixtures/access-decision-v1.sample.json --json
+```
+
+With `--json`, contract validation failures and command-parser/path failures (including a missing, nonexistent, directory, or unreadable `--path`) emit exactly one compact canonical `access-rejection-error.v1` envelope with `contract.invalid`; human mode retains the usual Typer diagnostics.
+
+Parsing is strict and fail-closed: unknown fields, duplicate JSON keys, excessive JSON nesting, wrong required/null fields or enums, non-canonical URLs/origins/queries, stale evidence, raw/encoded/nested/fullwidth-delimiter secret-key URLs, namespaced NFKC/compact/camel secret-key forms, raw/once/twice-percent-encoded header or credential-key free text (including long HTTP tokens), nested delimiter- or whitespace-shaped secret-bearing evidence/identity text, raw/percent/double-percent HTTP/SOCKS/network-path userinfo (including pipe/text-punctuation-delimited network paths), sensitive or matrix-conflicting standalone envelope evidence, missing or tampered per-hop proofs, out-of-authority or out-of-window request timing, overlapping/redefined budget windows, broken origin pacing or reservation lineage, extreme numeric/time arithmetic, and identity/cache/policy/decision digest tampering are rejected. Repeated validation is idempotent and does not mutate the input. Model pre-parsing and the offline loader convert parser recursion into governed validation errors; JSON CLI mode still emits exactly one canonical `contract.invalid` envelope.
 
 ## Product model and authority
 
@@ -174,6 +214,7 @@ Use `web-listening COMMAND --help` for complete options. The lower-level `tools/
 ### Governance and acquisition
 
 - `diagnose-site` — probe robots.txt first and emit bounded, digest-verifiable sitemap planning evidence; it does not run discovery or grant authority.
+- `validate-access-contract` — strictly validate and inspect one local access policy or decision artifact offline.
 - `list-site-skills`, `inspect-site-skill`, `validate-site-skill` — statically inspect governed Site Skill packages.
 - `list-acquisition-tools` — return the stable acquisition picker catalog.
 - `build-acquisition-profile` — create a reviewed profile input.
@@ -226,6 +267,9 @@ The CLI remains canonical for `discover`, `classify`, `select`, and `plan-scope`
 
 Stable machine contracts in the current surface include:
 
+- `access-policy.v1` and `access-decision.v1` (additive in 1.2; no runtime migration)
+- `access-decision-proof.v1` (finite per-consumed-redirect authorization embedded by `access-decision.v1`)
+- `access-rejection-error.v1` (shared strict reject/error envelope)
 - `site-diagnostic.v1` (additive in 1.1; producer-only planning evidence)
 - `site-skill.v1`
 - `capture-request.v1`
@@ -244,6 +288,11 @@ Stable machine contracts in the current surface include:
 
 Canonical machine-readable examples remain active under `docs/testing/fixtures/`:
 
+- [access-policy-v1.sample.json](docs/testing/fixtures/access-policy-v1.sample.json)
+- [access-decision-v1.sample.json](docs/testing/fixtures/access-decision-v1.sample.json)
+- [access-decision-v1.sensitive-url.invalid.json](docs/testing/fixtures/access-decision-v1.sensitive-url.invalid.json), [access-decision-v1.nested-sensitive-url.invalid.json](docs/testing/fixtures/access-decision-v1.nested-sensitive-url.invalid.json), [access-decision-v1.nfkc-query.invalid.json](docs/testing/fixtures/access-decision-v1.nfkc-query.invalid.json), [access-decision-v1.namespaced-secret.invalid.json](docs/testing/fixtures/access-decision-v1.namespaced-secret.invalid.json), [access-decision-v1.overlapping-userinfo.invalid.json](docs/testing/fixtures/access-decision-v1.overlapping-userinfo.invalid.json), [access-decision-v1.pipe-network-userinfo.invalid.json](docs/testing/fixtures/access-decision-v1.pipe-network-userinfo.invalid.json), [access-decision-v1.proxy-authority.invalid.json](docs/testing/fixtures/access-decision-v1.proxy-authority.invalid.json), [access-policy-v1.sensitive-evidence.invalid.json](docs/testing/fixtures/access-policy-v1.sensitive-evidence.invalid.json), [access-policy-v1.sensitive-identity.invalid.json](docs/testing/fixtures/access-policy-v1.sensitive-identity.invalid.json), [access-policy-v1.nested-sensitive-text.invalid.json](docs/testing/fixtures/access-policy-v1.nested-sensitive-text.invalid.json), [access-policy-v1.encoded-sensitive-text.invalid.json](docs/testing/fixtures/access-policy-v1.encoded-sensitive-text.invalid.json), [access-policy-v1.namespaced-secret.invalid.json](docs/testing/fixtures/access-policy-v1.namespaced-secret.invalid.json), [access-policy-v1.pipe-network-userinfo.invalid.json](docs/testing/fixtures/access-policy-v1.pipe-network-userinfo.invalid.json), [access-policy-v1.uri-userinfo.invalid.json](docs/testing/fixtures/access-policy-v1.uri-userinfo.invalid.json), [access-policy-v1.encoded-nested-userinfo.invalid.json](docs/testing/fixtures/access-policy-v1.encoded-nested-userinfo.invalid.json), and [access-policy-v1.network-authority.invalid.json](docs/testing/fixtures/access-policy-v1.network-authority.invalid.json) are committed fail-closed examples for encoded/nested/fullwidth query, namespaced/encoded/nested/whitespace/long-token credentials, and raw/percent/double-percent HTTP/SOCKS/network-path userinfo forms, including pipe-delimited network paths.
+- [access-rejection-error-v1.sample.json](docs/testing/fixtures/access-rejection-error-v1.sample.json) is the canonical standalone shared envelope. Its tampered-ID, cache-key, freshness, matrix, and partial-origin-policy negative companions freeze independent fail-closed validation.
+- [access-decision-v1.numeric-overflow.invalid.json](docs/testing/fixtures/access-decision-v1.numeric-overflow.invalid.json) freezes fail-closed extreme-number handling and the shared CLI error envelope.
 - [site-skill-v1.sample.json](docs/testing/fixtures/site-skill-v1.sample.json)
 - [capture-request-v1.sample.json](docs/testing/fixtures/capture-request-v1.sample.json)
 - [capture-result-v1.sample.json](docs/testing/fixtures/capture-result-v1.sample.json)
@@ -289,11 +338,11 @@ Safety rules:
 
 ## Version and Runtime Compatibility
 
-Compatibility inventory last reviewed on **2026-08-07**.
+Compatibility inventory last reviewed on **2026-08-20**.
 
 | Component | Compatibility policy / observation |
 |---|---|
-| `web-listening` | `1.1.0` |
+| `web-listening` | `1.2.0` |
 | Python | Declared `>=3.12,<3.13`; verified with 3.12.3 |
 | FastAPI | Project environment verified at 0.139.2 |
 | MCP | Declared `>=1.28.1,<2.0.0`; verified at 1.28.1; 2.x is not qualified |
@@ -314,6 +363,8 @@ BrowserAct has an exact isolated contract: it must run from a separate Python 3.
 - **Major (`x.0.0`)**: incompatible CLI/API/MCP/schema/artifact/storage behavior, changed authority semantics, removed supported behavior, or a runtime/dependency change that requires consumer migration.
 
 Dependency qualification can trigger any level: use patch only when the supported contract is unchanged, minor for additive newly supported runtime capability, and major when consumers or persisted artifacts must migrate.
+
+Issue #49 is an additive contract and offline-CLI capability, so it advances the project from 1.1.0 to **1.2.0**. It deliberately leaves existing execution authority unchanged. A later complete migration that makes current crawler/search/sitemap/download/API/MCP entrypoints obey the new access gateway changes authority semantics and therefore **requires 2.0.0** under this rubric; it must not be presented as a minor release.
 
 ### Weekly review policy
 

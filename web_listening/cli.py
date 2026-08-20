@@ -32,6 +32,26 @@ _SITE_SKILL_JSON_SCHEMAS = {
     "bootstrap-scope": ("job_delivery.v1", "scope.bootstrap"),
     "run-scope": ("job_delivery.v1", "scope.run"),
 }
+_ACCESS_CONTRACT_COMMAND = "validate-access-contract"
+
+
+def _access_contract_error_json() -> str:
+    from web_listening.contracts.access_decision import AccessRejectionErrorEnvelope
+    from web_listening.contracts.site_diagnostic import canonical_json
+
+    envelope = AccessRejectionErrorEnvelope(
+        schema_version="access-rejection-error.v1",
+        outcome="error",
+        reason_code="contract.invalid",
+        message="access contract validation failed",
+        retryable=False,
+        evidence=None,
+    )
+    return canonical_json(envelope.model_dump(mode="json"))
+
+
+def _emit_access_contract_error() -> None:
+    typer.echo(_access_contract_error_json())
 
 
 def _parser_failure(command: str, message: str) -> dict[str, object]:
@@ -115,7 +135,10 @@ class _SiteSkillJsonGroup(TyperGroup):
         argv = list(sys.argv[1:] if args is None else args)
         command = next((arg for arg in argv if not arg.startswith("-")), "")
         json_requested = "--json" in argv
-        if command not in _SITE_SKILL_JSON_SCHEMAS or not json_requested:
+        json_aware_command = (
+            command in _SITE_SKILL_JSON_SCHEMAS or command == _ACCESS_CONTRACT_COMMAND
+        )
+        if not json_aware_command or not json_requested:
             return super().main(
                 args=args,
                 prog_name=prog_name,
@@ -139,7 +162,10 @@ class _SiteSkillJsonGroup(TyperGroup):
                 raise SystemExit(exc.exit_code) from None
             return exc.exit_code
         except (ClickUsageError, TyperUsageError) as exc:
-            _stable_json(_parser_failure(command, exc.format_message()))
+            if command == _ACCESS_CONTRACT_COMMAND:
+                _emit_access_contract_error()
+            else:
+                _stable_json(_parser_failure(command, exc.format_message()))
             if standalone_mode:
                 raise SystemExit(2) from None
             return 2
@@ -204,6 +230,59 @@ def _emit_job(job: _DeliveryPayloadJob, *, json_output: bool, human_text: object
         typer.echo(json.dumps(job.to_delivery_payload(), ensure_ascii=False, indent=2))
     else:
         _print_job_result(human_text=human_text)
+
+
+@app.command("validate-access-contract")
+def validate_access_contract_command(
+    path: Path = typer.Option(
+        ...,
+        "--path",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "Local access-policy.v1, access-decision.v1, or "
+            "access-rejection-error.v1 JSON artifact."
+        ),
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the verified contract as exact canonical JSON.",
+    ),
+):
+    """Validate and inspect one access contract offline."""
+    from web_listening.blocks.access_contract import (
+        AccessContractError,
+        load_access_contract,
+    )
+    from web_listening.contracts.site_diagnostic import canonical_json
+
+    try:
+        artifact = load_access_contract(path)
+    except AccessContractError as exc:
+        if json_output:
+            _emit_access_contract_error()
+            raise typer.Exit(code=1) from exc
+        raise typer.BadParameter(str(exc)) from exc
+
+    if json_output:
+        typer.echo(canonical_json(artifact.model_dump(mode="json")))
+        return
+    artifact_id = getattr(artifact, "decision_id", getattr(artifact, "policy_id", ""))
+    artifact_sha256 = getattr(
+        artifact,
+        "decision_sha256",
+        getattr(artifact, "policy_sha256", ""),
+    )
+    console.print(
+        Panel(
+            f"[green]Valid access contract[/green]\n"
+            f"Schema: {artifact.schema_version}\n"
+            f"ID: {artifact_id}\n"
+            f"Digest: {artifact_sha256}"
+        )
+    )
 
 
 @app.command("diagnose-site")

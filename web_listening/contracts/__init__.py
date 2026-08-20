@@ -1,6 +1,23 @@
 from __future__ import annotations
 
 from web_listening.contracts.acquisition_attempt import AcquisitionAttempt
+from web_listening.contracts.access_decision import (
+    ACCESS_DECISION_VERSION,
+    ACCESS_POLICY_VERSION,
+    AccessDecision,
+    AccessDecisionEvidence,
+    AccessPolicy,
+    AccessRejectionErrorEnvelope,
+    OriginPacingBudgetReservation,
+    RedirectAccessProof,
+    RedirectHop,
+    RequestSlotReservation,
+    RobotsObservation,
+    access_policy_cache_key_sha256,
+    build_access_decision,
+    build_access_policy,
+    build_redirect_access_proof,
+)
 from web_listening.contracts.capture import (
     CaptureContent,
     CaptureError,
@@ -37,6 +54,12 @@ from web_listening.contracts.tool_result import (
 
 __all__ = [
     "AcquisitionAttempt",
+    "ACCESS_DECISION_VERSION",
+    "ACCESS_POLICY_VERSION",
+    "AccessDecision",
+    "AccessDecisionEvidence",
+    "AccessPolicy",
+    "AccessRejectionErrorEnvelope",
     "AcceptedPageEvidence",
     "CountedUrlOccurrence",
     "RobotsErrorEvidence",
@@ -45,7 +68,12 @@ __all__ = [
     "CaptureRequest",
     "CaptureResult",
     "RuntimeRequirement",
+    "OriginPacingBudgetReservation",
+    "RedirectAccessProof",
+    "RedirectHop",
+    "RequestSlotReservation",
     "RobotsPolicyRule",
+    "RobotsObservation",
     "SecretPolicy",
     "SiteSkill",
     "SiteSkillExecutor",
@@ -62,4 +90,8 @@ __all__ = [
     "ToolResultError",
     "ToolResultQualityGates",
     "tool_result_from_capture_attempt",
+    "access_policy_cache_key_sha256",
+    "build_access_decision",
+    "build_access_policy",
+    "build_redirect_access_proof",
 ]

@@ -275,14 +275,15 @@ def validate_access_contract_command(
         "decision_sha256",
         getattr(artifact, "policy_sha256", ""),
     )
-    console.print(
-        Panel(
-            f"[green]Valid access contract[/green]\n"
-            f"Schema: {artifact.schema_version}\n"
-            f"ID: {artifact_id}\n"
-            f"Digest: {artifact_sha256}"
-        )
-    )
+    details = [
+        "[green]Valid access contract[/green]",
+        f"Schema: {artifact.schema_version}",
+    ]
+    if artifact_id:
+        details.append(f"ID: {artifact_id}")
+    if artifact_sha256:
+        details.append(f"Digest: {artifact_sha256}")
+    console.print(Panel("\n".join(details)))
 
 
 @app.command("diagnose-site")

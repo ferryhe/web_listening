@@ -35,6 +35,23 @@ def validate_json(model, payload: dict):
     return model.model_validate_json(json.dumps(payload))
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        "tenantprivatekey",
+        "tenantproxyauth",
+        "tenantproxyuser",
+        "tenantproxyusername",
+    ],
+)
+def test_generic_portable_json_does_not_inherit_access_namespaced_suffixes(
+    key: str,
+) -> None:
+    value = {key: "public descriptor"}
+
+    assert validate_portable_json(value) == value
+
+
 def duplicate_json_key(payload: dict, key: str, duplicate_value) -> str:
     serialized = json.dumps(payload)
     original = json.dumps(key) + ":"

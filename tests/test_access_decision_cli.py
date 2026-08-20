@@ -68,6 +68,23 @@ def test_validate_access_contract_json_emits_standalone_shared_envelope() -> Non
     assert result.output == canonical_json(payload) + "\n"
 
 
+def test_validate_access_contract_human_envelope_omits_empty_identity_rows() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "validate-access-contract",
+            "--path",
+            "docs/testing/fixtures/access-rejection-error-v1.sample.json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Valid access contract" in result.output
+    assert "Schema: access-rejection-error.v1" in result.output
+    assert "ID:" not in result.output
+    assert "Digest:" not in result.output
+
+
 def test_validate_access_contract_invalid_json_uses_shared_error_envelope() -> None:
     result = runner.invoke(
         app,

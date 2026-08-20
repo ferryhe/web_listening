@@ -112,6 +112,10 @@ _QUERY_UNRESERVED = frozenset(
 _QUERY_RAW_SAFE = _QUERY_UNRESERVED | frozenset("!$&'()*+,;=:@/?")
 
 
+def _is_access_secret_like_key(value: str) -> bool:
+    return is_secret_like_key(value, include_namespaced_exact_names=True)
+
+
 def _clean_string(value: str) -> str:
     if value != value.strip() or any(
         ord(char) < 32 or ord(char) == 127 for char in value
@@ -122,14 +126,16 @@ def _clean_string(value: str) -> str:
     return value
 
 
-def _validate_non_sensitive_text(value: str, *, location: str) -> str:
-    if contains_uri_userinfo(value):
+def _validate_non_sensitive_text(
+    value: str, *, location: str, check_uri_userinfo: bool = True
+) -> str:
+    if check_uri_userinfo and contains_uri_userinfo(value):
         raise ValueError(f"{location} must not contain sensitive material")
     candidate = value
     for _ in range(3):
         normalized = unicodedata.normalize("NFKC", candidate)
         if _SENSITIVE_USER_AGENT_RE.search(normalized) or any(
-            is_secret_like_key(match.group(1))
+            _is_access_secret_like_key(match.group(1))
             for match in _KEY_VALUE_RE.finditer(normalized)
         ):
             raise ValueError(f"{location} must not contain sensitive material")
@@ -170,11 +176,16 @@ def _canonical_query(query: str) -> str:
 def _canonical_url(value: str) -> str:
     if contains_uri_userinfo(value):
         raise ValueError("URL must not contain credentials or userinfo")
+    _validate_non_sensitive_text(
+        value,
+        location="URL",
+        check_uri_userinfo=False,
+    )
     parsed = urlsplit(value)
     for query in _query_decoding_passes(parsed.query):
         inspection_query = unicodedata.normalize("NFKC", query)
         for match in _QUERY_KEY_RE.finditer(inspection_query):
-            if is_secret_like_key(match.group(1)):
+            if _is_access_secret_like_key(match.group(1)):
                 raise ValueError("URL must not contain sensitive query keys")
     canonical_url = canonicalize_requested_http_url(value)
     canonical_parts = urlsplit(canonical_url)

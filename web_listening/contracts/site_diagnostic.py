@@ -537,14 +537,45 @@ def robots_rule_specificity(pattern: str) -> int:
 def robots_rule_matches(pattern: str, url: str) -> bool:
     anchor = pattern.endswith("$")
     core = pattern[:-1] if anchor else pattern
-    normalized = _normalize_robots_match_target(core)
-    expression = "".join(".*" if char == "*" else re.escape(char) for char in normalized)
-    expression = "^" + expression + ("$" if anchor else "")
+    normalized_pattern = _normalize_robots_match_target(core)
     parts = urlsplit(url)
     target = parts.path or "/"
     if parts.query:
         target += "?" + parts.query
-    return re.match(expression, _normalize_robots_match_target(target)) is not None
+    normalized_target = _normalize_robots_match_target(target)
+
+    segments = normalized_pattern.split("*")
+    if len(segments) == 1:
+        return (
+            normalized_target == normalized_pattern
+            if anchor
+            else normalized_target.startswith(normalized_pattern)
+        )
+
+    position = 0
+    first = segments[0]
+    if first:
+        if not normalized_target.startswith(first):
+            return False
+        position = len(first)
+
+    for segment in segments[1:-1]:
+        if not segment:
+            continue
+        found_at = normalized_target.find(segment, position)
+        if found_at < 0:
+            return False
+        position = found_at + len(segment)
+
+    last = segments[-1]
+    if anchor:
+        if not last:
+            return True
+        final_start = len(normalized_target) - len(last)
+        return final_start >= position and normalized_target.startswith(
+            last, final_start
+        )
+    return not last or normalized_target.find(last, position) >= 0
 
 
 def robots_rules_allow(rules: Iterable[RobotsPolicyRule], url: str) -> bool:

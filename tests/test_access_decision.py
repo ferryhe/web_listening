@@ -40,6 +40,7 @@ from web_listening.contracts.site_diagnostic import (
     SitemapDirective,
     canonical_json,
     canonical_sha256,
+    robots_rule_matches,
 )
 
 
@@ -651,6 +652,59 @@ def test_resigned_semicolon_sensitive_urls_fail_closed(canonical_url: str) -> No
 @pytest.mark.parametrize(
     "canonical_url",
     [
+        "https://example.com/apiKey=secretvalue",
+        "https://example.com/apiKey%3Dsecretvalue",
+        ("https://example.com/?note=Authorization%3A%20Bearer%20secretvalue"),
+        ("https://example.com/?note=Authorization%253A%2520Bearer%2520secretvalue"),
+    ],
+)
+def test_access_urls_reject_secret_bearing_path_and_query_values(
+    canonical_url: str,
+) -> None:
+    request, origin = _allow_reservations()
+
+    with pytest.raises(ValueError, match="sensitive"):
+        build_access_decision(
+            policy=_policy("http_404"),
+            canonical_url=canonical_url,
+            decision_time=DECISION_TIME,
+            redirect_hops=[],
+            request_slot_reservation=request,
+            origin_reservation=origin,
+        )
+
+
+def test_secret_bearing_url_scan_has_bounded_adversarial_runtime() -> None:
+    benign_url = f"https://example.com/{'public-' * 50_000}metadata"
+    started_at = perf_counter()
+
+    request, origin = _allow_reservations()
+    decision = build_access_decision(
+        policy=_policy("http_404"),
+        canonical_url=benign_url,
+        decision_time=DECISION_TIME,
+        redirect_hops=[],
+        request_slot_reservation=request,
+        origin_reservation=origin,
+    )
+
+    assert decision.outcome == "allow"
+    assert perf_counter() - started_at < 3
+
+
+def test_robots_rule_matcher_has_bounded_adversarial_runtime() -> None:
+    repetitions = 14
+    pattern = "/" + "*a" * repetitions + "b$"
+    url = "https://example.com/" + "a" * (repetitions * 2)
+    started_at = perf_counter()
+
+    assert not robots_rule_matches(pattern, url)
+    assert perf_counter() - started_at < 0.25
+
+
+@pytest.mark.parametrize(
+    "canonical_url",
+    [
         "https://example.com/?safe=1＆apiKey=secretvalue",
         "https://example.com/?safe=1%EF%BC%86apiKey%EF%BC%9Dsecretvalue",
         "https://example.com/?ａｐｉｋｅｙ＝secretvalue",
@@ -871,7 +925,10 @@ def test_free_text_secret_scan_scales_linearly_for_large_fields() -> None:
 def test_every_compact_secret_name_is_detected_when_namespaced(
     secret_name: str,
 ) -> None:
-    assert is_secret_like_key(f"{'tenant' * 16}{secret_name}")
+    assert is_secret_like_key(
+        f"{'tenant' * 16}{secret_name}",
+        include_namespaced_exact_names=True,
+    )
 
 
 @pytest.mark.parametrize(

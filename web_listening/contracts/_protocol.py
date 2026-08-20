@@ -79,23 +79,19 @@ _SECRET_KEY_NAMES = {
     "proxyusername",
     "xapikey",
 }
-_SECRET_COMPACT_SUFFIXES = tuple(
-    sorted(
-        _SECRET_KEY_NAMES
-        | {
-            "accesskeyid",
-            "accesskey",
-            "apikey",
-            "authorization",
-            "cookie",
-            "credential",
-            "credentials",
-            "password",
-            "secret",
-            "token",
-        }
-    )
+_SECRET_COMPACT_SUFFIXES = (
+    "accesskeyid",
+    "accesskey",
+    "apikey",
+    "authorization",
+    "cookie",
+    "credential",
+    "credentials",
+    "password",
+    "secret",
+    "token",
 )
+_SECRET_EXACT_NAMESPACED_SUFFIXES = tuple(sorted(_SECRET_KEY_NAMES))
 _WINDOWS_INVALID_FILENAME_CHARS = frozenset('<>:"/\\|?*')
 _WINDOWS_RESERVED_NAME_RE = re.compile(
     r"^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|"
@@ -104,7 +100,9 @@ _WINDOWS_RESERVED_NAME_RE = re.compile(
 )
 
 
-def is_secret_like_key(value: str) -> bool:
+def is_secret_like_key(
+    value: str, *, include_namespaced_exact_names: bool = False
+) -> bool:
     """Return whether a key name has a normalized credential-bearing shape."""
     normalized = unicodedata.normalize("NFKC", value)
     normalized = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", normalized)
@@ -115,6 +113,10 @@ def is_secret_like_key(value: str) -> bool:
         parts & _SECRET_KEY_PARTS
         or compact in _SECRET_KEY_NAMES
         or compact.endswith(_SECRET_COMPACT_SUFFIXES)
+        or (
+            include_namespaced_exact_names
+            and compact.endswith(_SECRET_EXACT_NAMESPACED_SUFFIXES)
+        )
     )
 
 

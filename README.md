@@ -1,6 +1,6 @@
 # web_listening
 
-`web_listening` 1.3 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
+`web_listening` 1.4 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
 
 The supported 1.0 scope is complete and stable. Future changes follow the semantic-version policy below. The canonical product flow is:
 
@@ -15,6 +15,8 @@ Version 1.1 adds a producer-only, robots-first diagnostic command for new Agenti
 Version 1.2 adds strict, offline `access-policy.v1` and `access-decision.v1` contracts for future read-path migration. It does not migrate or change any current network, crawler, sitemap, download, REST, or MCP execution path.
 
 Version 1.3 publishes the producer-confirmed `acquisition-manifest.v1` contract bundle and its strict offline validator. It freezes a future producer/consumer handoff without implementing acquisition runtime, immutable storage, retention, or manifest production.
+
+Version 1.4 adds the shared governed access gateway core that enforces the frozen access contracts around pinned HTTP transport, robots caching, manual redirects, and atomic per-origin pacing/budgets. It is a pure caller-independent core; current crawler, search, sitemap, file, CLI, API, and MCP paths are not migrated by this release.
 
 ## Robots and sitemap diagnosis
 
@@ -64,7 +66,15 @@ The robots matrix is fixed as follows. Every reject or error fails closed; retry
 
 Only `allow` decisions may reserve the target request. They require both a final `request_slot_reservation` and a matching `origin_reservation`; reject and error decisions require both fields to be JSON `null`. The origin reservation freezes reservation/pacing times, pacing interval, budget window, limit, prior usage, one reserved unit, and its per-origin budget ordinal. Its active budget window is half-open: `budget_window_started_at <= reserved_at < window_end`, and `not_before` must also remain inside that window. Pacing lineage is tracked by canonical origin independently of budget-window identity: every later same-origin reservation preserves the pacing interval and schedules `not_before` no earlier than the prior same-origin request start plus that interval. Exact budget windows preserve their limit and monotonically advance prior usage. Same-origin windows with different shapes must not overlap; only a genuinely later non-overlapping window may begin an independently proven budget lineage. Different origins still require independent complete proofs.
 
-Reservation arithmetic has fixed portable maxima: timestamps are no later than `9998-12-31T23:59:59.999999Z`, request/hop/budget ordinals are at most `1,000,000`, pacing is at most `86,400,000` milliseconds, a budget window is at most `86,400` seconds, and the budget limit and prior usage are each at most `1,000,000`. Arithmetic outside those bounds is a governed validation error and the offline CLI emits the shared canonical error envelope. These fields describe a reservation contract only—1.2 implements no network request, cache, concurrency control, pacing, or budget enforcement. Reject and error decisions carry the same strict `access-rejection-error.v1` envelope intended for later CLI/API/MCP consumers, and that envelope is also a standalone loadable access contract. Its evidence independently requires typed non-sensitive IDs derived from their policy digests, a cache key recomputed from canonical origin + identity digest + fixed policy version, zero-to-24-hour ordered freshness, an all-null or all-present origin-policy ID/digest/robots-digest trio, and the exact reason/outcome/retryability/robots-observation/evidence-nullability matrix. `contract.invalid` alone requires null evidence.
+Reservation arithmetic has fixed portable maxima: timestamps are no later than `9998-12-31T23:59:59.999999Z`, request/hop/budget ordinals are at most `1,000,000`, pacing is at most `86,400,000` milliseconds, a budget window is at most `86,400` seconds, and the budget limit and prior usage are each at most `1,000,000`. Arithmetic outside those bounds is a governed validation error and the offline CLI emits the shared canonical error envelope. Version 1.2 froze these fields without runtime enforcement; version 1.4 consumes them in the shared gateway core without changing their semantics. Reject and error decisions carry the same strict `access-rejection-error.v1` envelope intended for later CLI/API/MCP consumers, and that envelope is also a standalone loadable access contract. Its evidence independently requires typed non-sensitive IDs derived from their policy digests, a cache key recomputed from canonical origin + identity digest + fixed policy version, zero-to-24-hour ordered freshness, an all-null or all-present origin-policy ID/digest/robots-digest trio, and the exact reason/outcome/retryability/robots-observation/evidence-nullability matrix. `contract.invalid` alone requires null evidence.
+
+### Shared governed access gateway core
+
+`web_listening.blocks.access_gateway.AccessGateway` is the reusable core for later read-path migration. Its configuration binds one transparent identity, a non-empty set of exact allowed origins, the diagnostic evidence digest, policy TTL, redirect-hop cap, pacing interval, and hard budget window/limit. The default transport is the existing browser-free, proxy-free `SafePinnedTransport`; clients cannot auto-follow redirects. Every content request—including each consumed redirect source—therefore performs fresh all-address public DNS validation, connects only to the pinned set, preserves HTTPS SNI and the normalized `Host`, and verifies the actual peer before HTTP bytes.
+
+Robots policies are cached under exactly the frozen SHA-256 of canonical origin + transparent identity digest + `access-policy.v1`. Cache entries obey their contract expiry, support exact-origin or complete explicit invalidation, and use per-key concurrent single-flight; an invalidation racing an in-flight fetch prevents the stale result from repopulating the cache. Valid 200, 404, 401, 403, timeout, DNS/network, and parse outcomes are built only through the frozen access-policy and access-decision constructors. Redirect targets repeat canonical URL, exact-origin, HTTPS downgrade, cached robots-policy, reservation, and pinned-transport checks before their request; the explicit hop cap counts consumed redirect responses exactly.
+
+An allow atomically reserves one irreversible budget unit and its per-origin pacing slot before opening the target content request. Same-origin request starts are serialized through the reservation/start boundary, while different origins use independent locks and budgets. Once reserved, a unit remains consumed after cancellation, timeout, transport failure, redirect rejection, or consumer error so retries cannot amplify the hard budget; every path still releases the origin lock and closes any returned response. The core itself creates no files or temporary artifacts and invokes the caller's response consumer only after an allow decision. Robots reject/error decisions return strict `access-decision.v1` with no target request. Origin, SSRF/peer, downgrade, redirect-cap, and hard-budget failures remain typed fail-closed gateway errors because version 1.2 defines no valid decision reason code for them; the gateway does not misuse `contract.invalid` or invent parallel semantics.
 
 Validate or inspect either committed or producer-generated contract without network access:
 
@@ -366,7 +376,7 @@ Compatibility inventory last reviewed on **2026-08-20**.
 
 | Component | Compatibility policy / observation |
 |---|---|
-| `web-listening` | `1.3.0` |
+| `web-listening` | `1.4.0` |
 | Python | Declared `>=3.12,<3.13`; verified with 3.12.3 |
 | FastAPI | Project environment verified at 0.139.2 |
 | MCP | Declared `>=1.28.1,<2.0.0`; verified at 1.28.1; 2.x is not qualified |
@@ -391,6 +401,8 @@ Dependency qualification can trigger any level: use patch only when the supporte
 Issue #49 is an additive contract and offline-CLI capability, so it advances the project from 1.1.0 to **1.2.0**. It deliberately leaves existing execution authority unchanged. A later complete migration that makes current crawler/search/sitemap/download/API/MCP entrypoints obey the new access gateway changes authority semantics and therefore **requires 2.0.0** under this rubric; it must not be presented as a minor release.
 
 Issue #48 is another additive contract and offline-CLI capability, so it advances the project from 1.2.0 to **1.3.0**. It publishes canonical producer bytes only; the later runtime/storage producer work remains separately gated under Issues #52–#54.
+
+Issue #50 adds a shared caller-independent gateway core without migrating any supported read path or changing existing execution authority, so it advances the project from 1.3.0 to **1.4.0**. The later Issue #51 migration remains a Major-version change under the rule above.
 
 ### Weekly review policy
 

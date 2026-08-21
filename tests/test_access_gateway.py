@@ -14,6 +14,8 @@ from typing import Callable, Iterator, Mapping
 
 import pytest
 
+from web_listening.blocks import access_gateway as access_gateway_module
+from web_listening.blocks import site_diagnostic as site_diagnostic_module
 from web_listening.blocks.access_gateway import (
     AccessGateway,
     AccessGatewayBudgetError,
@@ -24,10 +26,10 @@ from web_listening.blocks.access_gateway import (
     AccessGatewayTransportError,
 )
 from web_listening.blocks.site_diagnostic import (
+    BodyFailure,
     RawHttpResponse,
     SafePinnedTransport,
     TransportFailure,
-    _BodyFailure,
     normalize_origin,
 )
 from web_listening.contracts.access_decision import (
@@ -46,6 +48,25 @@ from web_listening.contracts.site_diagnostic import (
 ORIGIN = normalize_origin("https://example.com")
 OTHER_ORIGIN = normalize_origin("https://other.example")
 DIAGNOSTIC_SHA256 = "d" * 64
+GATEWAY_DIAGNOSTIC_HELPERS = (
+    "BodyFailure",
+    "decode_robots_utf8",
+    "header_value",
+    "looks_like_html",
+    "parse_content_type",
+    "read_bounded_body",
+)
+
+
+def test_gateway_diagnostic_helpers_are_supported_public_exports() -> None:
+    supported_exports = set(site_diagnostic_module.__all__)
+
+    for name in GATEWAY_DIAGNOSTIC_HELPERS:
+        assert name in supported_exports
+        assert getattr(access_gateway_module, name) is getattr(
+            site_diagnostic_module,
+            name,
+        )
 
 
 def identity() -> DiagnosticIdentity:
@@ -270,7 +291,7 @@ def test_gateway_owns_valid_robots_200_response_close(
         }
     )
     monkeypatch.setattr(
-        "web_listening.blocks.access_gateway._read_bounded_body",
+        "web_listening.blocks.access_gateway.read_bounded_body",
         lambda *args, **kwargs: SimpleNamespace(
             body=b"User-agent: *\nAllow: /public\n"
         ),
@@ -302,14 +323,14 @@ def test_gateway_owns_robots_200_close_on_early_body_failure(
     )
 
     def fail_before_body_iteration(*args: object, **kwargs: object) -> object:
-        raise _BodyFailure(
+        raise BodyFailure(
             "unsupported_or_multiple_content_encoding",
             wire=0,
             decoded=0,
         )
 
     monkeypatch.setattr(
-        "web_listening.blocks.access_gateway._read_bounded_body",
+        "web_listening.blocks.access_gateway.read_bounded_body",
         fail_before_body_iteration,
     )
 

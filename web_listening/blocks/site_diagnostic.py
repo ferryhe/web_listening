@@ -2545,7 +2545,16 @@ def load_site_diagnostic(path: str | Path) -> SiteDiagnostic:
         raise SiteDiagnosticError(f"invalid site diagnostic artifact or digest: {exc}") from exc
 
 
+BodyFailure = _BodyFailure
+decode_robots_utf8 = _decode_robots_utf8
+header_value = _header
+looks_like_html = _looks_like_html
+parse_content_type = _parse_content_type
+read_bounded_body = _read_bounded_body
+
+
 __all__ = [
+    "BodyFailure",
     "DiagnosticBudgets",
     "DiagnosticTransport",
     "RawHttpResponse",
@@ -2554,10 +2563,15 @@ __all__ = [
     "TransportFailure",
     "build_origin_policy_evidence",
     "canonical_host_header",
+    "decode_robots_utf8",
     "diagnose_site",
-    "load_site_diagnostic",
+    "header_value",
     "is_public_address",
+    "load_site_diagnostic",
+    "looks_like_html",
     "normalize_http_url",
+    "parse_content_type",
     "parse_robots",
+    "read_bounded_body",
     "write_site_diagnostic",
 ]

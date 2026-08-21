@@ -12,22 +12,22 @@ from typing import Callable, Generic, Mapping, TypeVar
 from urllib.parse import urljoin
 
 from web_listening.blocks.site_diagnostic import (
+    BodyFailure,
     DiagnosticTransport,
     ParsedRobots,
     RawHttpResponse,
     SafePinnedTransport,
     SiteDiagnosticError,
     TransportFailure,
-    _BodyFailure,
-    _decode_robots_utf8,
-    _header,
-    _looks_like_html,
-    _parse_content_type,
-    _read_bounded_body,
     build_origin_policy_evidence,
+    decode_robots_utf8,
+    header_value,
     is_public_address,
+    looks_like_html,
     normalize_http_url,
+    parse_content_type,
     parse_robots,
+    read_bounded_body,
 )
 from web_listening.contracts.access_decision import (
     MAX_BUDGET_WINDOW_SECONDS,
@@ -296,7 +296,7 @@ class AccessGateway:
 
             if raw.status in _REDIRECT_STATUSES:
                 try:
-                    location = _header(raw.headers, "Location")
+                    location = header_value(raw.headers, "Location")
                     if not location:
                         raise AccessGatewayRedirectError(
                             "redirect response is missing Location"
@@ -505,7 +505,7 @@ class AccessGateway:
 
         try:
             try:
-                body = _read_bounded_body(
+                body = read_bounded_body(
                     raw,
                     url=robots_url,
                     wire_limit=self.config.max_robots_body_bytes,
@@ -513,7 +513,7 @@ class AccessGateway:
                     aggregate_wire_remaining=self.config.max_robots_body_bytes,
                     aggregate_decoded_remaining=self.config.max_robots_body_bytes,
                 ).body
-            except _BodyFailure as exc:
+            except BodyFailure as exc:
                 if exc.reason == BODY_TLS_POLICY_OUTCOME:
                     raise AccessGatewayTransportError(
                         "tls_policy",
@@ -534,8 +534,8 @@ class AccessGateway:
                     evidence=None,
                 )
 
-            media, parameters = _parse_content_type(
-                _header(raw.headers, "Content-Type")
+            media, parameters = parse_content_type(
+                header_value(raw.headers, "Content-Type")
             )
             try:
                 if (
@@ -544,8 +544,8 @@ class AccessGateway:
                     or parameters.get("charset", "utf-8") not in {"utf-8", "utf8"}
                 ):
                     raise ValueError("unsupported robots MIME or charset")
-                text = _decode_robots_utf8(body)
-                if _looks_like_html(text):
+                text = decode_robots_utf8(body)
+                if looks_like_html(text):
                     raise ValueError("robots response looks like markup")
                 parsed = parse_robots(
                     text,

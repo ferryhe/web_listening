@@ -5,6 +5,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from web_listening.blocks.governed_read import (
+    AccessRejectedError,
+    GOVERNED_READ_RUNTIME_ERRORS,
+    access_rejection_payload,
+    governed_read_failure_payload,
+)
+
 from web_listening.blocks.acquisition_fallback import (
     DEFAULT_CHAINS,
     GOAL_PRESET_QUALITY_GATES,
@@ -70,15 +77,23 @@ def web_listening_probe_tool_once(
             site_key=site_key,
             adapter_id=adapter or adapter_id,
             profile_path=profile_path,
-            allowed_domains=_normalize_allowed_domains(safety_payload.get("allowed_domains", allowed_domains)),
-            allow_stealth_browser=bool(safety_payload.get("allow_stealth_browser", allow_stealth_browser)),
+            allowed_domains=_normalize_allowed_domains(
+                safety_payload.get("allowed_domains", allowed_domains)
+            ),
+            allow_stealth_browser=bool(
+                safety_payload.get("allow_stealth_browser", allow_stealth_browser)
+            ),
             require_authorized_access=bool(
-                safety_payload.get("require_authorized_access", require_authorized_access)
+                safety_payload.get(
+                    "require_authorized_access", require_authorized_access
+                )
             ),
         )
         attempt = CaptureAttempt(**payload["attempt"])
         profile = payload.get("profile", {})
-        effective_gates = quality_gates or (profile.get("quality_gates", {}) if isinstance(profile, dict) else {})
+        effective_gates = quality_gates or (
+            profile.get("quality_gates", {}) if isinstance(profile, dict) else {}
+        )
         result = tool_result_from_capture_attempt(
             attempt,
             requested_quality_gates=quality_gates or {},
@@ -132,13 +147,17 @@ def web_listening_recommend_next_tool(
             safety=safety,
             strategy=strategy,
         )
-        parsed_attempts = [_capture_attempt_from_mcp_attempt(attempt) for attempt in attempts]
+        parsed_attempts = [
+            _capture_attempt_from_mcp_attempt(attempt) for attempt in attempts
+        ]
         next_tool = recommend_next_adapter(resolved_profile, parsed_attempts)
         return _success_result(
             tool="web_listening_recommend_next_tool",
             data={
                 "next_tool": next_tool or None,
-                "profile": _safe_profile_payload(resolved_profile.model_dump(mode="json")),
+                "profile": _safe_profile_payload(
+                    resolved_profile.model_dump(mode="json")
+                ),
                 "attempt_count": len(parsed_attempts),
             },
             data_count=1 if next_tool else 0,
@@ -146,8 +165,14 @@ def web_listening_recommend_next_tool(
             has_data=False,
             next_tool=next_tool or None,
             next_action=f"try_adapter:{next_tool}" if next_tool else None,
-            stop_reason="next_tool_recommended" if next_tool else "no_available_adapter",
+            stop_reason="next_tool_recommended"
+            if next_tool
+            else "no_available_adapter",
         )
+    except AccessRejectedError as exc:
+        return access_rejection_payload(exc)
+    except GOVERNED_READ_RUNTIME_ERRORS as exc:
+        return governed_read_failure_payload(exc)
     except Exception as exc:
         return _error_result(
             "web_listening_recommend_next_tool",
@@ -172,7 +197,7 @@ def web_listening_acquire_with_fallback(
     max_attempts: int | None = None,
     inline_content_limit: int = 2_000,
 ) -> dict[str, Any]:
-    """Run the shared core fallback engine for MCP callers."""
+    """Evaluate candidate fallback evidence without granting target-read authority."""
 
     try:
         url = validate_http_url(url)
@@ -181,7 +206,9 @@ def web_listening_acquire_with_fallback(
         if goal_preset is not None and goal_preset not in GOAL_PRESET_QUALITY_GATES:
             allowed = ", ".join(GOAL_PRESET_QUALITY_GATES)
             raise AcquisitionToolError(f"goal_preset must be one of: {allowed}")
-        if profile_path and _has_inline_safety_override(safety=safety, allowed_domains=allowed_domains):
+        if profile_path and _has_inline_safety_override(
+            safety=safety, allowed_domains=allowed_domains
+        ):
             raise AcquisitionToolError(
                 "profile_path loads a complete acquisition profile; inline safety overrides are not allowed with profile_path"
             )
@@ -219,6 +246,10 @@ def web_listening_acquire_with_fallback(
             code="invalid_acquisition_request",
             message=str(exc),
         )
+    except AccessRejectedError as exc:
+        return access_rejection_payload(exc)
+    except GOVERNED_READ_RUNTIME_ERRORS as exc:
+        return governed_read_failure_payload(exc)
     except Exception as exc:
         return _error_result(
             "web_listening_acquire_with_fallback",
@@ -231,6 +262,7 @@ def web_listening_acquire_with_fallback(
 def web_listening_bootstrap_scope(
     scope_path: str,
     *,
+    acquisition_profile_path: str,
     download_files: bool = False,
     refresh_existing: bool = False,
     max_depth: int | None = None,
@@ -242,20 +274,27 @@ def web_listening_bootstrap_scope(
 ) -> dict[str, Any]:
     """Bootstrap a stored monitor scope and return its persisted job envelope."""
 
+    prepared = None
     try:
         from web_listening.blocks.job_orchestration import persist_job_result
-        from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
-        from web_listening.blocks.staged_workflow import bootstrap_scope as staged_bootstrap_scope
+        from web_listening.blocks.staged_workflow import (
+            bootstrap_scope as staged_bootstrap_scope,
+            prepare_scope_execution,
+        )
 
-        plan = load_monitor_scope_plan(scope_path)
-        started = datetime.now(timezone.utc)
-        artifacts = staged_bootstrap_scope(
+        prepared = prepare_scope_execution(
+            operation="bootstrap",
             scope_path=scope_path,
-            download_files=download_files,
-            refresh_existing=refresh_existing,
+            acquisition_profile_path=acquisition_profile_path,
             max_depth=max_depth,
             max_pages=max_pages,
             max_files=max_files,
+        )
+        started = datetime.now(timezone.utc)
+        artifacts = staged_bootstrap_scope(
+            prepared=prepared,
+            download_files=download_files,
+            refresh_existing=refresh_existing,
             report_path=report_path or None,
             summary_path=summary_path or None,
             include_summary=include_summary,
@@ -263,18 +302,27 @@ def web_listening_bootstrap_scope(
         first = artifacts.results[0] if artifacts.results else None
         job = persist_job_result(
             job_type="scope.bootstrap",
-            scope_id=first.scope_id if first else plan.scope_id,
+            scope_id=first.scope_id if first else artifacts.plan.scope_id,
             run_id=first.run_id if first else None,
             produced_artifacts={
                 "scope_path": str(scope_path),
+                "acquisition_profile_path": str(acquisition_profile_path),
                 "report_path": str(artifacts.report_path),
-                **({"summary_path": str(artifacts.summary_path)} if artifacts.summary_path else {}),
+                **(
+                    {"summary_path": str(artifacts.summary_path)}
+                    if artifacts.summary_path
+                    else {}
+                ),
             },
             accepted_at=started,
             started_at=started,
             finished_at=datetime.now(timezone.utc),
         )
         return _tool_result_from_job(job, tool="web_listening_bootstrap_scope")
+    except AccessRejectedError as exc:
+        return access_rejection_payload(exc)
+    except GOVERNED_READ_RUNTIME_ERRORS as exc:
+        return governed_read_failure_payload(exc)
     except Exception as exc:
         return _error_result(
             "web_listening_bootstrap_scope",
@@ -282,11 +330,15 @@ def web_listening_bootstrap_scope(
             message=_safe_error_message(exc, fallback="workflow bootstrap failed"),
             exception_type=type(exc).__name__,
         )
+    finally:
+        if prepared is not None:
+            prepared.close()
 
 
 def web_listening_run_scope(
     scope_path: str,
     *,
+    acquisition_profile_path: str,
     download_files: bool = False,
     max_depth: int | None = None,
     max_pages: int | None = None,
@@ -295,31 +347,46 @@ def web_listening_run_scope(
 ) -> dict[str, Any]:
     """Run an initialized monitor scope incrementally and return its job envelope."""
 
+    prepared = None
     try:
         from web_listening.blocks.job_orchestration import persist_job_result
-        from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
-        from web_listening.blocks.staged_workflow import run_scope as staged_run_scope
+        from web_listening.blocks.staged_workflow import (
+            prepare_scope_execution,
+            run_scope as staged_run_scope,
+        )
 
-        plan = load_monitor_scope_plan(scope_path)
-        started = datetime.now(timezone.utc)
-        artifacts = staged_run_scope(
+        prepared = prepare_scope_execution(
+            operation="run",
             scope_path=scope_path,
-            download_files=download_files,
+            acquisition_profile_path=acquisition_profile_path,
             max_depth=max_depth,
             max_pages=max_pages,
             max_files=max_files,
+        )
+        started = datetime.now(timezone.utc)
+        artifacts = staged_run_scope(
+            prepared=prepared,
+            download_files=download_files,
             report_path=report_path or None,
         )
         job = persist_job_result(
             job_type="scope.run",
-            scope_id=artifacts.result.scope_id or plan.scope_id,
+            scope_id=artifacts.result.scope_id or artifacts.plan.scope_id,
             run_id=artifacts.result.run_id,
-            produced_artifacts={"scope_path": str(scope_path), "report_path": str(artifacts.report_path)},
+            produced_artifacts={
+                "scope_path": str(scope_path),
+                "acquisition_profile_path": str(acquisition_profile_path),
+                "report_path": str(artifacts.report_path),
+            },
             accepted_at=started,
             started_at=started,
             finished_at=datetime.now(timezone.utc),
         )
         return _tool_result_from_job(job, tool="web_listening_run_scope")
+    except AccessRejectedError as exc:
+        return access_rejection_payload(exc)
+    except GOVERNED_READ_RUNTIME_ERRORS as exc:
+        return governed_read_failure_payload(exc)
     except Exception as exc:
         return _error_result(
             "web_listening_run_scope",
@@ -327,6 +394,9 @@ def web_listening_run_scope(
             message=_safe_error_message(exc, fallback="workflow run failed"),
             exception_type=type(exc).__name__,
         )
+    finally:
+        if prepared is not None:
+            prepared.close()
 
 
 def web_listening_report_scope(
@@ -352,7 +422,9 @@ def web_listening_report_scope(
     try:
         from web_listening.blocks.job_orchestration import persist_job_result
         from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
-        from web_listening.blocks.staged_workflow import report_scope as staged_report_scope
+        from web_listening.blocks.staged_workflow import (
+            report_scope as staged_report_scope,
+        )
 
         plan = load_monitor_scope_plan(scope_path)
         started = datetime.now(timezone.utc)
@@ -367,8 +439,16 @@ def web_listening_report_scope(
         )
         acquisition_artifacts = {
             **({"task_path": str(task_path)} if task_path else {}),
-            **({"acquisition_profile_path": str(acquisition_profile_path)} if acquisition_profile_path else {}),
-            **({"capture_attempt_path": str(capture_attempt_path)} if capture_attempt_path else {}),
+            **(
+                {"acquisition_profile_path": str(acquisition_profile_path)}
+                if acquisition_profile_path
+                else {}
+            ),
+            **(
+                {"capture_attempt_path": str(capture_attempt_path)}
+                if capture_attempt_path
+                else {}
+            ),
         }
         job = persist_job_result(
             job_type="scope.report",
@@ -409,7 +489,9 @@ def web_listening_export_manifest(
     try:
         from web_listening.blocks.job_orchestration import persist_job_result
         from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
-        from web_listening.blocks.staged_workflow import export_manifest as staged_export_manifest
+        from web_listening.blocks.staged_workflow import (
+            export_manifest as staged_export_manifest,
+        )
 
         plan = load_monitor_scope_plan(scope_path)
         started = datetime.now(timezone.utc)
@@ -423,8 +505,16 @@ def web_listening_export_manifest(
             capture_attempt_path=capture_attempt_path or None,
         )
         acquisition_artifacts = {
-            **({"acquisition_profile_path": str(acquisition_profile_path)} if acquisition_profile_path else {}),
-            **({"capture_attempt_path": str(capture_attempt_path)} if capture_attempt_path else {}),
+            **(
+                {"acquisition_profile_path": str(acquisition_profile_path)}
+                if acquisition_profile_path
+                else {}
+            ),
+            **(
+                {"capture_attempt_path": str(capture_attempt_path)}
+                if capture_attempt_path
+                else {}
+            ),
         }
         job = persist_job_result(
             job_type="scope.manifest",
@@ -532,7 +622,6 @@ def web_listening_read_artifact(
         )
 
 
-
 def _resolve_profile_payload(
     *,
     url: str,
@@ -555,13 +644,20 @@ def _resolve_profile_payload(
     safety_payload = safety or {}
     resolved = build_default_acquisition_profile(
         site_key=normalized_site_key,
-        allowed_domains=_normalize_allowed_domains(safety_payload.get("allowed_domains", allowed_domains)) or [],
+        allowed_domains=_normalize_allowed_domains(
+            safety_payload.get("allowed_domains", allowed_domains)
+        )
+        or [],
         allow_stealth_browser=bool(safety_payload.get("allow_stealth_browser", False)),
-        require_authorized_access=bool(safety_payload.get("require_authorized_access", False)),
+        require_authorized_access=bool(
+            safety_payload.get("require_authorized_access", False)
+        ),
     )
     if strategy in DEFAULT_CHAINS:
         chain = DEFAULT_CHAINS[strategy]
-        resolved = resolved.model_copy(update={"default_adapter": chain[0], "fallback_order": chain[1:]})
+        resolved = resolved.model_copy(
+            update={"default_adapter": chain[0], "fallback_order": chain[1:]}
+        )
     return resolved
 
 
@@ -569,17 +665,31 @@ def _capture_attempt_from_mcp_attempt(payload: dict[str, Any]) -> CaptureAttempt
     adapter = payload.get("adapter") or payload.get("tool") or "web_http"
     data_status = str(payload.get("data_status") or "")
     raw_data_quality = payload.get("data_quality")
-    data_quality: dict[str, Any] = raw_data_quality if isinstance(raw_data_quality, dict) else {}
+    data_quality: dict[str, Any] = (
+        raw_data_quality if isinstance(raw_data_quality, dict) else {}
+    )
     return CaptureAttempt(
         adapter=adapter,
-        status=str(payload.get("status") or _capture_status_from_data_status(data_status)),
+        status=str(
+            payload.get("status") or _capture_status_from_data_status(data_status)
+        ),
         url=str(payload.get("url") or ""),
         final_url=str(payload.get("final_url") or ""),
         status_code=data_quality.get("status_code") or payload.get("status_code"),
-        word_count=int(data_quality.get("word_count") or payload.get("word_count") or 0),
-        link_count=int(data_quality.get("link_count") or payload.get("link_count") or 0),
-        document_link_count=int(data_quality.get("document_link_count") or payload.get("document_link_count") or 0),
-        failure_reason=str(payload.get("reason") or payload.get("failure_reason") or ""),
+        word_count=int(
+            data_quality.get("word_count") or payload.get("word_count") or 0
+        ),
+        link_count=int(
+            data_quality.get("link_count") or payload.get("link_count") or 0
+        ),
+        document_link_count=int(
+            data_quality.get("document_link_count")
+            or payload.get("document_link_count")
+            or 0
+        ),
+        failure_reason=str(
+            payload.get("reason") or payload.get("failure_reason") or ""
+        ),
     )
 
 
@@ -615,14 +725,20 @@ def _default_allowed_domains_for_url(
     return [host] if host else None
 
 
-def _has_inline_safety_override(*, safety: dict[str, Any] | None, allowed_domains: list[str] | str | None) -> bool:
+def _has_inline_safety_override(
+    *, safety: dict[str, Any] | None, allowed_domains: list[str] | str | None
+) -> bool:
     if allowed_domains is not None:
         return True
     if not safety:
         return False
     return any(
         field in safety
-        for field in ("allowed_domains", "allow_stealth_browser", "require_authorized_access")
+        for field in (
+            "allowed_domains",
+            "allow_stealth_browser",
+            "require_authorized_access",
+        )
     )
 
 
@@ -673,8 +789,14 @@ def _tool_result_from_job(job: Any, *, tool: str) -> dict[str, Any]:
     payload = job.to_delivery_payload()
     job_payload = payload.get("job", {}) if isinstance(payload, dict) else {}
     error_payload = payload.get("error", {}) if isinstance(payload, dict) else {}
-    artifacts_payload = payload.get("artifacts", {}) if isinstance(payload, dict) else {}
-    produced = artifacts_payload.get("produced", {}) if isinstance(artifacts_payload, dict) else {}
+    artifacts_payload = (
+        payload.get("artifacts", {}) if isinstance(payload, dict) else {}
+    )
+    produced = (
+        artifacts_payload.get("produced", {})
+        if isinstance(artifacts_payload, dict)
+        else {}
+    )
     status = str(job_payload.get("status") or getattr(job, "status", ""))
 
     if status in {"queued", "running"}:
@@ -701,9 +823,13 @@ def _tool_result_from_job(job: Any, *, tool: str) -> dict[str, Any]:
     error = None
     if not ok:
         error = ToolResultError(
-            code=str(error_payload.get("code") or "job_failed") if isinstance(error_payload, dict) else "job_failed",
+            code=str(error_payload.get("code") or "job_failed")
+            if isinstance(error_payload, dict)
+            else "job_failed",
             message="job failed",
-            retryable=bool(error_payload.get("is_retryable", False)) if isinstance(error_payload, dict) else False,
+            retryable=bool(error_payload.get("is_retryable", False))
+            if isinstance(error_payload, dict)
+            else False,
             safe_to_escalate=False,
         )
 
@@ -713,19 +839,29 @@ def _tool_result_from_job(job: Any, *, tool: str) -> dict[str, Any]:
         data_status=data_status,  # type: ignore[arg-type]
         data_count=len(produced) if isinstance(produced, dict) else 0,
         tool=tool,
-        data={"job": job_payload, "artifact_contract": payload.get("artifact_contract", {})},
+        data={
+            "job": job_payload,
+            "artifact_contract": payload.get("artifact_contract", {}),
+        },
         artifacts=artifacts_payload if isinstance(artifacts_payload, dict) else {},
         next_action=payload.get("next_action") if isinstance(payload, dict) else None,
         error=error,
         stop_reason=stop_reason,
-        meta={"contract_version": "web-listening-tool-result.v1", "source_contract": payload.get("contract_version")},
+        meta={
+            "contract_version": "web-listening-tool-result.v1",
+            "source_contract": payload.get("contract_version"),
+        },
     ).model_dump(mode="json")
 
 
 def _resolve_safe_artifact_path(path: str) -> Path:
     data_root = settings.data_dir.resolve()
     requested = Path(path)
-    resolved = requested.resolve() if requested.is_absolute() else (data_root / requested).resolve()
+    resolved = (
+        requested.resolve()
+        if requested.is_absolute()
+        else (data_root / requested).resolve()
+    )
     try:
         resolved.relative_to(data_root)
     except ValueError as exc:
@@ -736,7 +872,10 @@ def _resolve_safe_artifact_path(path: str) -> Path:
 
 
 def _looks_like_text_artifact(content: str) -> bool:
-    return all(char in "\t\n\r" or (32 <= ord(char) < 127) or ord(char) > 159 for char in content)
+    return all(
+        char in "\t\n\r" or (32 <= ord(char) < 127) or ord(char) > 159
+        for char in content
+    )
 
 
 def _safe_safety_payload(safety: Any) -> dict[str, Any]:
@@ -745,7 +884,9 @@ def _safe_safety_payload(safety: Any) -> dict[str, Any]:
     return {
         "allowed_domains": list(safety.get("allowed_domains", [])),
         "allow_stealth_browser": bool(safety.get("allow_stealth_browser", False)),
-        "require_authorized_access": bool(safety.get("require_authorized_access", False)),
+        "require_authorized_access": bool(
+            safety.get("require_authorized_access", False)
+        ),
     }
 
 

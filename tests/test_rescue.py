@@ -1,10 +1,16 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from web_listening.blocks import rescue
+from web_listening.blocks.governed_read import GovernedReadGateway
 from web_listening.models import Site, SiteSnapshot
 
 
 class FakeCrawler:
+    def __init__(self, *, read_gateway):
+        assert isinstance(read_gateway, GovernedReadGateway)
+
     def __enter__(self):
         return self
 
@@ -31,8 +37,12 @@ class FakeCrawler:
 
 def test_run_site_rescue_preserves_real_site_id(monkeypatch):
     monkeypatch.setattr(rescue, "Crawler", FakeCrawler)
+    read_gateway = GovernedReadGateway(object(), max_body_bytes=1)
 
-    result = rescue.run_site_rescue(Site(id=42, url="https://example.com", name="Example"))
+    result = rescue.run_site_rescue(
+        Site(id=42, url="https://example.com", name="Example"),
+        read_gateway=read_gateway,
+    )
 
     assert result.resolved is True
     assert result.winning_attempt is not None
@@ -40,11 +50,30 @@ def test_run_site_rescue_preserves_real_site_id(monkeypatch):
     assert result.winning_attempt.snapshot.site_id == 42
 
 
+def test_run_site_rescue_without_gateway_rejects_before_crawler_construction(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        rescue,
+        "Crawler",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("Crawler constructed without governed authority")
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError, match="every read requires AccessGateway authority"
+    ):
+        rescue.run_site_rescue(Site(id=42, url="https://example.com", name="Example"))
+
+
 def test_build_default_site_rescue_candidates_uses_browser_user_agent_profile():
     candidates = rescue.build_default_site_rescue_candidates(
         Site(id=7, url="https://example.com", name="Example")
     )
 
-    browser_candidate = next(candidate for candidate in candidates if candidate.strategy == "browser")
+    browser_candidate = next(
+        candidate for candidate in candidates if candidate.strategy == "browser"
+    )
     assert browser_candidate.fetch_mode == "browser"
     assert browser_candidate.fetch_config_json["user_agent_profile"] == "browser"

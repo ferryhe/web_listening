@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypeVar
 
-from web_listening.blocks.monitor_scope_planner import compute_scope_fingerprint, load_monitor_scope_plan
+from web_listening.blocks.monitor_scope_planner import (
+    compute_scope_fingerprint,
+    load_monitor_scope_plan,
+)
+from web_listening.blocks.governed_read import ROLLBACK_REQUIRED_READ_ERRORS
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
 from web_listening.models import CrawlScope, Job
@@ -14,7 +18,9 @@ from web_listening.models import CrawlScope, Job
 T = TypeVar("T")
 
 
-def _summarize_artifacts(produced_artifacts: dict[str, object] | None) -> dict[str, object]:
+def _summarize_artifacts(
+    produced_artifacts: dict[str, object] | None,
+) -> dict[str, object]:
     artifacts = produced_artifacts or {}
     artifact_keys = sorted(artifacts.keys())
     path_keys = [key for key in artifact_keys if key.endswith("_path")]
@@ -63,7 +69,9 @@ class JobProgressReporter:
             fields["run_id"] = run_id
         if produced_artifacts is not None:
             fields["produced_artifacts"] = produced_artifacts
-            fields["artifact_summary"] = artifact_summary or _summarize_artifacts(produced_artifacts)
+            fields["artifact_summary"] = artifact_summary or _summarize_artifacts(
+                produced_artifacts
+            )
         elif artifact_summary is not None:
             fields["artifact_summary"] = artifact_summary
         if error is not None:
@@ -89,6 +97,23 @@ class JobProgressReporter:
         return updated
 
 
+@dataclass
+class BufferedJobProgressReporter:
+    """Hold synchronous scope progress in memory until execution is accepted."""
+
+    job: Job
+
+    def update(self, **updates) -> Job:
+        fields = dict(updates)
+        if "progress" in fields:
+            fields["progress"] = max(0, min(100, int(fields["progress"])))
+        produced_artifacts = fields.get("produced_artifacts")
+        if produced_artifacts is not None and "artifact_summary" not in fields:
+            fields["artifact_summary"] = _summarize_artifacts(produced_artifacts)
+        self.job = self.job.model_copy(update=fields)
+        return self.job
+
+
 def persist_job_result(
     *,
     job_type: str,
@@ -108,7 +133,13 @@ def persist_job_result(
     artifact_summary: dict[str, object] | None = None,
 ) -> Job:
     artifacts = produced_artifacts or {}
-    resolved_stage = stage or ("completed" if status == "completed" else "failed" if status == "failed" else "accepted")
+    resolved_stage = stage or (
+        "completed"
+        if status == "completed"
+        else "failed"
+        if status == "failed"
+        else "accepted"
+    )
     storage = Storage(settings.db_path)
     try:
         return storage.add_job(
@@ -135,7 +166,17 @@ def persist_job_result(
         storage.close()
 
 
-def execute_job(*, job_type: str, scope_id: int | None, runner: Callable[..., dict[str, object]]) -> Job:
+def execute_job(
+    *,
+    job_type: str,
+    scope_id: int | None,
+    runner: Callable[..., dict[str, object]],
+    defer_persistence: bool = False,
+) -> Job:
+    if defer_persistence:
+        return _execute_deferred_job(
+            job_type=job_type, scope_id=scope_id, runner=runner
+        )
     accepted_at = datetime.now(timezone.utc)
     storage = Storage(settings.db_path)
     try:
@@ -197,7 +238,8 @@ def execute_job(*, job_type: str, scope_id: int | None, runner: Callable[..., di
         scope_id=result.get("scope_id", scope_id),
         run_id=result.get("run_id"),
         produced_artifacts=artifacts,
-        artifact_summary=result.get("artifact_summary") or _summarize_artifacts(artifacts),
+        artifact_summary=result.get("artifact_summary")
+        or _summarize_artifacts(artifacts),
         error="",
         error_code="",
         error_detail={},
@@ -207,10 +249,82 @@ def execute_job(*, job_type: str, scope_id: int | None, runner: Callable[..., di
     return updated
 
 
-def resolve_scope_plan_path(scope_id: int, *, scope: CrawlScope | None = None, data_dir: str | Path | None = None) -> Path:
+def _execute_deferred_job(
+    *,
+    job_type: str,
+    scope_id: int | None,
+    runner: Callable[..., dict[str, object]],
+) -> Job:
+    """Persist one final job only after a governed scope execution succeeds."""
+    accepted_at = datetime.now(timezone.utc)
+    started_at = datetime.now(timezone.utc)
+    reporter = BufferedJobProgressReporter(
+        Job(
+            job_type=job_type,
+            status="running",
+            stage="loading_scope",
+            stage_message="Using sealed scope authority.",
+            progress=5,
+            scope_id=scope_id,
+            accepted_at=accepted_at,
+            started_at=started_at,
+        )
+    )
+    try:
+        signature = inspect.signature(runner)
+        result = runner(reporter) if len(signature.parameters) >= 1 else runner()
+        result = result or {}
+    except ROLLBACK_REQUIRED_READ_ERRORS:
+        raise
+    except Exception as exc:
+        persist_job_result(
+            job_type=job_type,
+            scope_id=scope_id,
+            error=str(exc),
+            status="failed",
+            accepted_at=accepted_at,
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc),
+            stage="failed",
+            stage_message="Job failed before completion.",
+            error_code="job_execution_error",
+            error_detail={
+                "exception_type": exc.__class__.__name__,
+                "message": str(exc),
+                "job_type": job_type,
+            },
+            is_retryable=True,
+        )
+        raise
+
+    artifacts = result.get("produced_artifacts", {})
+    return persist_job_result(
+        job_type=job_type,
+        scope_id=result.get("scope_id", scope_id),
+        run_id=result.get("run_id"),
+        produced_artifacts=artifacts,
+        status="completed",
+        accepted_at=accepted_at,
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc),
+        stage="completed",
+        stage_message="Job completed successfully.",
+        artifact_summary=result.get("artifact_summary")
+        or _summarize_artifacts(artifacts),
+    )
+
+
+def resolve_scope_plan_path(
+    scope_id: int,
+    *,
+    scope: CrawlScope | None = None,
+    data_dir: str | Path | None = None,
+) -> Path:
     root = Path(data_dir or settings.data_dir)
     if not root.exists():
-        raise FileNotFoundError(f"Could not find data directory `{root}` for scope plan lookup.")
+        raise FileNotFoundError(
+            f"Could not find data directory `{root}` for scope plan lookup."
+        )
 
     plans_root = root / "plans"
     search_root = plans_root if plans_root.exists() else root
@@ -232,7 +346,10 @@ def resolve_scope_plan_path(scope_id: int, *, scope: CrawlScope | None = None, d
             continue
         if plan.scope_id == scope_id:
             return candidate
-        if expected_fingerprint is not None and plan.scope_fingerprint == expected_fingerprint:
+        if (
+            expected_fingerprint is not None
+            and plan.scope_fingerprint == expected_fingerprint
+        ):
             return candidate
         if scope is not None and (
             plan.seed_url.rstrip("/") == scope.seed_url.rstrip("/")
@@ -240,4 +357,6 @@ def resolve_scope_plan_path(scope_id: int, *, scope: CrawlScope | None = None, d
             and plan.allowed_file_prefixes == scope.allowed_file_prefixes
         ):
             return candidate
-    raise FileNotFoundError(f"Could not locate a monitor scope plan YAML for scope_id={scope_id} under `{root}`.")
+    raise FileNotFoundError(
+        f"Could not locate a monitor scope plan YAML for scope_id={scope_id} under `{root}`."
+    )

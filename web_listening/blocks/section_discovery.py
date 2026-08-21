@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 import json
 import re
 from typing import Any
@@ -10,6 +9,7 @@ from urllib.parse import urlsplit
 
 from web_listening.blocks.crawler import Crawler
 from web_listening.blocks.diff import extract_links, find_document_links
+from web_listening.blocks.governed_read import ROLLBACK_REQUIRED_READ_ERRORS
 from web_listening.blocks.polite import PolitePacer
 from web_listening.blocks.tree_crawler import (
     build_scope_from_site,
@@ -123,12 +123,18 @@ def _count_child_sections(section_path: str, section_paths: set[str]) -> int:
 
 
 def _extract_title(page) -> str:
-    headings = page.metadata_json.get("headings", []) if isinstance(page.metadata_json, dict) else []
+    headings = (
+        page.metadata_json.get("headings", [])
+        if isinstance(page.metadata_json, dict)
+        else []
+    )
     for heading in headings:
         value = str(heading).strip()
         if value:
             return value[:160]
-    for raw_line in (page.fit_markdown or page.markdown or page.content_text or "").splitlines():
+    for raw_line in (
+        page.fit_markdown or page.markdown or page.content_text or ""
+    ).splitlines():
         line = raw_line.strip()
         if not line:
             continue
@@ -138,7 +144,9 @@ def _extract_title(page) -> str:
     return ""
 
 
-def _append_unique(values: list[str], candidate: str, *, limit: int = _SAMPLE_LIMIT) -> None:
+def _append_unique(
+    values: list[str], candidate: str, *, limit: int = _SAMPLE_LIMIT
+) -> None:
     value = str(candidate or "").strip()
     if not value or value in values or len(values) >= limit:
         return
@@ -175,17 +183,68 @@ def _path_prefix(url: str, *, level: int) -> str:
 
 def _candidate_category(section_path: str, sample_titles: list[str]) -> str:
     haystack = f"{section_path} {' '.join(sample_titles)}".lower()
-    if any(token in haystack for token in ("exam-req", "/exam", "exams-admissions", "syllabus", "credential", "pass mark", "vee")):
+    if any(
+        token in haystack
+        for token in (
+            "exam-req",
+            "/exam",
+            "exams-admissions",
+            "syllabus",
+            "credential",
+            "pass mark",
+            "vee",
+        )
+    ):
         return "exam_education"
-    if any(token in haystack for token in ("research", "publication", "paper", "journal", "working-paper")):
+    if any(
+        token in haystack
+        for token in ("research", "publication", "paper", "journal", "working-paper")
+    ):
         return "research_publications"
-    if any(token in haystack for token in ("governance", "board", "leadership", "election", "bylaws", "policy", "guideline", "committee", "council", "annual-report")):
+    if any(
+        token in haystack
+        for token in (
+            "governance",
+            "board",
+            "leadership",
+            "election",
+            "bylaws",
+            "policy",
+            "guideline",
+            "committee",
+            "council",
+            "annual-report",
+        )
+    ):
         return "governance_management"
-    if any(token in haystack for token in ("finance", "financial", "budget", "statement", "accounting", "audit")):
+    if any(
+        token in haystack
+        for token in (
+            "finance",
+            "financial",
+            "budget",
+            "statement",
+            "accounting",
+            "audit",
+        )
+    ):
         return "finance_reports"
-    if any(token in haystack for token in ("membership", "member", "directory", "sponsorship", "advertising", "contact")):
+    if any(
+        token in haystack
+        for token in (
+            "membership",
+            "member",
+            "directory",
+            "sponsorship",
+            "advertising",
+            "contact",
+        )
+    ):
         return "membership_operations"
-    if any(token in haystack for token in ("news", "article", "announcement", "press", "congress")):
+    if any(
+        token in haystack
+        for token in ("news", "article", "announcement", "press", "congress")
+    ):
         return "news_announcements"
     return "general_reference"
 
@@ -237,7 +296,9 @@ def render_yaml(data: dict[str, Any]) -> str:
                             lines.append(f"{prefix}- {first_key}:")
                             lines.extend(_emit(first_value, indent + 4))
                         else:
-                            lines.append(f"{prefix}- {first_key}: {_scalar(first_value)}")
+                            lines.append(
+                                f"{prefix}- {first_key}: {_scalar(first_value)}"
+                            )
                         remaining = dict(list(item.items())[1:])
                         if remaining:
                             lines.extend(_emit(remaining, indent + 2))
@@ -343,9 +404,15 @@ class SectionDiscoverer:
         skipped_external_files = 0
         skipped_duplicate_pages = 0
 
-        while (primary_pages or sampled_level3_queue) and (scope.max_pages <= 0 or len(processed_page_urls) < scope.max_pages):
+        while (primary_pages or sampled_level3_queue) and (
+            scope.max_pages <= 0 or len(processed_page_urls) < scope.max_pages
+        ):
             is_sample_phase = not primary_pages
-            queued_url, depth = (primary_pages.popleft() if primary_pages else sampled_level3_queue.popleft())
+            queued_url, depth = (
+                primary_pages.popleft()
+                if primary_pages
+                else sampled_level3_queue.popleft()
+            )
             request_url = sanitize_request_url(queued_url) or queued_url
             try:
                 pacer.wait_for_request("page")
@@ -354,6 +421,8 @@ class SectionDiscoverer:
                     fetch_mode=scope.fetch_mode,
                     fetch_config_json=scope.fetch_config_json,
                 )
+            except ROLLBACK_REQUIRED_READ_ERRORS:
+                raise
             except Exception as exc:  # pragma: no cover - live failure path
                 page_failures.append(f"{request_url}: {type(exc).__name__}: {exc}")
                 continue
@@ -398,13 +467,18 @@ class SectionDiscoverer:
                     continue
                 if depth >= scope.max_depth:
                     continue
-                if canonical_link in queued_page_urls or canonical_link in processed_page_urls:
+                if (
+                    canonical_link in queued_page_urls
+                    or canonical_link in processed_page_urls
+                ):
                     skipped_duplicate_pages += 1
                     continue
                 next_depth = depth + 1
                 next_level = _path_level(canonical_link)
                 if next_level <= 2:
-                    primary_pages.append((sanitize_request_url(link) or link, next_depth))
+                    primary_pages.append(
+                        (sanitize_request_url(link) or link, next_depth)
+                    )
                     queued_page_urls.add(canonical_link)
                     continue
 
@@ -414,7 +488,9 @@ class SectionDiscoverer:
                     continue
                 branch_candidates.add(canonical_link)
                 if level3_sampled_counts[branch_path] < level3_sample_limit:
-                    sampled_level3_queue.append((sanitize_request_url(link) or link, next_depth))
+                    sampled_level3_queue.append(
+                        (sanitize_request_url(link) or link, next_depth)
+                    )
                     queued_page_urls.add(canonical_link)
                     level3_sampled_counts[branch_path] += 1
                 else:
@@ -424,7 +500,9 @@ class SectionDiscoverer:
             if in_scope_document_links:
                 pages_with_docs += 1
 
-            for section_path in _section_prefixes(canonical_page_url, max_section_depth=section_depth):
+            for section_path in _section_prefixes(
+                canonical_page_url, max_section_depth=section_depth
+            ):
                 aggregate = section_map.get(section_path)
                 if aggregate is None:
                     aggregate = _SectionAggregate(
@@ -449,19 +527,32 @@ class SectionDiscoverer:
                 doc_link_count=len(item.doc_urls),
                 sample_urls=item.sample_urls,
                 sample_titles=item.sample_titles,
-                candidate_category=_candidate_category(item.section_path, item.sample_titles),
+                candidate_category=_candidate_category(
+                    item.section_path, item.sample_titles
+                ),
             )
             for item in section_map.values()
         ]
         section_paths = {item.section_path for item in sections}
         for item in sections:
-            item.child_section_count = _count_child_sections(item.section_path, section_paths)
-        sections.sort(key=lambda item: (item.section_level, -item.child_section_count, -item.page_count, item.section_path))
+            item.child_section_count = _count_child_sections(
+                item.section_path, section_paths
+            )
+        sections.sort(
+            key=lambda item: (
+                item.section_level,
+                -item.child_section_count,
+                -item.page_count,
+                item.section_path,
+            )
+        )
         section_by_path = {item.section_path: item for item in sections}
 
         expansion_candidates: list[ExpansionCandidate] = []
         for branch_path, candidates in sorted(level3_candidate_urls.items()):
-            sampled_count = min(level3_sampled_counts.get(branch_path, 0), len(candidates))
+            sampled_count = min(
+                level3_sampled_counts.get(branch_path, 0), len(candidates)
+            )
             skipped_count = max(len(candidates) - sampled_count, 0)
             branch_section = section_by_path.get(branch_path)
             candidate_category = (
@@ -471,7 +562,10 @@ class SectionDiscoverer:
             )
             if candidate_category == "exam_education":
                 continue
-            if skipped_count <= 0 and candidate_category not in {"research_publications", "finance_reports"}:
+            if skipped_count <= 0 and candidate_category not in {
+                "research_publications",
+                "finance_reports",
+            }:
                 continue
             if skipped_count > 0:
                 reason = (
@@ -479,9 +573,7 @@ class SectionDiscoverer:
                     f"`{sampled_count}`; expand this branch before final scope selection."
                 )
             else:
-                reason = (
-                    f"`{branch_path}` looks like a high-value `{candidate_category}` branch; keep it available for targeted third-level expansion."
-                )
+                reason = f"`{branch_path}` looks like a high-value `{candidate_category}` branch; keep it available for targeted third-level expansion."
             expansion_candidates.append(
                 ExpansionCandidate(
                     branch_path=branch_path,
@@ -493,7 +585,11 @@ class SectionDiscoverer:
                 )
             )
         expansion_candidates.sort(
-            key=lambda item: (-item.skipped_candidate_pages, -item.discovered_candidate_pages, item.branch_path)
+            key=lambda item: (
+                -item.skipped_candidate_pages,
+                -item.discovered_candidate_pages,
+                item.branch_path,
+            )
         )
 
         return SiteSectionInventory(
@@ -508,7 +604,9 @@ class SectionDiscoverer:
             section_depth=section_depth,
             max_pages=scope.max_pages,
             page_limit_mode="unbounded" if scope.max_pages <= 0 else "bounded",
-            discovery_mode="structure_only" if not detect_documents else "structure_plus_documents",
+            discovery_mode="structure_only"
+            if not detect_documents
+            else "structure_plus_documents",
             discovery_strategy="adaptive_sections",
             detect_documents=detect_documents,
             level3_sample_limit=level3_sample_limit,
@@ -536,13 +634,27 @@ def render_markdown(
 ) -> str:
     total_pages = sum(site.pages_discovered for site in inventory.sites)
     total_level2_pages = sum(site.level2_pages_discovered for site in inventory.sites)
-    total_sampled_level3_pages = sum(site.sampled_level3_pages for site in inventory.sites)
-    total_expansion_candidates = sum(len(site.expansion_candidates) for site in inventory.sites)
+    total_sampled_level3_pages = sum(
+        site.sampled_level3_pages for site in inventory.sites
+    )
+    total_expansion_candidates = sum(
+        len(site.expansion_candidates) for site in inventory.sites
+    )
     total_sections = sum(len(site.sections) for site in inventory.sites)
     total_level_1 = sum(len(_level_sections(site, level=1)) for site in inventory.sites)
-    total_level_2 = sum(sum(1 for section in site.sections if section.section_level == 2) for site in inventory.sites)
-    total_level_3 = sum(sum(1 for section in site.sections if section.section_level == 3) for site in inventory.sites)
-    depth_limit_text = "unbounded within depth" if inventory.max_pages <= 0 else str(inventory.max_pages)
+    total_level_2 = sum(
+        sum(1 for section in site.sections if section.section_level == 2)
+        for site in inventory.sites
+    )
+    total_level_3 = sum(
+        sum(1 for section in site.sections if section.section_level == 3)
+        for site in inventory.sites
+    )
+    depth_limit_text = (
+        "unbounded within depth"
+        if inventory.max_pages <= 0
+        else str(inventory.max_pages)
+    )
     lines = [
         "# Discover Site Sections",
         "",
@@ -565,10 +677,20 @@ def render_markdown(
         "|---|---:|---:|---:|---:|---:|---|",
     ]
     for site in inventory.sites:
-        top_sections = ", ".join(
-            f"{section.section_path} [{section.candidate_category}] children={section.child_section_count}"
-            for section in sorted(site.sections, key=lambda item: (-item.child_section_count, -item.page_count, item.section_path))[:3]
-        ) or "-"
+        top_sections = (
+            ", ".join(
+                f"{section.section_path} [{section.candidate_category}] children={section.child_section_count}"
+                for section in sorted(
+                    site.sections,
+                    key=lambda item: (
+                        -item.child_section_count,
+                        -item.page_count,
+                        item.section_path,
+                    ),
+                )[:3]
+            )
+            or "-"
+        )
         level_1_sections = _level_sections(site, level=1)
         lines.append(
             f"| {site.display_name} | {site.pages_discovered} | {len(level_1_sections)} | {site.level2_pages_discovered} | {site.sampled_level3_pages} | {len(site.expansion_candidates)} | {top_sections} |"
@@ -578,7 +700,11 @@ def render_markdown(
     for site in inventory.sites:
         level_1_sections = sorted(
             _level_sections(site, level=1),
-            key=lambda item: (-item.child_section_count, -item.page_count, item.section_path),
+            key=lambda item: (
+                -item.child_section_count,
+                -item.page_count,
+                item.section_path,
+            ),
         )
         lines.append(f"### {site.display_name}")
         lines.append("")
@@ -592,16 +718,28 @@ def render_markdown(
         lines.append(f"- Level-2 pages discovered: `{site.level2_pages_discovered}`")
         lines.append(f"- Sampled level-3 pages: `{site.sampled_level3_pages}`")
         lines.append(f"- Level-3 sample limit per branch: `{site.level3_sample_limit}`")
-        lines.append("- Clarification: `Level-2 pages discovered` is a page count, not a count of level-1 directories.")
-        lines.append(f"- Allowed page prefixes: `{', '.join(site.allowed_page_prefixes)}`")
+        lines.append(
+            "- Clarification: `Level-2 pages discovered` is a page count, not a count of level-1 directories."
+        )
+        lines.append(
+            f"- Allowed page prefixes: `{', '.join(site.allowed_page_prefixes)}`"
+        )
         if site.sample_pages:
-            lines.append("- Sample pages: " + ", ".join(f"`{url}`" for url in site.sample_pages))
+            lines.append(
+                "- Sample pages: " + ", ".join(f"`{url}`" for url in site.sample_pages)
+            )
         if site.page_failures:
-            lines.append("- Page failures: " + ", ".join(f"`{item}`" for item in site.page_failures[:3]))
+            lines.append(
+                "- Page failures: "
+                + ", ".join(f"`{item}`" for item in site.page_failures[:3])
+            )
         if site.expansion_candidates:
             lines.append(
                 "- Expansion candidates: "
-                + ", ".join(f"`{item.branch_path}` ({item.discovered_candidate_pages} candidates)" for item in site.expansion_candidates[:5])
+                + ", ".join(
+                    f"`{item.branch_path}` ({item.discovered_candidate_pages} candidates)"
+                    for item in site.expansion_candidates[:5]
+                )
             )
         lines.append("")
         lines.extend(
@@ -625,7 +763,14 @@ def render_markdown(
                 "|---|---:|---:|---:|---|---|",
             ]
         )
-        for section in sorted(site.sections, key=lambda item: (-item.child_section_count, -item.page_count, item.section_path))[:top_sections_per_site]:
+        for section in sorted(
+            site.sections,
+            key=lambda item: (
+                -item.child_section_count,
+                -item.page_count,
+                item.section_path,
+            ),
+        )[:top_sections_per_site]:
             sample_pages = ", ".join(section.sample_urls[:2]) or "-"
             lines.append(
                 f"| {section.section_path} | {section.section_level} | {section.page_count} | {section.child_section_count} | "

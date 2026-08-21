@@ -20,12 +20,34 @@ from web_listening.blocks.acquisition_gateway import (
     AcquisitionOutcome,
     legacy_document_runtime_attempt,
 )
-from web_listening.blocks.diff import compute_hash, extract_links, find_document_links, select_compare_artifact
-from web_listening.blocks.document import DocumentProcessor
+from web_listening.blocks.diff import (
+    compute_hash,
+    extract_links,
+    find_document_links,
+    select_compare_artifact,
+)
+from web_listening.blocks.document import DocumentProcessor, publish_execution_file
+from web_listening.blocks.governed_read import ROLLBACK_REQUIRED_READ_ERRORS
 from web_listening.blocks.polite import PolitePacer
-from web_listening.blocks.storage import Storage
+from web_listening.blocks.storage import ExecutionArtifactOwnershipError, Storage
 from web_listening.contracts import CaptureResult
-from web_listening.models import AcquisitionAttempt, CrawlRun, CrawlScope, Document, FileObservation, PageEdge, PageSnapshot, Site, TrackedFile, TrackedPage
+from web_listening.models import (
+    AcquisitionAttempt,
+    CrawlRun,
+    CrawlScope,
+    Document,
+    FileObservation,
+    PageEdge,
+    PageSnapshot,
+    Site,
+    TrackedFile,
+    TrackedPage,
+)
+
+
+_ROLLBACK_REQUIRED_EXECUTION_ERRORS = ROLLBACK_REQUIRED_READ_ERRORS + (
+    ExecutionArtifactOwnershipError,
+)
 
 _TRACKING_QUERY_PREFIXES = ("utm_",)
 _TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
@@ -87,7 +109,9 @@ def path_matches_prefixes(path: str, prefixes: list[str]) -> bool:
         normalized_prefix = (prefix or "/").rstrip("/") or "/"
         if normalized_prefix == "/":
             return True
-        if normalized_path == normalized_prefix or normalized_path.startswith(normalized_prefix + "/"):
+        if normalized_path == normalized_prefix or normalized_path.startswith(
+            normalized_prefix + "/"
+        ):
             return True
     return False
 
@@ -161,12 +185,23 @@ class TreeCrawler:
         acquisition_gateway: AcquisitionGateway | None = None,
         document_processor: DocumentProcessor | None = None,
         pacing_config: dict | None = None,
+        initial_outcome: AcquisitionOutcome | None = None,
+        execution_seed_url: str | None = None,
     ):
         self.storage = storage
-        self.crawler = crawler if crawler is not None else (None if acquisition_gateway is not None else Crawler())
+        self.crawler = (
+            crawler
+            if crawler is not None
+            else (None if acquisition_gateway is not None else Crawler())
+        )
         self.acquisition_gateway = acquisition_gateway
         self.document_processor = document_processor
         self.pacing_config = dict(pacing_config or {})
+        self.initial_outcome = initial_outcome
+        admitted_request = getattr(initial_outcome, "request", None)
+        self.execution_seed_url = execution_seed_url or (
+            str(admitted_request.url) if admitted_request is not None else None
+        )
         self._owns_crawler = crawler is None and self.crawler is not None
         self._closed = False
 
@@ -201,11 +236,56 @@ class TreeCrawler:
                 raise
 
     @staticmethod
-    def _accepted_fetch_mode(outcome: AcquisitionOutcome, legacy_fetch_mode: str) -> str:
+    def _accepted_fetch_mode(
+        outcome: AcquisitionOutcome, legacy_fetch_mode: str
+    ) -> str:
         attempt = outcome.accepted_attempt
         if attempt is not None and attempt.authority_mode == "governed":
             return attempt.executor_id
         return legacy_fetch_mode
+
+    def _require_admitted_seed(self, seed_url: str) -> None:
+        outcome = self.initial_outcome
+        request = getattr(outcome, "request", None)
+        if (
+            outcome is None
+            or not outcome.accepted
+            or request is None
+            or self.execution_seed_url != seed_url
+            or str(request.url) != self.execution_seed_url
+        ):
+            raise ValueError("tree execution requires one accepted exact seed response")
+
+    def _acquire(
+        self,
+        url: str,
+        *,
+        run_id: str,
+        scope_id: str,
+        content_kind: str = "page",
+    ) -> AcquisitionOutcome:
+        if self.initial_outcome is not None:
+            outcome = self.initial_outcome
+            self.initial_outcome = None
+            if outcome.request is not None and str(outcome.request.url) != url:
+                raise ValueError(
+                    "admitted seed response does not match the tree seed URL"
+                )
+            rebind = getattr(self.acquisition_gateway, "rebind_outcome", None)
+            if rebind is not None:
+                outcome = rebind(
+                    outcome,
+                    run_id=run_id,
+                    scope_id=scope_id,
+                    content_kind=content_kind,
+                )
+            return outcome
+        return self.acquisition_gateway.acquire(
+            url,
+            run_id=run_id,
+            scope_id=scope_id,
+            content_kind=content_kind,
+        )
 
     def bootstrap_scope(
         self,
@@ -215,8 +295,46 @@ class TreeCrawler:
         download_files: bool = True,
     ) -> TreeCrawlResult:
         if self.acquisition_gateway is None:
-            raise ValueError("acquisition_gateway is required for formal tree bootstrap")
-        stored_scope = self.storage.add_crawl_scope(scope) if scope.id is None else self.storage.update_crawl_scope(scope)
+            raise ValueError(
+                "acquisition_gateway is required for formal tree bootstrap"
+            )
+        self._require_admitted_seed(scope.seed_url)
+        self.storage.begin_execution_transaction()
+        try:
+            result = self._bootstrap_scope_in_transaction(
+                scope,
+                institution=institution,
+                download_files=download_files,
+            )
+        except _ROLLBACK_REQUIRED_EXECUTION_ERRORS:
+            self.storage.rollback_execution_transaction()
+            raise
+        except Exception:
+            self.storage.commit_execution_transaction()
+            raise
+        except BaseException:
+            self.storage.rollback_execution_transaction()
+            raise
+        self.storage.commit_execution_transaction()
+        return result
+
+    def _bootstrap_scope_in_transaction(
+        self,
+        scope: CrawlScope,
+        *,
+        institution: str = "",
+        download_files: bool = True,
+    ) -> TreeCrawlResult:
+        if self.acquisition_gateway is None:
+            raise ValueError(
+                "acquisition_gateway is required for formal tree bootstrap"
+            )
+        self._require_admitted_seed(scope.seed_url)
+        stored_scope = (
+            self.storage.add_crawl_scope(scope)
+            if scope.id is None
+            else self.storage.update_crawl_scope(scope)
+        )
         run = self.storage.add_crawl_run(
             CrawlRun(
                 scope_id=stored_scope.id,
@@ -227,7 +345,9 @@ class TreeCrawler:
         )
         result = TreeCrawlResult(scope=stored_scope, run=run, pages=[], files=[])
         pacer = PolitePacer.from_config(self.pacing_config)
-        queued_pages: deque[tuple[str, int, Optional[int]]] = deque([(stored_scope.seed_url, 0, None)])
+        queued_pages: deque[tuple[str, int, Optional[int]]] = deque(
+            [(self.execution_seed_url or stored_scope.seed_url, 0, None)]
+        )
         seed_canonical_url = canonicalize_tracked_url(stored_scope.seed_url)
         queued_page_urls = {seed_canonical_url}
         processed_page_urls: set[str] = set()
@@ -239,29 +359,52 @@ class TreeCrawler:
         try:
             while queued_pages and requested_pages < stored_scope.max_pages:
                 queued_url, depth, from_page_id = queued_pages.popleft()
-                request_url = sanitize_request_url(queued_url) or queued_url
+                request_url = (
+                    queued_url
+                    if requested_pages == 0
+                    else sanitize_request_url(queued_url) or queued_url
+                )
                 requested_pages += 1
                 pacer.wait_for_request("page")
-                outcome = self.acquisition_gateway.acquire(request_url, run_id=str(run.id), scope_id=str(stored_scope.id))
+                outcome = self._acquire(
+                    request_url,
+                    run_id=str(run.id),
+                    scope_id=str(stored_scope.id),
+                )
                 outcome = self._persist_acquisition_outcome(
-                    outcome, requested_url=request_url, run_id=run.id, scope_id=stored_scope.id,
-                    content_kind="page")
+                    outcome,
+                    requested_url=request_url,
+                    run_id=run.id,
+                    scope_id=stored_scope.id,
+                    content_kind="page",
+                )
                 if not outcome.accepted:
-                    result.page_failures.append(f"{request_url}: {outcome.classification}")
+                    result.page_failures.append(
+                        f"{request_url}: {outcome.classification}"
+                    )
                     continue
                 page = outcome.page
 
-                canonical_page_url = canonicalize_tracked_url(page.final_url or request_url)
+                canonical_page_url = canonicalize_tracked_url(
+                    page.final_url or request_url
+                )
                 if not canonical_page_url:
                     continue
                 page_in_scope = is_page_url_in_scope(stored_scope, canonical_page_url)
-                entrypoint_only = canonical_page_url == seed_canonical_url and depth == 0 and not page_in_scope
+                entrypoint_only = (
+                    canonical_page_url == seed_canonical_url
+                    and depth == 0
+                    and not page_in_scope
+                )
                 if not page_in_scope and not entrypoint_only:
                     result.skipped_external_pages += 1
                     continue
                 if page_in_scope and canonical_page_url in processed_page_urls:
                     result.skipped_duplicate_pages += 1
-                    if from_page_id is not None and canonical_page_url in page_id_by_url:
+                    if (
+                        from_page_id is not None
+                        and canonical_page_url in page_id_by_url
+                    ):
                         self.storage.add_page_edge(
                             PageEdge(
                                 scope_id=stored_scope.id,
@@ -291,7 +434,9 @@ class TreeCrawler:
                             scope_id=stored_scope.id,
                             page_id=tracked_page.id,
                             run_id=run.id,
-                            attempt_id=outcome.accepted_attempt.attempt_id if outcome.accepted_attempt else None,
+                            attempt_id=outcome.accepted_attempt.attempt_id
+                            if outcome.accepted_attempt
+                            else None,
                             captured_at=datetime.now(timezone.utc),
                             content_hash=compute_hash(compare_text),
                             raw_html=page.raw_html,
@@ -305,7 +450,9 @@ class TreeCrawler:
                                 "hash_normalization": "whitespace-normalized-v1",
                                 "tree_depth": depth,
                             },
-                            fetch_mode=self._accepted_fetch_mode(outcome, stored_scope.fetch_mode),
+                            fetch_mode=self._accepted_fetch_mode(
+                                outcome, stored_scope.fetch_mode
+                            ),
                             final_url=page.final_url,
                             status_code=page.status_code,
                             links=page_links,
@@ -344,21 +491,33 @@ class TreeCrawler:
                         if not is_file_url_in_scope(stored_scope, canonical_link):
                             result.skipped_external_files += 1
                             continue
-                        if canonical_link in processed_file_urls or canonical_link in requested_file_urls:
+                        if (
+                            canonical_link in processed_file_urls
+                            or canonical_link in requested_file_urls
+                        ):
                             result.skipped_duplicate_files += 1
                             continue
-                        if not stored_scope.follow_files or len(requested_file_urls) >= stored_scope.max_files:
+                        if (
+                            not stored_scope.follow_files
+                            or len(requested_file_urls) >= stored_scope.max_files
+                        ):
                             continue
                         requested_file_urls.add(canonical_link)
                         admitted_file_url = canonical_link
                         if self.acquisition_gateway is not None:
                             file_outcome = self.acquisition_gateway.acquire(
-                                canonical_link, run_id=str(run.id), scope_id=str(stored_scope.id),
+                                canonical_link,
+                                run_id=str(run.id),
+                                scope_id=str(stored_scope.id),
                                 content_kind="document",
                             )
                             file_outcome = self._persist_acquisition_outcome(
-                                file_outcome, requested_url=canonical_link, run_id=run.id,
-                                scope_id=stored_scope.id, content_kind="document")
+                                file_outcome,
+                                requested_url=canonical_link,
+                                run_id=run.id,
+                                scope_id=stored_scope.id,
+                                content_kind="document",
+                            )
                             if not file_outcome.accepted:
                                 result.file_failures.append(
                                     f"{canonical_link}: {file_outcome.classification}"
@@ -372,7 +531,10 @@ class TreeCrawler:
                             ):
                                 result.skipped_external_files += 1
                                 continue
-                        if not path_matches_prefixes(urlsplit(admitted_file_url).path or "/", stored_scope.allowed_page_prefixes):
+                        if not path_matches_prefixes(
+                            urlsplit(admitted_file_url).path or "/",
+                            stored_scope.allowed_page_prefixes,
+                        ):
                             result.off_prefix_same_origin_files += 1
                         try:
                             pacer.wait_for_request("file")
@@ -385,12 +547,23 @@ class TreeCrawler:
                                 institution=institution or canonical_page_url,
                                 download_files=download_files,
                                 force_download=False,
-                                capture_result=file_outcome.result if self.acquisition_gateway is not None else None,
-                                attempt_id=(file_outcome.accepted_attempt.attempt_id if file_outcome.accepted_attempt else None)
-                                if self.acquisition_gateway is not None else None,
+                                capture_result=file_outcome.result
+                                if self.acquisition_gateway is not None
+                                else None,
+                                attempt_id=(
+                                    file_outcome.accepted_attempt.attempt_id
+                                    if file_outcome.accepted_attempt
+                                    else None
+                                )
+                                if self.acquisition_gateway is not None
+                                else None,
                             )
+                        except _ROLLBACK_REQUIRED_EXECUTION_ERRORS:
+                            raise
                         except Exception as exc:  # pragma: no cover - live failure path
-                            result.file_failures.append(f"{canonical_link}: {type(exc).__name__}: {exc}")
+                            result.file_failures.append(
+                                f"{canonical_link}: {type(exc).__name__}: {exc}"
+                            )
                             continue
                         result.files.append(tracked_file)
                         processed_file_urls.add(admitted_file_url)
@@ -401,10 +574,19 @@ class TreeCrawler:
                         continue
                     if depth >= stored_scope.max_depth:
                         continue
-                    if canonical_link in queued_page_urls or canonical_link in processed_page_urls:
+                    if (
+                        canonical_link in queued_page_urls
+                        or canonical_link in processed_page_urls
+                    ):
                         result.skipped_duplicate_pages += 1
                         continue
-                    queued_pages.append((sanitize_request_url(link) or link, depth + 1, tracked_page.id if tracked_page else None))
+                    queued_pages.append(
+                        (
+                            sanitize_request_url(link) or link,
+                            depth + 1,
+                            tracked_page.id if tracked_page else None,
+                        )
+                    )
                     queued_page_urls.add(canonical_link)
 
             updated_run = self.storage.update_crawl_run(
@@ -436,8 +618,10 @@ class TreeCrawler:
                 skipped_duplicate_files=result.skipped_duplicate_files,
                 off_prefix_same_origin_files=result.off_prefix_same_origin_files,
             )
+        except _ROLLBACK_REQUIRED_EXECUTION_ERRORS:
+            raise
         except Exception as exc:
-            failed_run = self.storage.update_crawl_run(
+            self.storage.update_crawl_run(
                 run.id,
                 status="failed",
                 finished_at=datetime.now(timezone.utc),
@@ -445,7 +629,9 @@ class TreeCrawler:
                 files_seen=len(result.files),
                 error_message=str(exc),
             )
-            raise RuntimeError(f"Tree crawl failed for scope {stored_scope.id}: {exc}") from exc
+            raise RuntimeError(
+                f"Tree crawl failed for scope {stored_scope.id}: {exc}"
+            ) from exc
 
     def run_scope(
         self,
@@ -456,8 +642,38 @@ class TreeCrawler:
     ) -> TreeCrawlResult:
         if self.acquisition_gateway is None:
             raise ValueError("acquisition_gateway is required for formal tree run")
+        self._require_admitted_seed(scope.seed_url)
+        self.storage.begin_execution_transaction()
+        try:
+            result = self._run_scope_in_transaction(
+                scope,
+                institution=institution,
+                download_files=download_files,
+            )
+        except _ROLLBACK_REQUIRED_EXECUTION_ERRORS:
+            self.storage.rollback_execution_transaction()
+            raise
+        except Exception:
+            self.storage.commit_execution_transaction()
+            raise
+        except BaseException:
+            self.storage.rollback_execution_transaction()
+            raise
+        self.storage.commit_execution_transaction()
+        return result
+
+    def _run_scope_in_transaction(
+        self,
+        scope: CrawlScope,
+        *,
+        institution: str = "",
+        download_files: bool = True,
+    ) -> TreeCrawlResult:
+        if self.acquisition_gateway is None:
+            raise ValueError("acquisition_gateway is required for formal tree run")
         if scope.id is None:
             raise ValueError("scope.id must not be None for incremental tree runs")
+        self._require_admitted_seed(scope.seed_url)
 
         stored_scope = self.storage.update_crawl_scope(scope)
         if not stored_scope.is_initialized:
@@ -475,7 +691,9 @@ class TreeCrawler:
         )
         result = TreeCrawlResult(scope=stored_scope, run=run, pages=[], files=[])
         pacer = PolitePacer.from_config(self.pacing_config)
-        queued_pages: deque[tuple[str, int, Optional[int]]] = deque([(stored_scope.seed_url, 0, None)])
+        queued_pages: deque[tuple[str, int, Optional[int]]] = deque(
+            [(self.execution_seed_url or stored_scope.seed_url, 0, None)]
+        )
         seed_canonical_url = canonicalize_tracked_url(stored_scope.seed_url)
         queued_page_urls = {seed_canonical_url}
         processed_page_urls: set[str] = set()
@@ -483,28 +701,47 @@ class TreeCrawler:
         requested_pages = 0
         requested_file_urls: set[str] = set()
         page_id_by_url: dict[str, int] = {}
-        existing_pages = {page.canonical_url: page for page in self.storage.list_tracked_pages(stored_scope.id)}
-        existing_files = {tracked_file.canonical_url: tracked_file for tracked_file in self.storage.list_tracked_files(stored_scope.id)}
+        existing_pages = {
+            page.canonical_url: page
+            for page in self.storage.list_tracked_pages(stored_scope.id)
+        }
+        existing_files = {
+            tracked_file.canonical_url: tracked_file
+            for tracked_file in self.storage.list_tracked_files(stored_scope.id)
+        }
         confirmed_missing_pages: set[str] = set()
         traversal_complete = True
 
         try:
             while queued_pages and requested_pages < stored_scope.max_pages:
                 queued_url, depth, from_page_id = queued_pages.popleft()
-                request_url = sanitize_request_url(queued_url) or queued_url
+                request_url = (
+                    queued_url
+                    if requested_pages == 0
+                    else sanitize_request_url(queued_url) or queued_url
+                )
                 requested_pages += 1
                 pacer.wait_for_request("page")
-                outcome = self.acquisition_gateway.acquire(request_url, run_id=str(run.id), scope_id=str(stored_scope.id))
+                outcome = self._acquire(
+                    request_url,
+                    run_id=str(run.id),
+                    scope_id=str(stored_scope.id),
+                )
                 outcome = self._persist_acquisition_outcome(
-                    outcome, requested_url=request_url, run_id=run.id, scope_id=stored_scope.id,
-                    content_kind="page")
+                    outcome,
+                    requested_url=request_url,
+                    run_id=run.id,
+                    scope_id=stored_scope.id,
+                    content_kind="page",
+                )
                 if not outcome.accepted:
                     canonical_request = canonicalize_tracked_url(request_url)
-                    final_url = (
-                        getattr(outcome.result, "final_url", None)
-                        or getattr(outcome.page, "final_url", None)
+                    final_url = getattr(outcome.result, "final_url", None) or getattr(
+                        outcome.page, "final_url", None
                     )
-                    canonical_final = canonicalize_tracked_url(final_url) if final_url else None
+                    canonical_final = (
+                        canonicalize_tracked_url(final_url) if final_url else None
+                    )
                     if (
                         outcome.classification == "not_found"
                         and canonical_final == canonical_request
@@ -513,23 +750,34 @@ class TreeCrawler:
                     ):
                         confirmed_missing_pages.add(canonical_request)
                     traversal_complete = False
-                    result.page_failures.append(f"{request_url}: {outcome.classification}")
+                    result.page_failures.append(
+                        f"{request_url}: {outcome.classification}"
+                    )
                     continue
                 page = outcome.page
 
-                canonical_page_url = canonicalize_tracked_url(page.final_url or request_url)
+                canonical_page_url = canonicalize_tracked_url(
+                    page.final_url or request_url
+                )
                 if not canonical_page_url:
                     traversal_complete = False
                     continue
                 page_in_scope = is_page_url_in_scope(stored_scope, canonical_page_url)
-                entrypoint_only = canonical_page_url == seed_canonical_url and depth == 0 and not page_in_scope
+                entrypoint_only = (
+                    canonical_page_url == seed_canonical_url
+                    and depth == 0
+                    and not page_in_scope
+                )
                 if not page_in_scope and not entrypoint_only:
                     traversal_complete = False
                     result.skipped_external_pages += 1
                     continue
                 if page_in_scope and canonical_page_url in processed_page_urls:
                     result.skipped_duplicate_pages += 1
-                    if from_page_id is not None and canonical_page_url in page_id_by_url:
+                    if (
+                        from_page_id is not None
+                        and canonical_page_url in page_id_by_url
+                    ):
                         self.storage.add_page_edge(
                             PageEdge(
                                 scope_id=stored_scope.id,
@@ -541,7 +789,9 @@ class TreeCrawler:
                     continue
 
                 previous_page = existing_pages.get(canonical_page_url)
-                previous_hash = previous_page.latest_hash if previous_page is not None else ""
+                previous_hash = (
+                    previous_page.latest_hash if previous_page is not None else ""
+                )
                 hash_basis, compare_text = select_compare_artifact(
                     fit_markdown=page.fit_markdown,
                     markdown=page.markdown,
@@ -561,7 +811,9 @@ class TreeCrawler:
                             scope_id=stored_scope.id,
                             page_id=tracked_page.id,
                             run_id=run.id,
-                            attempt_id=outcome.accepted_attempt.attempt_id if outcome.accepted_attempt else None,
+                            attempt_id=outcome.accepted_attempt.attempt_id
+                            if outcome.accepted_attempt
+                            else None,
                             captured_at=datetime.now(timezone.utc),
                             content_hash=compute_hash(compare_text),
                             raw_html=page.raw_html,
@@ -575,7 +827,9 @@ class TreeCrawler:
                                 "hash_normalization": "whitespace-normalized-v1",
                                 "tree_depth": depth,
                             },
-                            fetch_mode=self._accepted_fetch_mode(outcome, stored_scope.fetch_mode),
+                            fetch_mode=self._accepted_fetch_mode(
+                                outcome, stored_scope.fetch_mode
+                            ),
                             final_url=page.final_url,
                             status_code=page.status_code,
                             links=page_links,
@@ -618,22 +872,34 @@ class TreeCrawler:
                         if not is_file_url_in_scope(stored_scope, canonical_link):
                             result.skipped_external_files += 1
                             continue
-                        if canonical_link in processed_file_urls or canonical_link in requested_file_urls:
+                        if (
+                            canonical_link in processed_file_urls
+                            or canonical_link in requested_file_urls
+                        ):
                             result.skipped_duplicate_files += 1
                             continue
-                        if not stored_scope.follow_files or len(requested_file_urls) >= stored_scope.max_files:
+                        if (
+                            not stored_scope.follow_files
+                            or len(requested_file_urls) >= stored_scope.max_files
+                        ):
                             traversal_complete = False
                             continue
                         requested_file_urls.add(canonical_link)
                         admitted_file_url = canonical_link
                         if self.acquisition_gateway is not None:
                             file_outcome = self.acquisition_gateway.acquire(
-                                canonical_link, run_id=str(run.id), scope_id=str(stored_scope.id),
+                                canonical_link,
+                                run_id=str(run.id),
+                                scope_id=str(stored_scope.id),
                                 content_kind="document",
                             )
                             file_outcome = self._persist_acquisition_outcome(
-                                file_outcome, requested_url=canonical_link, run_id=run.id,
-                                scope_id=stored_scope.id, content_kind="document")
+                                file_outcome,
+                                requested_url=canonical_link,
+                                run_id=run.id,
+                                scope_id=stored_scope.id,
+                                content_kind="document",
+                            )
                             if not file_outcome.accepted:
                                 traversal_complete = False
                                 result.file_failures.append(
@@ -650,8 +916,15 @@ class TreeCrawler:
                                 result.skipped_external_files += 1
                                 continue
                         previous_file = existing_files.get(admitted_file_url)
-                        previous_sha256 = previous_file.latest_sha256 if previous_file is not None else ""
-                        if not path_matches_prefixes(urlsplit(admitted_file_url).path or "/", stored_scope.allowed_page_prefixes):
+                        previous_sha256 = (
+                            previous_file.latest_sha256
+                            if previous_file is not None
+                            else ""
+                        )
+                        if not path_matches_prefixes(
+                            urlsplit(admitted_file_url).path or "/",
+                            stored_scope.allowed_page_prefixes,
+                        ):
                             result.off_prefix_same_origin_files += 1
                         try:
                             pacer.wait_for_request("file")
@@ -664,13 +937,24 @@ class TreeCrawler:
                                 institution=institution or canonical_page_url,
                                 download_files=download_files,
                                 force_download=True,
-                                capture_result=file_outcome.result if self.acquisition_gateway is not None else None,
-                                attempt_id=(file_outcome.accepted_attempt.attempt_id if file_outcome.accepted_attempt else None)
-                                if self.acquisition_gateway is not None else None,
+                                capture_result=file_outcome.result
+                                if self.acquisition_gateway is not None
+                                else None,
+                                attempt_id=(
+                                    file_outcome.accepted_attempt.attempt_id
+                                    if file_outcome.accepted_attempt
+                                    else None
+                                )
+                                if self.acquisition_gateway is not None
+                                else None,
                             )
+                        except _ROLLBACK_REQUIRED_EXECUTION_ERRORS:
+                            raise
                         except Exception as exc:  # pragma: no cover - live failure path
                             traversal_complete = False
-                            result.file_failures.append(f"{canonical_link}: {type(exc).__name__}: {exc}")
+                            result.file_failures.append(
+                                f"{canonical_link}: {type(exc).__name__}: {exc}"
+                            )
                             continue
                         result.files.append(tracked_file)
                         processed_file_urls.add(admitted_file_url)
@@ -690,19 +974,32 @@ class TreeCrawler:
                     if depth >= stored_scope.max_depth:
                         traversal_complete = False
                         continue
-                    if canonical_link in queued_page_urls or canonical_link in processed_page_urls:
+                    if (
+                        canonical_link in queued_page_urls
+                        or canonical_link in processed_page_urls
+                    ):
                         result.skipped_duplicate_pages += 1
                         continue
-                    queued_pages.append((sanitize_request_url(link) or link, depth + 1, tracked_page.id if tracked_page else None))
+                    queued_pages.append(
+                        (
+                            sanitize_request_url(link) or link,
+                            depth + 1,
+                            tracked_page.id if tracked_page else None,
+                        )
+                    )
                     queued_page_urls.add(canonical_link)
 
             budget_truncated = bool(queued_pages)
             if traversal_complete and not budget_truncated:
                 result.missing_pages = sorted(
-                    url for url, page in existing_pages.items() if page.is_active and url not in processed_page_urls
+                    url
+                    for url, page in existing_pages.items()
+                    if page.is_active and url not in processed_page_urls
                 )
                 result.missing_files = sorted(
-                    url for url, tracked_file in existing_files.items() if tracked_file.is_active and url not in processed_file_urls
+                    url
+                    for url, tracked_file in existing_files.items()
+                    if tracked_file.is_active and url not in processed_file_urls
                 )
             else:
                 result.missing_pages = sorted(confirmed_missing_pages)
@@ -712,8 +1009,12 @@ class TreeCrawler:
                 finished_at=datetime.now(timezone.utc),
                 pages_seen=len(result.pages),
                 files_seen=len(result.files),
-                pages_changed=len(result.new_pages) + len(result.changed_pages) + len(result.missing_pages),
-                files_changed=len(result.new_files) + len(result.changed_files) + len(result.missing_files),
+                pages_changed=len(result.new_pages)
+                + len(result.changed_pages)
+                + len(result.missing_pages),
+                files_changed=len(result.new_files)
+                + len(result.changed_files)
+                + len(result.missing_files),
             )
             return TreeCrawlResult(
                 scope=stored_scope,
@@ -734,6 +1035,8 @@ class TreeCrawler:
                 changed_files=result.changed_files,
                 missing_files=result.missing_files,
             )
+        except _ROLLBACK_REQUIRED_EXECUTION_ERRORS:
+            raise
         except Exception as exc:
             self.storage.update_crawl_run(
                 run.id,
@@ -741,11 +1044,17 @@ class TreeCrawler:
                 finished_at=datetime.now(timezone.utc),
                 pages_seen=len(result.pages),
                 files_seen=len(result.files),
-                pages_changed=len(result.new_pages) + len(result.changed_pages) + len(result.missing_pages),
-                files_changed=len(result.new_files) + len(result.changed_files) + len(result.missing_files),
+                pages_changed=len(result.new_pages)
+                + len(result.changed_pages)
+                + len(result.missing_pages),
+                files_changed=len(result.new_files)
+                + len(result.changed_files)
+                + len(result.missing_files),
                 error_message=str(exc),
             )
-            raise RuntimeError(f"Incremental tree crawl failed for scope {stored_scope.id}: {exc}") from exc
+            raise RuntimeError(
+                f"Incremental tree crawl failed for scope {stored_scope.id}: {exc}"
+            ) from exc
 
     def _track_file(
         self,
@@ -800,22 +1109,39 @@ class TreeCrawler:
                 )
             if self.acquisition_gateway is None:
                 attempt = legacy_document_runtime_attempt(
-                    url=file_url, run_id=run.id, scope_id=scope.id,
-                    fetch_mode=scope.fetch_mode, started_at=legacy_started_at,
-                    finished_at=datetime.now(timezone.utc), classification="accepted",
+                    url=file_url,
+                    run_id=run.id,
+                    scope_id=scope.id,
+                    fetch_mode=scope.fetch_mode,
+                    started_at=legacy_started_at,
+                    finished_at=datetime.now(timezone.utc),
+                    classification="accepted",
                 )
                 attempt_id = self.storage.add_acquisition_attempt(attempt).attempt_id
         except Exception as exc:
             if self.acquisition_gateway is None:
-                status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                classification = "not_found" if status_code in {404, 410} else (
-                    "timeout" if isinstance(exc, TimeoutError) else "executor_error")
-                self.storage.add_acquisition_attempt(legacy_document_runtime_attempt(
-                    url=file_url, run_id=run.id, scope_id=scope.id,
-                    fetch_mode=scope.fetch_mode, started_at=legacy_started_at,
-                    finished_at=datetime.now(timezone.utc), classification=classification,
-                    error_message=str(exc),
-                ))
+                status_code = getattr(
+                    getattr(exc, "response", None), "status_code", None
+                )
+                classification = (
+                    "not_found"
+                    if status_code in {404, 410}
+                    else (
+                        "timeout" if isinstance(exc, TimeoutError) else "executor_error"
+                    )
+                )
+                self.storage.add_acquisition_attempt(
+                    legacy_document_runtime_attempt(
+                        url=file_url,
+                        run_id=run.id,
+                        scope_id=scope.id,
+                        fetch_mode=scope.fetch_mode,
+                        started_at=legacy_started_at,
+                        finished_at=datetime.now(timezone.utc),
+                        classification=classification,
+                        error_message=str(exc),
+                    )
+                )
             raise
 
         tracked_file = self.storage.upsert_tracked_file(
@@ -841,29 +1167,65 @@ class TreeCrawler:
         return tracked_file
 
     def _persist_acquisition_outcome(
-        self, outcome: AcquisitionOutcome, *, requested_url: str, run_id: int, scope_id: int,
+        self,
+        outcome: AcquisitionOutcome,
+        *,
+        requested_url: str,
+        run_id: int,
+        scope_id: int,
         content_kind: str,
     ) -> AcquisitionOutcome:
         if outcome.accepted and not outcome.attempt_records:
             now = datetime.now(timezone.utc)
-            identity = json.dumps({"mode": "legacy_compatibility", "run_id": run_id,
-                "scope_id": scope_id, "url": requested_url, "content_kind": content_kind},
-                sort_keys=True, separators=(",", ":"))
+            identity = json.dumps(
+                {
+                    "mode": "legacy_compatibility",
+                    "run_id": run_id,
+                    "scope_id": scope_id,
+                    "url": requested_url,
+                    "content_kind": content_kind,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             attempt_id = hashlib.sha256(identity.encode()).hexdigest()
             attempt = AcquisitionAttempt(
-                attempt_id=attempt_id, request_id=attempt_id, scope_id=scope_id, run_id=run_id,
-                position=0, content_kind=content_kind, executor_id="legacy_external_gateway",
-                executor_version="legacy-compatibility", requested_url=requested_url,
-                final_url=outcome.page.final_url if outcome.page else None, requested_at=now,
-                started_at=now, finished_at=now, classification="accepted", accepted=True,
-                reason="accepted", validation={"decision": "accepted"},
-                authority_mode="legacy_compatibility")
+                attempt_id=attempt_id,
+                request_id=attempt_id,
+                scope_id=scope_id,
+                run_id=run_id,
+                position=0,
+                content_kind=content_kind,
+                executor_id="legacy_external_gateway",
+                executor_version="legacy-compatibility",
+                requested_url=requested_url,
+                final_url=outcome.page.final_url if outcome.page else None,
+                requested_at=now,
+                started_at=now,
+                finished_at=now,
+                classification="accepted",
+                accepted=True,
+                reason="accepted",
+                validation={"decision": "accepted"},
+                authority_mode="legacy_compatibility",
+            )
             outcome = AcquisitionOutcome(
-                outcome.request, outcome.result, outcome.page, outcome.classification,
-                outcome.attempts, outcome.coverage_complete, (attempt,), ((),))
+                outcome.request,
+                outcome.result,
+                outcome.page,
+                outcome.classification,
+                outcome.attempts,
+                outcome.coverage_complete,
+                (attempt,),
+                ((),),
+            )
         for index, attempt in enumerate(outcome.attempt_records):
             self.storage.add_acquisition_attempt(attempt)
-            inline = outcome.attempt_inline_artifacts[index] if index < len(outcome.attempt_inline_artifacts) else ()
+            inline = (
+                outcome.attempt_inline_artifacts[index]
+                if index < len(outcome.attempt_inline_artifacts)
+                else ()
+            )
             self.storage.admit_inline_acquisition_artifacts(attempt.attempt_id, inline)
         return outcome
 
@@ -878,7 +1240,9 @@ class TreeCrawler:
     ) -> Document:
         content = capture_result.content if capture_result is not None else None
         if content is None or content.text is None:
-            raise ValueError("governed document content must contain parent-readable text")
+            raise ValueError(
+                "governed document content must contain parent-readable text"
+            )
         metadata = content.metadata
         if (
             metadata.get("representation") != "base64"
@@ -892,15 +1256,18 @@ class TreeCrawler:
             try:
                 payload = base64.b64decode(content.text, validate=True)
             except (binascii.Error, ValueError) as exc:
-                raise ValueError("invalid governed document base64 representation") from exc
+                raise ValueError(
+                    "invalid governed document base64 representation"
+                ) from exc
         sha256 = hashlib.sha256(payload).hexdigest()
         if content.sha256 is not None and content.sha256 != sha256:
             raise ValueError("governed document content sha256 mismatch")
 
         filename = os.path.basename(urlsplit(file_url).path) or "document"
-        local_path = self.document_processor._build_blob_path(filename, sha256, content.media_type)
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        self._publish_governed_blob(local_path, payload, sha256)
+        local_path = self.document_processor._build_blob_path(
+            filename, sha256, content.media_type
+        )
+        self._publish_governed_blob(local_path, payload, sha256, storage=self.storage)
         self.storage.upsert_blob(
             sha256=sha256,
             canonical_path=str(local_path),
@@ -925,30 +1292,50 @@ class TreeCrawler:
         )
 
     @staticmethod
-    def _publish_governed_blob(local_path: Path, payload: bytes, sha256: str) -> None:
+    def _publish_governed_blob(
+        local_path: Path, payload: bytes, sha256: str, *, storage=None
+    ) -> bool:
         def validate_existing() -> None:
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
             try:
                 fd = os.open(local_path, flags)
             except OSError as exc:
-                raise ValueError("canonical governed document path is not trustworthy") from exc
+                raise ValueError(
+                    "canonical governed document path is not trustworthy"
+                ) from exc
             try:
                 if not stat.S_ISREG(os.fstat(fd).st_mode):
-                    raise ValueError("canonical governed document path is not trustworthy")
+                    raise ValueError(
+                        "canonical governed document path is not trustworthy"
+                    )
                 with os.fdopen(fd, "rb", closefd=False) as stream:
                     existing = stream.read()
-                if existing != payload or hashlib.sha256(existing).hexdigest() != sha256:
-                    raise ValueError("canonical governed document path is not trustworthy")
+                if (
+                    existing != payload
+                    or hashlib.sha256(existing).hexdigest() != sha256
+                ):
+                    raise ValueError(
+                        "canonical governed document path is not trustworthy"
+                    )
             finally:
                 os.close(fd)
 
-        local_path.parent.mkdir(parents=True, exist_ok=True)
+        if storage is None:
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            storage.ensure_execution_artifact_directory(
+                local_path.parent,
+                cleanup_root=local_path.parents[2],
+            )
         if local_path.exists() or local_path.is_symlink():
             validate_existing()
-            return
+            return False
 
-        fd, temp_name = tempfile.mkstemp(prefix=f".{local_path.name}.", dir=local_path.parent)
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{local_path.name}.", dir=local_path.parent
+        )
         temp_path = Path(temp_name)
+        failure_active = False
         try:
             with os.fdopen(fd, "wb") as stream:
                 stream.write(payload)
@@ -956,12 +1343,29 @@ class TreeCrawler:
                 os.fsync(stream.fileno())
             if hashlib.sha256(temp_path.read_bytes()).hexdigest() != sha256:
                 raise ValueError("temporary governed document digest mismatch")
-            try:
-                os.link(temp_path, local_path, follow_symlinks=False)
-            except FileExistsError:
+            created = publish_execution_file(
+                temp_path,
+                local_path,
+                storage=storage,
+                cleanup_root=local_path.parents[2],
+                allow_copy_fallback=False,
+                link_function=lambda source, target: os.link(
+                    source, target, follow_symlinks=False
+                ),
+            )
+            if not created:
                 validate_existing()
+            else:
+                return True
+        except BaseException:
+            failure_active = True
+            raise
         finally:
             try:
                 temp_path.unlink()
             except FileNotFoundError:
                 pass
+            except BaseException:
+                if not failure_active:
+                    raise
+        return False

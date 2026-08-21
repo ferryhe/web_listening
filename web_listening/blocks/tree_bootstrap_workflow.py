@@ -7,14 +7,25 @@ from pathlib import Path
 import sys
 
 from web_listening.blocks.document import DocumentProcessor
-from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan, monitor_scope_to_tree_target
+from web_listening.blocks.monitor_scope_planner import (
+    load_monitor_scope_plan,
+    monitor_scope_to_tree_target,
+)
 from web_listening.blocks.storage import Storage
 from web_listening.blocks.tree_crawler import TreeCrawler, build_scope_from_site
-from web_listening.blocks.acquisition_gateway import AcquisitionGateway, LegacyCrawlerGateway
+from web_listening.blocks.acquisition_gateway import (
+    AcquisitionGateway,
+    AcquisitionOutcome,
+)
+from web_listening.blocks.governed_read import ROLLBACK_REQUIRED_READ_ERRORS
 from web_listening.config import settings
 from web_listening.models import CrawlScope, Site
 from web_listening.tree_defaults import PRODUCTION_TREE_LIMITS
-from web_listening.tree_targets import TreeTarget, filter_tree_targets, load_tree_targets
+from web_listening.tree_targets import (
+    TreeTarget,
+    filter_tree_targets,
+    load_tree_targets,
+)
 
 
 def _safe_key(value: str) -> str:
@@ -31,7 +42,11 @@ def _safe_key(value: str) -> str:
 def build_default_report_path(catalog: str, now: datetime | None = None) -> Path:
     moment = now or datetime.now().astimezone()
     report_date = moment.date().isoformat()
-    return settings.data_dir / "reports" / f"tree_bootstrap_{_safe_key(catalog)}_{report_date}.md"
+    return (
+        settings.data_dir
+        / "reports"
+        / f"tree_bootstrap_{_safe_key(catalog)}_{report_date}.md"
+    )
 
 
 @dataclass(slots=True)
@@ -119,7 +134,13 @@ def run_bootstrap(
     refresh_existing: bool = False,
     targets: list[TreeTarget] | None = None,
     acquisition_gateway: AcquisitionGateway | None = None,
+    initial_outcome: AcquisitionOutcome | None = None,
+    execution_seed_url: str | None = None,
 ) -> list[BootstrapResult]:
+    if acquisition_gateway is None:
+        raise ValueError(
+            "tree bootstrap requires a complete governed acquisition gateway"
+        )
     storage = None
     processor = None
     tree = None
@@ -127,12 +148,34 @@ def run_bootstrap(
     target_failure_recorded = False
 
     try:
-        resolved_targets = targets if targets is not None else filter_tree_targets(load_tree_targets(catalog), site_keys)
+        resolved_targets = (
+            targets
+            if targets is not None
+            else filter_tree_targets(load_tree_targets(catalog), site_keys)
+        )
+        if len(resolved_targets) != 1:
+            raise ValueError(
+                "one admitted seed response requires one exact tree target"
+            )
+        request = getattr(initial_outcome, "request", None)
+        exact_seed_url = execution_seed_url or resolved_targets[0].seed_url
+        if (
+            initial_outcome is None
+            or not initial_outcome.accepted
+            or request is None
+            or exact_seed_url != resolved_targets[0].seed_url
+            or str(request.url) != exact_seed_url
+        ):
+            raise ValueError("tree bootstrap requires one accepted exact seed response")
         storage = Storage(settings.db_path)
+        storage.begin_execution_transaction()
         processor = DocumentProcessor(storage=storage) if download_files else None
         tree = TreeCrawler(
-            storage=storage, document_processor=processor,
+            storage=storage,
+            document_processor=processor,
             acquisition_gateway=acquisition_gateway,
+            initial_outcome=initial_outcome,
+            execution_seed_url=exact_seed_url,
         )
         tree.__enter__()
         try:
@@ -140,13 +183,6 @@ def run_bootstrap(
                 effective_max_depth = target.tree_max_depth or max_depth
                 effective_max_pages = target.tree_max_pages or max_pages
                 effective_max_files = target.tree_max_files or max_files
-                if acquisition_gateway is None:
-                    tree.acquisition_gateway = LegacyCrawlerGateway(
-                        tree.crawler,
-                        fetch_mode=target.fetch_mode,
-                        fetch_config_json=target.fetch_config_json,
-                    )
-                    tree.pacing_config = dict(target.fetch_config_json or {})
                 site = ensure_tree_site(storage, target)
                 scope = ensure_tree_scope(
                     storage,
@@ -156,7 +192,11 @@ def run_bootstrap(
                     max_pages=effective_max_pages,
                     max_files=effective_max_files,
                 )
-                if scope.id is not None and scope.is_initialized and not refresh_existing:
+                if (
+                    scope.id is not None
+                    and scope.is_initialized
+                    and not refresh_existing
+                ):
                     results.append(
                         BootstrapResult(
                             catalog=target.catalog,
@@ -207,6 +247,8 @@ def run_bootstrap(
                             notes=target.notes,
                         )
                     )
+                except ROLLBACK_REQUIRED_READ_ERRORS:
+                    raise
                 except Exception as exc:  # pragma: no cover - live failure path
                     target_failure_recorded = True
                     results.append(
@@ -237,6 +279,7 @@ def run_bootstrap(
                 tree.acquisition_gateway = None
             if hasattr(tree, "document_processor"):
                 tree.document_processor = None
+        storage.commit_execution_transaction()
     finally:
         cleanup_failures: list[BaseException] = []
         active_failure = sys.exc_info()[0] is not None
@@ -290,8 +333,8 @@ def render_markdown(
             f"Bootstrap inventory discovered `{total_pages}` pages and `{total_files}` accepted files."
         ),
         (
-            f"- Operational note: bootstrap establishes the baseline only. Re-run later with `web-listening run-scope` "
-            f"to detect new pages, changed content, new files, and missing items against this baseline."
+            "- Operational note: bootstrap establishes the baseline only. Re-run later with `web-listening run-scope` "
+            "to detect new pages, changed content, new files, and missing items against this baseline."
         ),
         "",
         f"- Generated at: `{generated_at}`",
@@ -326,7 +369,9 @@ def render_markdown(
         lines.append(f"- File failures: `{item.file_failures}`")
         lines.append(f"- Skipped external pages: `{item.skipped_external_pages}`")
         lines.append(f"- Skipped external files: `{item.skipped_external_files}`")
-        lines.append(f"- Off-prefix same-origin files: `{item.off_prefix_same_origin_files}`")
+        lines.append(
+            f"- Off-prefix same-origin files: `{item.off_prefix_same_origin_files}`"
+        )
         if item.notes:
             lines.append(f"- Notes: `{item.notes}`")
         lines.append("")
@@ -338,13 +383,19 @@ def main() -> None:
         description="Bootstrap bounded recursive tree monitoring into the main database."
     )
     parser.add_argument("--catalog", choices=("dev", "smoke", "all"), default="dev")
-    parser.add_argument("--scope-path", type=Path, help="Optional monitor_scope YAML path for a single targeted bootstrap.")
+    parser.add_argument(
+        "--scope-path",
+        type=Path,
+        help="Optional monitor_scope YAML path for a single targeted bootstrap.",
+    )
     parser.add_argument("--max-depth", type=int, default=None)
     parser.add_argument("--max-pages", type=int, default=None)
     parser.add_argument("--max-files", type=int, default=None)
     parser.add_argument("--download-files", action="store_true")
     parser.add_argument("--refresh-existing", action="store_true")
-    parser.add_argument("--site-key", action="append", help="Limit the run to one or more site keys.")
+    parser.add_argument(
+        "--site-key", action="append", help="Limit the run to one or more site keys."
+    )
     parser.add_argument(
         "--report-path",
         type=Path,
@@ -355,12 +406,26 @@ def main() -> None:
     if args.scope_path and args.site_key:
         parser.error("--site-key cannot be used together with --scope-path")
 
-    site_keys = {value.strip().lower() for value in args.site_key or [] if value.strip()} or None
+    site_keys = {
+        value.strip().lower() for value in args.site_key or [] if value.strip()
+    } or None
     targets: list[TreeTarget] | None = None
     report_catalog = args.catalog
-    max_depth = args.max_depth if args.max_depth is not None else PRODUCTION_TREE_LIMITS.max_depth
-    max_pages = args.max_pages if args.max_pages is not None else PRODUCTION_TREE_LIMITS.max_pages
-    max_files = args.max_files if args.max_files is not None else PRODUCTION_TREE_LIMITS.max_files
+    max_depth = (
+        args.max_depth
+        if args.max_depth is not None
+        else PRODUCTION_TREE_LIMITS.max_depth
+    )
+    max_pages = (
+        args.max_pages
+        if args.max_pages is not None
+        else PRODUCTION_TREE_LIMITS.max_pages
+    )
+    max_files = (
+        args.max_files
+        if args.max_files is not None
+        else PRODUCTION_TREE_LIMITS.max_files
+    )
 
     if args.scope_path:
         scope_plan = load_monitor_scope_plan(args.scope_path)

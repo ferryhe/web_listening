@@ -4,9 +4,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urljoin, urlsplit
 
-import httpx
-
 from web_listening.blocks.crawler import Crawler
+from web_listening.blocks.governed_read import GovernedReadGateway
 from web_listening.models import Site, SiteSnapshot
 
 BLOCKED_MARKERS = (
@@ -145,7 +144,11 @@ def evaluate_snapshot(
 
     if source_kind == "xml_feed":
         item_count = int(snapshot.metadata_json.get("item_count", 0))
-        if item_count >= 3 or link_count >= 3 or word_count >= max(10, expected_min_words // 5):
+        if (
+            item_count >= 3
+            or link_count >= 3
+            or word_count >= max(10, expected_min_words // 5)
+        ):
             return True, "feed_inventory"
         return False, "feed_too_small"
 
@@ -161,12 +164,18 @@ def run_rescue_candidates(
     expected_min_words: int = 50,
     min_inventory_links: int = 5,
     site_id: Optional[int] = None,
+    read_gateway: GovernedReadGateway | None = None,
 ) -> RescueResult:
     attempts: list[RescueAttempt] = []
     resolved = False
     resolved_strategy = ""
 
-    with Crawler() as crawler:
+    if read_gateway is None:
+        raise RuntimeError(
+            "rescue candidates may be discovered without content, but every read requires AccessGateway authority"
+        )
+
+    with Crawler(read_gateway=read_gateway) as crawler:
         for index, candidate in enumerate(candidates, start=1):
             try:
                 snapshot = crawler.snapshot(
@@ -190,10 +199,14 @@ def run_rescue_candidates(
                         fetch_mode=candidate.fetch_mode,
                         status_code=snapshot.status_code,
                         final_url=snapshot.final_url,
-                        request_user_agent=str(snapshot.metadata_json.get("request_user_agent", "")),
+                        request_user_agent=str(
+                            snapshot.metadata_json.get("request_user_agent", "")
+                        ),
                         word_count=int(snapshot.metadata_json.get("word_count", 0)),
                         link_count=len(snapshot.links),
-                        source_kind=str(snapshot.metadata_json.get("source_kind", "html")),
+                        source_kind=str(
+                            snapshot.metadata_json.get("source_kind", "html")
+                        ),
                         passed=passed,
                         reason=reason,
                         head=snapshot.fit_markdown[:220].replace("\n", " | "),
@@ -204,24 +217,6 @@ def run_rescue_candidates(
                     resolved = True
                     resolved_strategy = candidate.strategy
                     break
-            except httpx.HTTPStatusError as exc:
-                attempts.append(
-                    RescueAttempt(
-                        strategy=candidate.strategy,
-                        url=candidate.url,
-                        fetch_mode=candidate.fetch_mode,
-                        status_code=exc.response.status_code if exc.response is not None else None,
-                        final_url=str(exc.response.url) if exc.response is not None else candidate.url,
-                        request_user_agent="",
-                        word_count=0,
-                        link_count=0,
-                        source_kind="error",
-                        passed=False,
-                        reason=f"http_{exc.response.status_code}" if exc.response is not None else "http_error",
-                        head="",
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
-                )
             except Exception as exc:  # pragma: no cover - live failure path
                 attempts.append(
                     RescueAttempt(
@@ -260,6 +255,7 @@ def run_site_rescue(
     sitemap_url: Optional[str] = None,
     rss_url: Optional[str] = None,
     browser_fetch_config: Optional[dict] = None,
+    read_gateway: GovernedReadGateway | None = None,
 ) -> RescueResult:
     return run_rescue_candidates(
         label=site.name or site.url,
@@ -274,6 +270,7 @@ def run_site_rescue(
         expected_min_words=expected_min_words,
         min_inventory_links=min_inventory_links,
         site_id=site.id,
+        read_gateway=read_gateway,
     )
 
 

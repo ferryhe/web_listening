@@ -20,6 +20,7 @@ from web_listening.blocks.access_gateway import (
     AccessGateway,
     AccessGatewayBudgetError,
     AccessGatewayConfig,
+    AccessGatewayConsumerContext,
     AccessGatewayOriginError,
     AccessGatewayPolicyError,
     AccessGatewayRedirectError,
@@ -643,6 +644,38 @@ def test_each_redirect_target_revalidates_exact_origin_and_robots() -> None:
         result.decision.redirect_hops[0].access_proof.policy.canonical_origin == ORIGIN
     )
     assert result.decision.policy.canonical_origin == OTHER_ORIGIN
+
+
+def test_context_consumer_receives_canonical_final_redirect_url() -> None:
+    transport = ScriptedTransport(
+        {
+            "https://example.com/robots.txt": [response(404)],
+            "https://example.com/start.xml": [
+                response(302, Location="https://other.example/final.xml.gz")
+            ],
+            "https://other.example/robots.txt": [response(404)],
+            "https://other.example/final.xml.gz": [response(200, b"done")],
+        }
+    )
+    observed_urls: list[str] = []
+
+    def consume(
+        raw: RawHttpResponse,
+        context: AccessGatewayConsumerContext,
+    ) -> bytes:
+        observed_urls.append(context.final_url)
+        return read_body(raw)
+
+    result = gateway(
+        transport,
+        origins=(ORIGIN, OTHER_ORIGIN),
+    ).request_with_context(
+        "https://example.com/start.xml",
+        consume=consume,
+    )
+
+    assert result.value == b"done"
+    assert observed_urls == ["https://other.example/final.xml.gz"]
 
 
 @pytest.mark.parametrize(

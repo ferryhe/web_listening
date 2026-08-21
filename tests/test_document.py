@@ -1,9 +1,12 @@
 import hashlib
+import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
 import httpx
+import pytest
 
 from web_listening.blocks.document import DocumentProcessor
 from web_listening.blocks.storage import Storage
@@ -124,3 +127,363 @@ def test_materialize_tracked_view_creates_source_organized_path(tmp_path):
     assert "example.com" in str(tracked)
     assert "research" in str(tracked)
     assert "topics" in str(tracked)
+
+
+def test_tracked_view_hardlink_effect_then_interrupt_removes_only_owned_target(
+    tmp_path, monkeypatch
+):
+    canonical = tmp_path / "canonical.pdf"
+    canonical.write_bytes(b"canonical")
+    storage = Storage(tmp_path / "hardlink-interrupt.db")
+    storage.begin_execution_transaction()
+    processor = DocumentProcessor(storage=storage)
+    failure = KeyboardInterrupt("hardlink effected")
+    real_link = os.link
+
+    def link_then_interrupt(source, target, *args, **kwargs):
+        real_link(source, target, *args, **kwargs)
+        raise failure
+
+    monkeypatch.setattr("web_listening.blocks.document.os.link", link_then_interrupt)
+    with patch("web_listening.blocks.document.settings") as mock_settings:
+        mock_settings.downloads_dir = tmp_path / "downloads"
+        tracked = processor._build_tracked_view_path(
+            canonical_local_path=canonical,
+            page_url="https://example.com/research",
+            file_url="https://example.com/report.pdf",
+            sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+            content_type="application/pdf",
+        )
+        with pytest.raises(KeyboardInterrupt) as caught:
+            processor.materialize_tracked_view(
+                canonical_local_path=canonical,
+                page_url="https://example.com/research",
+                file_url="https://example.com/report.pdf",
+                sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+                content_type="application/pdf",
+            )
+
+    assert caught.value is failure
+    assert not tracked.exists()
+    assert canonical.read_bytes() == b"canonical"
+    storage.rollback_execution_transaction()
+    storage.close()
+
+
+@pytest.mark.parametrize("preexisting_directories", [False, True])
+def test_tracked_view_rollback_respects_directory_creation_provenance(
+    tmp_path: Path, preexisting_directories: bool
+) -> None:
+    canonical = tmp_path / "canonical.pdf"
+    canonical.write_bytes(b"canonical")
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    storage = Storage(tmp_path / "tracked-directory-provenance.db")
+    processor = DocumentProcessor(storage=storage)
+    digest = hashlib.sha256(canonical.read_bytes()).hexdigest()
+    with patch("web_listening.blocks.document.settings") as mock_settings:
+        mock_settings.downloads_dir = downloads
+        tracked = processor._build_tracked_view_path(
+            canonical_local_path=canonical,
+            page_url="https://example.com/research/topics",
+            file_url="https://example.com/report.pdf",
+            sha256=digest,
+            content_type="application/pdf",
+        )
+        if preexisting_directories:
+            tracked.parent.mkdir(parents=True)
+        storage.begin_execution_transaction()
+        processor.materialize_tracked_view(
+            canonical_local_path=canonical,
+            page_url="https://example.com/research/topics",
+            file_url="https://example.com/report.pdf",
+            sha256=digest,
+            content_type="application/pdf",
+        )
+        storage.rollback_execution_transaction()
+
+    assert not tracked.exists()
+    assert tracked.parent.exists() is preexisting_directories
+    assert (downloads / "_tracked").exists() is preexisting_directories
+    assert canonical.read_bytes() == b"canonical"
+    storage.close()
+
+
+def test_tracked_view_copy_effect_then_interrupt_cleans_partial_publication(
+    tmp_path, monkeypatch
+):
+    canonical = tmp_path / "canonical.pdf"
+    canonical.write_bytes(b"canonical")
+    storage = Storage(tmp_path / "copy-interrupt.db")
+    storage.begin_execution_transaction()
+    processor = DocumentProcessor(storage=storage)
+    failure = SystemExit(23)
+    real_copy = shutil.copy2
+    monkeypatch.setattr(
+        "web_listening.blocks.document.os.link",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("cross-device")),
+    )
+
+    def copy_then_interrupt(source, target, *args, **kwargs):
+        real_copy(source, target, *args, **kwargs)
+        raise failure
+
+    monkeypatch.setattr(
+        "web_listening.blocks.document.shutil.copy2", copy_then_interrupt
+    )
+    with patch("web_listening.blocks.document.settings") as mock_settings:
+        mock_settings.downloads_dir = tmp_path / "downloads"
+        tracked = processor._build_tracked_view_path(
+            canonical_local_path=canonical,
+            page_url="https://example.com/research",
+            file_url="https://example.com/report.pdf",
+            sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+            content_type="application/pdf",
+        )
+        with pytest.raises(SystemExit) as caught:
+            processor.materialize_tracked_view(
+                canonical_local_path=canonical,
+                page_url="https://example.com/research",
+                file_url="https://example.com/report.pdf",
+                sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+                content_type="application/pdf",
+            )
+
+    assert caught.value is failure
+    assert not tracked.exists()
+    assert [
+        path for path in (tmp_path / "downloads").rglob("*") if path.is_file()
+    ] == []
+    assert canonical.read_bytes() == b"canonical"
+    storage.rollback_execution_transaction()
+    storage.close()
+
+
+def test_tracked_view_journal_handoff_interrupt_cleans_local_owned_target(
+    tmp_path, monkeypatch
+):
+    canonical = tmp_path / "canonical.pdf"
+    canonical.write_bytes(b"canonical")
+    storage = Storage(tmp_path / "handoff-interrupt.db")
+    storage.begin_execution_transaction()
+    processor = DocumentProcessor(storage=storage)
+    failure = KeyboardInterrupt("journal handoff effected")
+    real_register = storage.register_execution_created_path
+
+    def register_then_interrupt(*args, **kwargs):
+        real_register(*args, **kwargs)
+        raise failure
+
+    monkeypatch.setattr(
+        storage, "register_execution_created_path", register_then_interrupt
+    )
+    with patch("web_listening.blocks.document.settings") as mock_settings:
+        mock_settings.downloads_dir = tmp_path / "downloads"
+        tracked = processor._build_tracked_view_path(
+            canonical_local_path=canonical,
+            page_url="https://example.com/research",
+            file_url="https://example.com/report.pdf",
+            sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+            content_type="application/pdf",
+        )
+        with pytest.raises(KeyboardInterrupt) as caught:
+            processor.materialize_tracked_view(
+                canonical_local_path=canonical,
+                page_url="https://example.com/research",
+                file_url="https://example.com/report.pdf",
+                sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+                content_type="application/pdf",
+            )
+
+    assert caught.value is failure
+    assert not tracked.exists()
+    storage.rollback_execution_transaction()
+    assert storage._execution_created_paths == []
+    storage.close()
+
+
+def test_tracked_view_replacement_before_real_journal_handoff_preserves_replacement(
+    tmp_path, monkeypatch
+):
+    canonical = tmp_path / "canonical.pdf"
+    canonical.write_bytes(b"canonical")
+    storage = Storage(tmp_path / "handoff-replacement.db")
+    storage.begin_execution_transaction()
+    processor = DocumentProcessor(storage=storage)
+    replacement = b"replacement before register"
+    replacement_identity = None
+    real_register = storage.register_execution_created_path
+
+    def replace_then_register(path, *, cleanup_root, expected_identity=None):
+        nonlocal replacement_identity
+        if expected_identity is None:
+            raise AssertionError("publisher must supply its exact inode identity")
+        Path(path).unlink()
+        Path(path).write_bytes(replacement)
+        info = Path(path).stat(follow_symlinks=False)
+        replacement_identity = (info.st_dev, info.st_ino)
+        return real_register(
+            path,
+            cleanup_root=cleanup_root,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(
+        storage, "register_execution_created_path", replace_then_register
+    )
+    with patch("web_listening.blocks.document.settings") as mock_settings:
+        mock_settings.downloads_dir = tmp_path / "downloads"
+        tracked = processor._build_tracked_view_path(
+            canonical_local_path=canonical,
+            page_url="https://example.com/research",
+            file_url="https://example.com/report.pdf",
+            sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+            content_type="application/pdf",
+        )
+        with pytest.raises(ValueError, match="identity"):
+            processor.materialize_tracked_view(
+                canonical_local_path=canonical,
+                page_url="https://example.com/research",
+                file_url="https://example.com/report.pdf",
+                sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+                content_type="application/pdf",
+            )
+
+    current = tracked.stat(follow_symlinks=False)
+    assert tracked.read_bytes() == replacement
+    assert (current.st_dev, current.st_ino) == replacement_identity
+    storage.rollback_execution_transaction()
+    storage.close()
+
+
+def test_tracked_view_interrupt_preserves_replacement_inode(tmp_path, monkeypatch):
+    canonical = tmp_path / "canonical.pdf"
+    canonical.write_bytes(b"canonical")
+    processor = DocumentProcessor()
+    failure = SystemExit(29)
+    replacement = b"replacement"
+    replacement_identity = None
+    real_link = os.link
+
+    def link_replace_then_interrupt(source, target, *args, **kwargs):
+        nonlocal replacement_identity
+        real_link(source, target, *args, **kwargs)
+        Path(target).unlink()
+        Path(target).write_bytes(replacement)
+        info = Path(target).stat(follow_symlinks=False)
+        replacement_identity = (info.st_dev, info.st_ino)
+        raise failure
+
+    monkeypatch.setattr(
+        "web_listening.blocks.document.os.link", link_replace_then_interrupt
+    )
+    with patch("web_listening.blocks.document.settings") as mock_settings:
+        mock_settings.downloads_dir = tmp_path / "downloads"
+        tracked = processor._build_tracked_view_path(
+            canonical_local_path=canonical,
+            page_url="https://example.com/research",
+            file_url="https://example.com/report.pdf",
+            sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+            content_type="application/pdf",
+        )
+        with pytest.raises(SystemExit) as caught:
+            processor.materialize_tracked_view(
+                canonical_local_path=canonical,
+                page_url="https://example.com/research",
+                file_url="https://example.com/report.pdf",
+                sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+                content_type="application/pdf",
+            )
+
+    current = tracked.stat(follow_symlinks=False)
+    assert caught.value is failure
+    assert tracked.read_bytes() == replacement
+    assert (current.st_dev, current.st_ino) == replacement_identity
+
+
+def test_tracked_view_preexisting_inode_is_never_claimed_or_removed(
+    tmp_path, monkeypatch
+):
+    canonical = tmp_path / "canonical.pdf"
+    canonical.write_bytes(b"canonical")
+    processor = DocumentProcessor()
+    with patch("web_listening.blocks.document.settings") as mock_settings:
+        mock_settings.downloads_dir = tmp_path / "downloads"
+        tracked = processor._build_tracked_view_path(
+            canonical_local_path=canonical,
+            page_url="https://example.com/research",
+            file_url="https://example.com/report.pdf",
+            sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+            content_type="application/pdf",
+        )
+        tracked.parent.mkdir(parents=True)
+        tracked.write_bytes(b"preexisting")
+        before = tracked.stat(follow_symlinks=False)
+        monkeypatch.setattr(
+            "web_listening.blocks.document.os.link",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("preexisting target must not be published")
+            ),
+        )
+        result = processor.materialize_tracked_view(
+            canonical_local_path=canonical,
+            page_url="https://example.com/research",
+            file_url="https://example.com/report.pdf",
+            sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+            content_type="application/pdf",
+        )
+
+    after = tracked.stat(follow_symlinks=False)
+    assert result == tracked
+    assert tracked.read_bytes() == b"preexisting"
+    assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+
+
+def test_tracked_view_copy_fallback_interrupt_preserves_replacement_inode(
+    tmp_path, monkeypatch
+):
+    canonical = tmp_path / "canonical.pdf"
+    canonical.write_bytes(b"canonical")
+    processor = DocumentProcessor()
+    failure = KeyboardInterrupt("copy fallback target replaced")
+    replacement = b"copy replacement"
+    replacement_identity = None
+    real_link = os.link
+    link_calls = 0
+
+    def fallback_then_replace(source, target, *args, **kwargs):
+        nonlocal link_calls, replacement_identity
+        link_calls += 1
+        if link_calls == 1:
+            raise OSError("cross-device")
+        real_link(source, target, *args, **kwargs)
+        Path(target).unlink()
+        Path(target).write_bytes(replacement)
+        info = Path(target).stat(follow_symlinks=False)
+        replacement_identity = (info.st_dev, info.st_ino)
+        raise failure
+
+    monkeypatch.setattr("web_listening.blocks.document.os.link", fallback_then_replace)
+    with patch("web_listening.blocks.document.settings") as mock_settings:
+        mock_settings.downloads_dir = tmp_path / "downloads"
+        tracked = processor._build_tracked_view_path(
+            canonical_local_path=canonical,
+            page_url="https://example.com/research",
+            file_url="https://example.com/report.pdf",
+            sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+            content_type="application/pdf",
+        )
+        with pytest.raises(KeyboardInterrupt) as caught:
+            processor.materialize_tracked_view(
+                canonical_local_path=canonical,
+                page_url="https://example.com/research",
+                file_url="https://example.com/report.pdf",
+                sha256=hashlib.sha256(canonical.read_bytes()).hexdigest(),
+                content_type="application/pdf",
+            )
+
+    current = tracked.stat(follow_symlinks=False)
+    assert caught.value is failure
+    assert tracked.read_bytes() == replacement
+    assert (current.st_dev, current.st_ino) == replacement_identity
+    assert link_calls == 2

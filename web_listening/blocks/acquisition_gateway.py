@@ -14,6 +14,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from web_listening.blocks.crawler import Crawler, FetchResult
 from web_listening.blocks.diff import extract_links, find_document_links
+from web_listening.blocks.governed_read import ROLLBACK_REQUIRED_READ_ERRORS
 from web_listening.contracts import (
     AcquisitionAttempt as ContractAcquisitionAttempt,
     CaptureContent,
@@ -54,6 +55,15 @@ class AcquisitionGateway(Protocol):
         self, url: str, *, run_id: str, scope_id: str, content_kind: str = "page"
     ) -> AcquisitionOutcome: ...
 
+    def rebind_outcome(
+        self,
+        outcome: AcquisitionOutcome,
+        *,
+        run_id: str,
+        scope_id: str,
+        content_kind: str = "page",
+    ) -> AcquisitionOutcome: ...
+
     def close(self) -> None: ...
 
 
@@ -70,25 +80,44 @@ class LegacyCrawlerGateway:
     ) -> AcquisitionOutcome:
         requested_at = datetime.now(timezone.utc)
         executor_id = _legacy_executor_id(self.fetch_mode)
-        identity = json.dumps({"run_id": run_id, "scope_id": scope_id, "url": url,
-                               "content_kind": content_kind, "mode": "legacy_runtime",
-                               "fetch_mode": self.fetch_mode,
-                               "fetch_config_json": self.fetch_config_json},
-                              sort_keys=True, separators=(",", ":"))
+        identity = json.dumps(
+            {
+                "run_id": run_id,
+                "scope_id": scope_id,
+                "url": url,
+                "content_kind": content_kind,
+                "mode": "legacy_runtime",
+                "fetch_mode": self.fetch_mode,
+                "fetch_config_json": self.fetch_config_json,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         request_id = hashlib.sha256(identity.encode()).hexdigest()
         sentinel_digest = "0" * 64
         request = _execution_request(
-            request_id=request_id, site_key="legacy-runtime",
-            site_skill_id="absent", site_skill_version="0.0.0",
-            site_skill_digest=sentinel_digest, recipe_id="legacy-runtime",
-            run_id=run_id, scope_id=scope_id, executor_id=executor_id, url=url,
-            requested_at=requested_at, config=self.fetch_config_json,
-            metadata={"authority_mode": "legacy_runtime", "content_kind": content_kind,
-                      "fallback_position": 0, "profile_id": None,
-                      "legacy_fetch_mode": self.fetch_mode,
-                      "legacy_executor_label": f"legacy_{self.fetch_mode}",
-                      "site_skill_lineage": "absent",
-                      "executor_version": "legacy-runtime"},
+            request_id=request_id,
+            site_key="legacy-runtime",
+            site_skill_id="absent",
+            site_skill_version="0.0.0",
+            site_skill_digest=sentinel_digest,
+            recipe_id="legacy-runtime",
+            run_id=run_id,
+            scope_id=scope_id,
+            executor_id=executor_id,
+            url=url,
+            requested_at=requested_at,
+            config=self.fetch_config_json,
+            metadata={
+                "authority_mode": "legacy_runtime",
+                "content_kind": content_kind,
+                "fallback_position": 0,
+                "profile_id": None,
+                "legacy_fetch_mode": self.fetch_mode,
+                "legacy_executor_label": f"legacy_{self.fetch_mode}",
+                "site_skill_lineage": "absent",
+                "executor_version": "legacy-runtime",
+            },
         )
         started_at = datetime.now(timezone.utc)
         page = None
@@ -97,7 +126,9 @@ class LegacyCrawlerGateway:
         status_code = None
         try:
             page = self.crawler.fetch_page(
-                url, fetch_mode=self.fetch_mode, fetch_config_json=self.fetch_config_json
+                url,
+                fetch_mode=self.fetch_mode,
+                fetch_config_json=self.fetch_config_json,
             )
             final_url, status_code = page.final_url, page.status_code
         except Exception:
@@ -105,49 +136,112 @@ class LegacyCrawlerGateway:
             # credentials or local diagnostics. Persist only the stable class.
             error = "executor_error"
         finished_at = datetime.now(timezone.utc)
-        classification = "executor_error" if page is None else ("not_found" if page.status_code in {404, 410} else "accepted")
-        lineage = {field: getattr(request, field) for field in (
-            "request_id", "site_key", "site_skill_id", "site_skill_version",
-            "site_skill_digest", "recipe_id", "run_id", "scope_id", "executor_id",
-        )}
+        classification = (
+            "executor_error"
+            if page is None
+            else ("not_found" if page.status_code in {404, 410} else "accepted")
+        )
+        lineage = {
+            field: getattr(request, field)
+            for field in (
+                "request_id",
+                "site_key",
+                "site_skill_id",
+                "site_skill_version",
+                "site_skill_digest",
+                "recipe_id",
+                "run_id",
+                "scope_id",
+                "executor_id",
+            )
+        }
         result = CaptureResult(
-            **lineage, state="failed" if page is None else "succeeded",
-            started_at=started_at, finished_at=finished_at, final_url=final_url,
+            **lineage,
+            state="failed" if page is None else "succeeded",
+            started_at=started_at,
+            finished_at=finished_at,
+            final_url=final_url,
             status_code=status_code,
-            content=(CaptureContent(media_type="text/html", text=page.raw_html,
-                                    metadata={"content_kind": content_kind})
-                     if page is not None else None),
-            error=(CaptureError(code="executor_error", message=error)
-                   if page is None else None),
-            metadata={"authority_mode": "legacy_runtime", "content_kind": content_kind,
-                      "legacy_fetch_mode": self.fetch_mode,
-                      "legacy_executor_label": f"legacy_{self.fetch_mode}",
-                      "acquisition_classification": classification,
-                      "acquisition_validation": {"status_code": status_code}},
+            content=(
+                CaptureContent(
+                    media_type="text/html",
+                    text=page.raw_html,
+                    metadata={"content_kind": content_kind},
+                )
+                if page is not None
+                else None
+            ),
+            error=(
+                CaptureError(code="executor_error", message=error)
+                if page is None
+                else None
+            ),
+            metadata={
+                "authority_mode": "legacy_runtime",
+                "content_kind": content_kind,
+                "legacy_fetch_mode": self.fetch_mode,
+                "legacy_executor_label": f"legacy_{self.fetch_mode}",
+                "acquisition_classification": classification,
+                "acquisition_validation": {"status_code": status_code},
+            },
         )
         attempt = AcquisitionAttempt(
-            attempt_id=request_id, request_id=request_id, scope_id=_numeric_id(scope_id), run_id=_numeric_id(run_id),
-            position=0, content_kind=content_kind, site_skill_id="absent",
-            site_skill_version="0.0.0", site_skill_package_sha256=sentinel_digest,
-            recipe_id="legacy-runtime", executor_id=executor_id,
-            executor_version="legacy-runtime", requested_url=url, final_url=final_url,
-            requested_at=requested_at, started_at=started_at, finished_at=finished_at,
-            classification=classification, accepted=classification == "accepted", reason=classification,
-            validation={"status_code": status_code}, authority_mode="legacy_runtime",
+            attempt_id=request_id,
+            request_id=request_id,
+            scope_id=_numeric_id(scope_id),
+            run_id=_numeric_id(run_id),
+            position=0,
+            content_kind=content_kind,
+            site_skill_id="absent",
+            site_skill_version="0.0.0",
+            site_skill_package_sha256=sentinel_digest,
+            recipe_id="legacy-runtime",
+            executor_id=executor_id,
+            executor_version="legacy-runtime",
+            requested_url=url,
+            final_url=final_url,
+            requested_at=requested_at,
+            started_at=started_at,
+            finished_at=finished_at,
+            classification=classification,
+            accepted=classification == "accepted",
+            reason=classification,
+            validation={"status_code": status_code},
+            authority_mode="legacy_runtime",
         )
-        contract = ContractAcquisitionAttempt.model_validate_json(json.dumps({
-            "attempt_id": request_id,
-            "request": _canonical_request(request).model_dump(mode="json"),
-            "result": result.model_dump(mode="json"),
-            "accepted": classification == "accepted", "acceptance_reason": classification,
-        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True))
+        contract = ContractAcquisitionAttempt.model_validate_json(
+            json.dumps(
+                {
+                    "attempt_id": request_id,
+                    "request": _canonical_request(request).model_dump(mode="json"),
+                    "result": result.model_dump(mode="json"),
+                    "accepted": classification == "accepted",
+                    "acceptance_reason": classification,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+        )
         attempt.canonical_json = json.dumps(
             redact_persisted_value(contract.model_dump(mode="json")),
-            sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
         )
         if page is None:
-            return AcquisitionOutcome(request, result, None, classification, (classification,), False, (attempt,))
-        return AcquisitionOutcome(request, result, page, classification, (classification,), True, (attempt,))
+            return AcquisitionOutcome(
+                request,
+                result,
+                None,
+                classification,
+                (classification,),
+                False,
+                (attempt,),
+            )
+        return AcquisitionOutcome(
+            request, result, page, classification, (classification,), True, (attempt,)
+        )
 
     def close(self) -> None:
         return None
@@ -164,7 +258,9 @@ class GovernedAcquisitionGateway:
             for step in plan.steps:
                 runtime = metadata.get(step["executor_id"])
                 if runtime is None or runtime.version != step["executor_version"]:
-                    raise ValueError("governed executor runtime does not match the frozen plan")
+                    raise ValueError(
+                        "governed executor runtime does not match the frozen plan"
+                    )
         self.plan, self.registry = plan, registry
         self._closed = False
 
@@ -180,147 +276,393 @@ class GovernedAcquisitionGateway:
             last_request = request
             try:
                 result = self.registry.execute(request)
+            except ROLLBACK_REQUIRED_READ_ERRORS:
+                raise
             except Exception as exc:
                 result = self._failed_result(
-                    request, "executor_exception", _redact_diagnostic_text(str(exc)))
+                    request, "executor_exception", _redact_diagnostic_text(str(exc))
+                )
                 last_result = result
-                attempts.append(self._attempt(request, step, content_kind, "executor_error", result,
-                                              reason="executor_error"))
+                attempts.append(
+                    self._attempt(
+                        request,
+                        step,
+                        content_kind,
+                        "executor_error",
+                        result,
+                        reason="executor_error",
+                    )
+                )
                 attempt_artifacts.append(())
                 continue
             last_result = result
-            classification, terminal, page, validation = self._classify(request, result, content_kind)
-            attempts.append(self._attempt(request, step, content_kind, classification, result,
-                                          validation=validation))
-            inline = result.metadata.get("inline_artifacts", ()) if isinstance(result, CaptureResult) else ()
-            attempt_artifacts.append(tuple(inline) if isinstance(inline, (list, tuple)) else ())
+            classification, terminal, page, validation = self._classify(
+                request, result, content_kind
+            )
+            attempts.append(
+                self._attempt(
+                    request,
+                    step,
+                    content_kind,
+                    classification,
+                    result,
+                    validation=validation,
+                )
+            )
+            inline = (
+                result.metadata.get("inline_artifacts", ())
+                if isinstance(result, CaptureResult)
+                else ()
+            )
+            attempt_artifacts.append(
+                tuple(inline) if isinstance(inline, (list, tuple)) else ()
+            )
             if classification == "accepted":
-                return AcquisitionOutcome(request, result, page, classification,
-                                          tuple(item.classification for item in attempts), True, tuple(attempts),
-                                          tuple(attempt_artifacts))
+                return AcquisitionOutcome(
+                    request,
+                    result,
+                    page,
+                    classification,
+                    tuple(item.classification for item in attempts),
+                    True,
+                    tuple(attempts),
+                    tuple(attempt_artifacts),
+                )
             if terminal:
                 return AcquisitionOutcome(
-                    request, result, None, classification,
-                    tuple(item.classification for item in attempts), classification == "not_found", tuple(attempts),
+                    request,
+                    result,
+                    None,
+                    classification,
+                    tuple(item.classification for item in attempts),
+                    classification == "not_found",
+                    tuple(attempts),
                     tuple(attempt_artifacts),
                 )
         classification = attempts[-1].classification if attempts else "executor_error"
-        return AcquisitionOutcome(last_request, last_result, None, classification,
-                                  tuple(item.classification for item in attempts), False, tuple(attempts),
-                                  tuple(attempt_artifacts))
+        return AcquisitionOutcome(
+            last_request,
+            last_result,
+            None,
+            classification,
+            tuple(item.classification for item in attempts),
+            False,
+            tuple(attempts),
+            tuple(attempt_artifacts),
+        )
 
-    def _attempt(self, request, step, content_kind, classification, result, *, reason="",
-                 validation=None):
-        lineage = ("request_id", "site_key", "site_skill_id", "site_skill_version",
-                   "site_skill_digest", "recipe_id", "run_id", "scope_id", "executor_id")
-        if (not isinstance(result, CaptureResult)
-                or any(getattr(request, field) != getattr(result, field) for field in lineage)):
+    def rebind_outcome(
+        self,
+        outcome: AcquisitionOutcome,
+        *,
+        run_id: str,
+        scope_id: str,
+        content_kind: str = "page",
+    ) -> AcquisitionOutcome:
+        """Bind one already-read outcome to persisted IDs without executing again."""
+        if not outcome.attempt_records:
+            return outcome
+        rebound_attempts: list[AcquisitionAttempt] = []
+        rebound_request: CaptureRequest | None = None
+        rebound_result: CaptureResult | None = None
+        for attempt in outcome.attempt_records:
+            step = next(
+                (
+                    item
+                    for item in self.plan.steps
+                    if int(item["position"]) == attempt.position
+                ),
+                None,
+            )
+            if step is None:
+                raise ValueError("admitted outcome does not match the compiled plan")
+            canonical = ContractAcquisitionAttempt.model_validate_json(
+                attempt.canonical_json
+            )
+            request = self._request(
+                str(canonical.request.url),
+                run_id,
+                scope_id,
+                step,
+                content_kind,
+                requested_at=canonical.request.requested_at,
+            )
+            lineage = {
+                field: getattr(request, field)
+                for field in (
+                    "request_id",
+                    "site_key",
+                    "site_skill_id",
+                    "site_skill_version",
+                    "site_skill_digest",
+                    "recipe_id",
+                    "run_id",
+                    "scope_id",
+                    "executor_id",
+                )
+            }
+            result = canonical.result.model_copy(update=lineage)
+            rebound = self._attempt(
+                request,
+                step,
+                content_kind,
+                attempt.classification,
+                result,
+                reason=attempt.reason,
+                validation=dict(attempt.validation),
+            )
+            rebound_attempts.append(rebound)
+            rebound_request = request
+            rebound_result = result
+        return AcquisitionOutcome(
+            rebound_request,
+            rebound_result,
+            outcome.page,
+            outcome.classification,
+            outcome.attempts,
+            outcome.coverage_complete,
+            tuple(rebound_attempts),
+            outcome.attempt_inline_artifacts,
+        )
+
+    def _attempt(
+        self,
+        request,
+        step,
+        content_kind,
+        classification,
+        result,
+        *,
+        reason="",
+        validation=None,
+    ):
+        lineage = (
+            "request_id",
+            "site_key",
+            "site_skill_id",
+            "site_skill_version",
+            "site_skill_digest",
+            "recipe_id",
+            "run_id",
+            "scope_id",
+            "executor_id",
+        )
+        if not isinstance(result, CaptureResult) or any(
+            getattr(request, field) != getattr(result, field) for field in lineage
+        ):
             result = self._failed_result(
-                request, classification, classification,
+                request,
+                classification,
+                classification,
                 metadata={"protocol_classification": classification},
             )
         validation = validation or {
-            "decision": classification, "status_code": getattr(result, "status_code", None)}
+            "decision": classification,
+            "status_code": getattr(result, "status_code", None),
+        }
         attempt = AcquisitionAttempt(
-            attempt_id=request.request_id, request_id=request.request_id,
-            scope_id=_numeric_id(request.scope_id), run_id=_numeric_id(request.run_id), position=int(step["position"]),
-            content_kind=content_kind, profile_id=getattr(self.plan, "profile_id", None),
-            site_skill_id=request.site_skill_id, site_skill_version=request.site_skill_version,
-            site_skill_package_sha256=request.site_skill_digest, recipe_id=request.recipe_id,
-            script_sha256=step.get("script_sha256"), executor_id=request.executor_id,
-            executor_version=step["executor_version"], requested_url=str(request.url),
-            final_url=(str(result.final_url) if getattr(result, "final_url", None) is not None else None),
-            requested_at=request.requested_at, started_at=getattr(result, "started_at", None),
+            attempt_id=request.request_id,
+            request_id=request.request_id,
+            scope_id=_numeric_id(request.scope_id),
+            run_id=_numeric_id(request.run_id),
+            position=int(step["position"]),
+            content_kind=content_kind,
+            profile_id=getattr(self.plan, "profile_id", None),
+            site_skill_id=request.site_skill_id,
+            site_skill_version=request.site_skill_version,
+            site_skill_package_sha256=request.site_skill_digest,
+            recipe_id=request.recipe_id,
+            script_sha256=step.get("script_sha256"),
+            executor_id=request.executor_id,
+            executor_version=step["executor_version"],
+            requested_url=str(request.url),
+            final_url=(
+                str(result.final_url)
+                if getattr(result, "final_url", None) is not None
+                else None
+            ),
+            requested_at=request.requested_at,
+            started_at=getattr(result, "started_at", None),
             finished_at=getattr(result, "finished_at", datetime.now(timezone.utc)),
             acquisition_fingerprint=self.plan.acquisition_fingerprint,
-            classification=classification, accepted=classification == "accepted",
-            reason=reason or classification, validation=validation,
+            classification=classification,
+            accepted=classification == "accepted",
+            reason=reason or classification,
+            validation=validation,
         )
-        canonical_result = result.model_copy(update={"metadata": {
-            **dict(result.metadata),
-            "acquisition_classification": classification,
-            "acquisition_validation": validation,
-        }})
+        canonical_result = result.model_copy(
+            update={
+                "metadata": {
+                    **dict(result.metadata),
+                    "acquisition_classification": classification,
+                    "acquisition_validation": validation,
+                }
+            }
+        )
         canonical_result_payload = canonical_result.model_dump(mode="json")
         canonical_result_payload = _redact_marker_values(
-            canonical_result_payload, self.plan.quality_gates.get("blocked_markers", ()))
-        contract = ContractAcquisitionAttempt.model_validate_json(json.dumps({
-            "attempt_id": request.request_id,
-            "request": _canonical_request(request).model_dump(mode="json"),
-            "result": canonical_result_payload,
-            "accepted": classification == "accepted",
-            "acceptance_reason": reason or classification,
-        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True))
+            canonical_result_payload, self.plan.quality_gates.get("blocked_markers", ())
+        )
+        contract = ContractAcquisitionAttempt.model_validate_json(
+            json.dumps(
+                {
+                    "attempt_id": request.request_id,
+                    "request": _canonical_request(request).model_dump(mode="json"),
+                    "result": canonical_result_payload,
+                    "accepted": classification == "accepted",
+                    "acceptance_reason": reason or classification,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+        )
         attempt.canonical_json = json.dumps(
             redact_persisted_value(contract.model_dump(mode="json")),
-            sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
         )
         return attempt
 
     @staticmethod
-    def _failed_result(request: CaptureRequest, code: str, message: str,
-                       *, metadata: Mapping[str, Any] | None = None) -> CaptureResult:
+    def _failed_result(
+        request: CaptureRequest,
+        code: str,
+        message: str,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CaptureResult:
         now = max(datetime.now(timezone.utc), request.requested_at)
-        lineage = {field: getattr(request, field) for field in (
-            "request_id", "site_key", "site_skill_id", "site_skill_version",
-            "site_skill_digest", "recipe_id", "run_id", "scope_id", "executor_id",
-        )}
+        lineage = {
+            field: getattr(request, field)
+            for field in (
+                "request_id",
+                "site_key",
+                "site_skill_id",
+                "site_skill_version",
+                "site_skill_digest",
+                "recipe_id",
+                "run_id",
+                "scope_id",
+                "executor_id",
+            )
+        }
         return CaptureResult(
-            **lineage, state="failed", started_at=now, finished_at=now,
-            error=CaptureError(code=code, message=message), metadata=dict(metadata or {}),
+            **lineage,
+            state="failed",
+            started_at=now,
+            finished_at=now,
+            error=CaptureError(code=code, message=message),
+            metadata=dict(metadata or {}),
         )
 
-    def _request(self, url: str, run_id: str, scope_id: str, step, content_kind: str) -> CaptureRequest:
-        identity = json.dumps({
-            "plan": self.plan.acquisition_fingerprint, "run_id": run_id, "scope_id": scope_id,
-            "url": url, "content_kind": content_kind, "position": step["position"],
-            "executor_id": step["executor_id"],
-        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    def _request(
+        self,
+        url: str,
+        run_id: str,
+        scope_id: str,
+        step,
+        content_kind: str,
+        *,
+        requested_at: datetime | None = None,
+    ) -> CaptureRequest:
+        identity = json.dumps(
+            {
+                "plan": self.plan.acquisition_fingerprint,
+                "run_id": run_id,
+                "scope_id": scope_id,
+                "url": url,
+                "content_kind": content_kind,
+                "position": step["position"],
+                "executor_id": step["executor_id"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
         return _execution_request(
             request_id=hashlib.sha256(identity.encode()).hexdigest(),
-            site_key=self.plan.site_key, site_skill_id=self.plan.site_skill_id or "",
+            site_key=self.plan.site_key,
+            site_skill_id=self.plan.site_skill_id or "",
             site_skill_version=self.plan.site_skill_version or "",
             site_skill_digest=self.plan.site_skill_package_sha256 or "",
-            recipe_id=step["recipe_id"], run_id=run_id, scope_id=scope_id,
-            executor_id=step["executor_id"], url=url, requested_at=datetime.now(timezone.utc),
+            recipe_id=step["recipe_id"],
+            run_id=run_id,
+            scope_id=scope_id,
+            executor_id=step["executor_id"],
+            url=url,
+            requested_at=requested_at or datetime.now(timezone.utc),
             config=dict(step.get("config", {})),
-            metadata=canonicalize_persisted_value({
-                "acquisition_fingerprint": self.plan.acquisition_fingerprint,
-                "scope_fingerprint": self.plan.scope_fingerprint,
-                "profile_id": self.plan.profile_id,
-                "authority_mode": "governed",
-                "content_kind": content_kind,
-                "fallback_position": step["position"],
-                "executor_version": step["executor_version"],
-                "entrypoint": step.get("entrypoint"),
-                "script_sha256": step["script_sha256"],
-                "required_capabilities": list(step.get("required_capabilities", ())),
-                "executor_capabilities": list(step.get("executor_capabilities", ())),
-                "requires_authorized_access": bool(step.get("requires_authorized_access", False)),
-                "verification_rules": list(step.get("verification_rules", ())),
-                "resource_limits": dict(step.get("limits", {})),
-                "quality_gates": dict(self.plan.quality_gates),
-                "scope_budgets": dict(self.plan.scope_budgets),
-            }),
+            metadata=canonicalize_persisted_value(
+                {
+                    "acquisition_fingerprint": self.plan.acquisition_fingerprint,
+                    "scope_fingerprint": self.plan.scope_fingerprint,
+                    "profile_id": self.plan.profile_id,
+                    "authority_mode": "governed",
+                    "content_kind": content_kind,
+                    "fallback_position": step["position"],
+                    "executor_version": step["executor_version"],
+                    "entrypoint": step.get("entrypoint"),
+                    "script_sha256": step["script_sha256"],
+                    "required_capabilities": list(
+                        step.get("required_capabilities", ())
+                    ),
+                    "executor_capabilities": list(
+                        step.get("executor_capabilities", ())
+                    ),
+                    "requires_authorized_access": bool(
+                        step.get("requires_authorized_access", False)
+                    ),
+                    "verification_rules": list(step.get("verification_rules", ())),
+                    "resource_limits": dict(step.get("limits", {})),
+                    "quality_gates": dict(self.plan.quality_gates),
+                    "scope_budgets": dict(self.plan.scope_budgets),
+                }
+            ),
         )
-
 
     def _classify(
         self, request: CaptureRequest, result: CaptureResult, content_kind: str
     ) -> tuple[str, bool, FetchResult | None, dict[str, Any]]:
         def decision(name, terminal=False, page=None, **extra):
-            return name, terminal, page, {
-                "decision": name, "status_code": getattr(result, "status_code", None), **extra}
+            return (
+                name,
+                terminal,
+                page,
+                {
+                    "decision": name,
+                    "status_code": getattr(result, "status_code", None),
+                    **extra,
+                },
+            )
+
         if not isinstance(result, CaptureResult):
             return decision("protocol_error", True)
-        lineage = ("request_id", "site_key", "site_skill_id", "site_skill_version",
-                   "site_skill_digest", "recipe_id", "run_id", "scope_id", "executor_id")
+        lineage = (
+            "request_id",
+            "site_key",
+            "site_skill_id",
+            "site_skill_version",
+            "site_skill_digest",
+            "recipe_id",
+            "run_id",
+            "scope_id",
+            "executor_id",
+        )
         if any(getattr(request, field) != getattr(result, field) for field in lineage):
             return decision("lineage_mismatch", True)
         if result.state != "succeeded":
             code = (result.error.code if result.error else "executor_error").lower()
             if any(
-                marker in code for marker in ("protocol", "identity", "lineage", "integrity", "runtime_mismatch")
+                marker in code
+                for marker in (
+                    "protocol",
+                    "identity",
+                    "lineage",
+                    "integrity",
+                    "runtime_mismatch",
+                )
             ):
                 return decision("integrity_error", True)
             if "timeout" in code:
@@ -328,11 +670,17 @@ class GovernedAcquisitionGateway:
             if "block" in code:
                 return decision("blocked")
             return decision("executor_error")
-        if self._origin(str(result.final_url or request.url)) != self._origin(str(request.url)):
+        if self._origin(str(result.final_url or request.url)) != self._origin(
+            str(request.url)
+        ):
             return decision("unsafe_redirect", True)
         if result.status_code in {404, 410}:
             return decision("not_found", True)
-        if result.status_code is None or not 200 <= result.status_code < 300 or result.content is None:
+        if (
+            result.status_code is None
+            or not 200 <= result.status_code < 300
+            or result.content is None
+        ):
             return decision("failed_quality_gate", failed_rules=["successful_content"])
         if content_kind == "document":
             metadata = result.content.metadata
@@ -342,36 +690,65 @@ class GovernedAcquisitionGateway:
                 or metadata.get("representation") != "base64"
                 or metadata.get("sha256_scope") != "decoded-bytes"
             ):
-                return decision("failed_quality_gate", failed_rules=["document_representation"])
+                return decision(
+                    "failed_quality_gate", failed_rules=["document_representation"]
+                )
             try:
                 payload = base64.b64decode(result.content.text, validate=True)
             except (binascii.Error, ValueError):
-                return decision("integrity_error", True, failed_rules=["document_base64"])
+                return decision(
+                    "integrity_error", True, failed_rules=["document_base64"]
+                )
             if hashlib.sha256(payload).hexdigest() != result.content.sha256:
-                return decision("integrity_error", True, failed_rules=["document_sha256"])
-            return decision("accepted", page=FetchResult(
-                raw_html="", cleaned_html="", content_text="", markdown="",
-                fit_markdown="", metadata_json={},
-                final_url=str(result.final_url or request.url), status_code=result.status_code,
-            ))
+                return decision(
+                    "integrity_error", True, failed_rules=["document_sha256"]
+                )
+            return decision(
+                "accepted",
+                page=FetchResult(
+                    raw_html="",
+                    cleaned_html="",
+                    content_text="",
+                    markdown="",
+                    fit_markdown="",
+                    metadata_json={},
+                    final_url=str(result.final_url or request.url),
+                    status_code=result.status_code,
+                ),
+            )
         page = self._page(result)
         links = extract_links(page.raw_html, page.final_url or str(request.url))
         document_links = find_document_links(links)
         gates = self.plan.quality_gates
-        measurements = {"word_count": len(page.content_text.split()), "link_count": len(links),
-                        "document_link_count": len(document_links)}
-        failed_rules = [name for name, measured, minimum in (
-            ("min_words", measurements["word_count"], gates.get("min_words", 0)),
-            ("min_links", measurements["link_count"], gates.get("min_links", 0)),
-            ("min_document_links", measurements["document_link_count"],
-             gates.get("min_document_links", 0)),
-        ) if measured < minimum]
+        measurements = {
+            "word_count": len(page.content_text.split()),
+            "link_count": len(links),
+            "document_link_count": len(document_links),
+        }
+        failed_rules = [
+            name
+            for name, measured, minimum in (
+                ("min_words", measurements["word_count"], gates.get("min_words", 0)),
+                ("min_links", measurements["link_count"], gates.get("min_links", 0)),
+                (
+                    "min_document_links",
+                    measurements["document_link_count"],
+                    gates.get("min_document_links", 0),
+                ),
+            )
+            if measured < minimum
+        ]
         lowered = page.content_text.casefold()
         markers = tuple(gates.get("blocked_markers", ()))
         marker_matched = any(str(marker).casefold() in lowered for marker in markers)
-        evidence = {"measurements": measurements, "failed_rules": failed_rules,
-                    "blocked_marker": {"matched": marker_matched,
-                                       "configured_count": len(markers)}}
+        evidence = {
+            "measurements": measurements,
+            "failed_rules": failed_rules,
+            "blocked_marker": {
+                "matched": marker_matched,
+                "configured_count": len(markers),
+            },
+        }
         if failed_rules:
             return decision("failed_quality_gate", **evidence)
         if marker_matched:
@@ -391,14 +768,23 @@ class GovernedAcquisitionGateway:
         page = normalize_html(text or "", base_url=str(result.final_url or ""))
         untrusted = _redact_json(dict(result.metadata))
         untrusted.pop("inline_artifacts", None)
-        for field in ("raw_html", "cleaned_html", "content_text", "markdown", "fit_markdown"):
+        for field in (
+            "raw_html",
+            "cleaned_html",
+            "content_text",
+            "markdown",
+            "fit_markdown",
+        ):
             untrusted.pop(field, None)
         return FetchResult(
-            raw_html=page.raw_html, cleaned_html=page.cleaned_html,
-            content_text=page.content_text, markdown=page.markdown,
+            raw_html=page.raw_html,
+            cleaned_html=page.cleaned_html,
+            content_text=page.content_text,
+            markdown=page.markdown,
             fit_markdown=page.fit_markdown,
             metadata_json={**page.metadata, **untrusted},
-            final_url=str(result.final_url or ""), status_code=result.status_code,
+            final_url=str(result.final_url or ""),
+            status_code=result.status_code,
         )
 
     def close(self) -> None:
@@ -418,67 +804,156 @@ class GovernedAcquisitionGateway:
 
 
 def legacy_document_runtime_attempt(
-    *, url: str, run_id: int, scope_id: int, fetch_mode: str,
-    started_at: datetime, finished_at: datetime, classification: str,
+    *,
+    url: str,
+    run_id: int,
+    scope_id: int,
+    fetch_mode: str,
+    started_at: datetime,
+    finished_at: datetime,
+    classification: str,
     error_message: str = "",
 ) -> AcquisitionAttempt:
     """Build truthful typed lineage for the live legacy document downloader."""
-    identity = json.dumps({"run_id": run_id, "scope_id": scope_id, "url": url,
-                           "content_kind": "document", "mode": "legacy_runtime_document"},
-                          sort_keys=True, separators=(",", ":"))
+    identity = json.dumps(
+        {
+            "run_id": run_id,
+            "scope_id": scope_id,
+            "url": url,
+            "content_kind": "document",
+            "mode": "legacy_runtime_document",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     request_id = hashlib.sha256(identity.encode()).hexdigest()
     sentinel_digest = "0" * 64
     executor_id = _legacy_executor_id(fetch_mode)
     request = _execution_request(
-        request_id=request_id, site_key="legacy-runtime", site_skill_id="absent",
-        site_skill_version="0.0.0", site_skill_digest=sentinel_digest,
-        recipe_id="legacy-runtime", run_id=str(run_id), scope_id=str(scope_id),
-        executor_id=executor_id, url=url, requested_at=started_at, config={},
-        metadata={"authority_mode": "legacy_runtime", "content_kind": "document",
-                  "fallback_position": 0, "profile_id": None,
-                  "legacy_fetch_mode": fetch_mode,
-                  "legacy_executor_label": f"legacy_{fetch_mode}_document",
-                  "site_skill_lineage": "absent", "executor_version": "legacy-runtime"},
+        request_id=request_id,
+        site_key="legacy-runtime",
+        site_skill_id="absent",
+        site_skill_version="0.0.0",
+        site_skill_digest=sentinel_digest,
+        recipe_id="legacy-runtime",
+        run_id=str(run_id),
+        scope_id=str(scope_id),
+        executor_id=executor_id,
+        url=url,
+        requested_at=started_at,
+        config={},
+        metadata={
+            "authority_mode": "legacy_runtime",
+            "content_kind": "document",
+            "fallback_position": 0,
+            "profile_id": None,
+            "legacy_fetch_mode": fetch_mode,
+            "legacy_executor_label": f"legacy_{fetch_mode}_document",
+            "site_skill_lineage": "absent",
+            "executor_version": "legacy-runtime",
+        },
     )
     accepted = classification == "accepted"
-    lineage = {field: getattr(request, field) for field in (
-        "request_id", "site_key", "site_skill_id", "site_skill_version",
-        "site_skill_digest", "recipe_id", "run_id", "scope_id", "executor_id")}
+    lineage = {
+        field: getattr(request, field)
+        for field in (
+            "request_id",
+            "site_key",
+            "site_skill_id",
+            "site_skill_version",
+            "site_skill_digest",
+            "recipe_id",
+            "run_id",
+            "scope_id",
+            "executor_id",
+        )
+    }
     result = CaptureResult(
-        **lineage, state="succeeded" if accepted else "failed",
-        started_at=started_at, finished_at=finished_at, final_url=url if accepted else None,
-        content=(CaptureContent(
-            media_type="application/octet-stream", text="",
-            metadata={"content_kind": "document", "representation": "legacy_parent_persisted"},
-        ) if accepted else None),
-        error=None if accepted else CaptureError(code=classification, message=error_message or classification),
-        metadata={"authority_mode": "legacy_runtime", "content_kind": "document",
-                  "legacy_fetch_mode": fetch_mode,
-                  "legacy_executor_label": f"legacy_{fetch_mode}_document",
-                  "acquisition_classification": classification,
-                  "acquisition_validation": {"decision": classification}},
+        **lineage,
+        state="succeeded" if accepted else "failed",
+        started_at=started_at,
+        finished_at=finished_at,
+        final_url=url if accepted else None,
+        content=(
+            CaptureContent(
+                media_type="application/octet-stream",
+                text="",
+                metadata={
+                    "content_kind": "document",
+                    "representation": "legacy_parent_persisted",
+                },
+            )
+            if accepted
+            else None
+        ),
+        error=None
+        if accepted
+        else CaptureError(code=classification, message=error_message or classification),
+        metadata={
+            "authority_mode": "legacy_runtime",
+            "content_kind": "document",
+            "legacy_fetch_mode": fetch_mode,
+            "legacy_executor_label": f"legacy_{fetch_mode}_document",
+            "acquisition_classification": classification,
+            "acquisition_validation": {"decision": classification},
+        },
     )
-    contract = ContractAcquisitionAttempt.model_validate_json(json.dumps({
-        "attempt_id": request_id,
-        "request": _canonical_request(request).model_dump(mode="json"),
-        "result": result.model_dump(mode="json"),
-        "accepted": accepted, "acceptance_reason": classification,
-    }, sort_keys=True, separators=(",", ":"), ensure_ascii=True))
+    contract = ContractAcquisitionAttempt.model_validate_json(
+        json.dumps(
+            {
+                "attempt_id": request_id,
+                "request": _canonical_request(request).model_dump(mode="json"),
+                "result": result.model_dump(mode="json"),
+                "accepted": accepted,
+                "acceptance_reason": classification,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+    )
     return AcquisitionAttempt(
-        attempt_id=request_id, request_id=request_id, scope_id=scope_id, run_id=run_id,
-        position=0, content_kind="document", site_skill_id="absent",
-        site_skill_version="0.0.0", site_skill_package_sha256=sentinel_digest,
-        recipe_id="legacy-runtime", executor_id=executor_id, executor_version="legacy-runtime",
-        requested_url=url, final_url=url if accepted else None, requested_at=started_at,
-        started_at=started_at, finished_at=finished_at, classification=classification,
-        accepted=accepted, reason=classification, validation={"decision": classification},
-        canonical_json=json.dumps(redact_persisted_value(contract.model_dump(mode="json")),
-                                  sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+        attempt_id=request_id,
+        request_id=request_id,
+        scope_id=scope_id,
+        run_id=run_id,
+        position=0,
+        content_kind="document",
+        site_skill_id="absent",
+        site_skill_version="0.0.0",
+        site_skill_package_sha256=sentinel_digest,
+        recipe_id="legacy-runtime",
+        executor_id=executor_id,
+        executor_version="legacy-runtime",
+        requested_url=url,
+        final_url=url if accepted else None,
+        requested_at=started_at,
+        started_at=started_at,
+        finished_at=finished_at,
+        classification=classification,
+        accepted=accepted,
+        reason=classification,
+        validation={"decision": classification},
+        canonical_json=json.dumps(
+            redact_persisted_value(contract.model_dump(mode="json")),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ),
         authority_mode="legacy_runtime",
     )
 
 
-_SECRET_KEYS = ("apikey", "authorization", "cookie", "credential", "password", "secret", "token", "argv")
+_SECRET_KEYS = (
+    "apikey",
+    "authorization",
+    "cookie",
+    "credential",
+    "password",
+    "secret",
+    "token",
+    "argv",
+)
 _HOST_PATH_KEYS = ("executable", "executable_path", "binary_path", "host_path")
 
 
@@ -493,6 +968,7 @@ def _is_secret_key(value: str) -> bool:
 
 def _redact_text(value: str) -> str:
     import re
+
     value = re.sub(
         r"https?://[^\s<>\"']+",
         lambda match: _redact_url(match.group(0)),
@@ -500,24 +976,32 @@ def _redact_text(value: str) -> str:
         flags=re.IGNORECASE,
     )
     value = re.sub(r"(?i)(bearer|basic)\s+[^\s,;]+", r"\1 [REDACTED]", value)
-    value = re.sub(r"(?i)(token|password|secret|api[_-]?key|cookie|authorization)\s*[:=]\s*[^\s,;&#<>\"']+", r"\1=[REDACTED]", value)
+    value = re.sub(
+        r"(?i)(token|password|secret|api[_-]?key|cookie|authorization)\s*[:=]\s*[^\s,;&#<>\"']+",
+        r"\1=[REDACTED]",
+        value,
+    )
     value = re.sub(
         r"(?i)([?&#](?:access[_-]?token|token|api[_-]?key|password|authorization|cookie|secret|credential)(?:=|/))[^&#\s<>\"']*",
-        r"\1[REDACTED]", value,
+        r"\1[REDACTED]",
+        value,
     )
     return value
 
 
 def _redact_diagnostic_text(value: str) -> str:
     import re
+
     value = _redact_text(value)
     value = re.sub(
         r"(?<![A-Za-z0-9./:])(?:/[A-Za-z0-9_.-]+){2,}(?:/[A-Za-z0-9_.-]+)?",
-        "[HOST_PATH_REDACTED]", value,
+        "[HOST_PATH_REDACTED]",
+        value,
     )
     return re.sub(
         r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/](?:[^\s,;:\"']+[\\/])*[^\s,;:\"']+)",
-        "[HOST_PATH_REDACTED]", value,
+        "[HOST_PATH_REDACTED]",
+        value,
     )[:4096]
 
 
@@ -530,7 +1014,9 @@ def _redact_url(value: str) -> str:
         return _redact_text(value)
     query = []
     for name, item in parse_qsl(parsed.query, keep_blank_values=True):
-        query.append((name, "[REDACTED]" if _is_secret_key(name) else _redact_text(item)))
+        query.append(
+            (name, "[REDACTED]" if _is_secret_key(name) else _redact_text(item))
+        )
     hostname = parsed.hostname or ""
     if ":" in hostname and not hostname.startswith("["):
         hostname = f"[{hostname}]"
@@ -541,10 +1027,17 @@ def _redact_url(value: str) -> str:
     # redacted value remains a valid credential-free URL contract value.
     fragment = []
     for name, item in parse_qsl(parsed.fragment, keep_blank_values=True):
-        fragment.append(("[REDACTED]", "[REDACTED]") if _is_secret_key(name)
-                        else (name, _redact_text(item)))
-    rendered_fragment = urlencode(fragment) if fragment else _redact_text(parsed.fragment)
-    return urlunsplit((parsed.scheme, netloc, parsed.path, urlencode(query), rendered_fragment))
+        fragment.append(
+            ("[REDACTED]", "[REDACTED]")
+            if _is_secret_key(name)
+            else (name, _redact_text(item))
+        )
+    rendered_fragment = (
+        urlencode(fragment) if fragment else _redact_text(parsed.fragment)
+    )
+    return urlunsplit(
+        (parsed.scheme, netloc, parsed.path, urlencode(query), rendered_fragment)
+    )
 
 
 def _redact_json(value: Any, key: str = "") -> Any:
@@ -558,7 +1051,9 @@ def _redact_json(value: Any, key: str = "") -> Any:
             if item_key == "inline_artifacts":
                 continue
             if _is_secret_key(item_key):
-                replacement = "redacted_field" if hidden == 0 else f"redacted_field_{hidden}"
+                replacement = (
+                    "redacted_field" if hidden == 0 else f"redacted_field_{hidden}"
+                )
                 hidden += 1
                 redacted[replacement] = "[REDACTED]"
             else:
@@ -567,8 +1062,12 @@ def _redact_json(value: Any, key: str = "") -> Any:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [_redact_json(item) for item in value]
     if isinstance(value, str):
-        if _normalized_key(key) in {_normalized_key(item) for item in _HOST_PATH_KEYS} and (
-                value.startswith(("/", "\\")) or (len(value) > 2 and value[1:3] in {":/", ":\\"})):
+        if _normalized_key(key) in {
+            _normalized_key(item) for item in _HOST_PATH_KEYS
+        } and (
+            value.startswith(("/", "\\"))
+            or (len(value) > 2 and value[1:3] in {":/", ":\\"})
+        ):
             return "[HOST_PATH_REDACTED]"
         if _normalized_key(key) in {"message", "diagnostic", "errormessage"}:
             return _redact_diagnostic_text(value)
@@ -578,7 +1077,9 @@ def _redact_json(value: Any, key: str = "") -> Any:
 
 def _canonical_attempt(attempt: AcquisitionAttempt) -> str:
     payload = attempt.model_dump(mode="json", exclude={"canonical_json", "artifacts"})
-    return json.dumps(_redact_json(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return json.dumps(
+        _redact_json(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
 
 
 def redact_persisted_value(value: Any) -> Any:
@@ -593,22 +1094,32 @@ def canonicalize_persisted_value(value: Any) -> Any:
         quality = sanitized.get("quality_gates")
         if isinstance(quality, dict) and "blocked_markers" in quality:
             markers = quality["blocked_markers"]
-            quality["blocked_markers"] = ["[REDACTED]"] * len(markers) if isinstance(markers, list) else []
+            quality["blocked_markers"] = (
+                ["[REDACTED]"] * len(markers) if isinstance(markers, list) else []
+            )
     return sanitized
 
 
 def _redact_marker_values(value: Any, markers: Sequence[Any]) -> Any:
     """Remove configured blocked-marker literals from canonical evidence values."""
     if isinstance(value, Mapping):
-        return {str(key): _redact_marker_values(item, markers) for key, item in value.items()}
+        return {
+            str(key): _redact_marker_values(item, markers)
+            for key, item in value.items()
+        }
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [_redact_marker_values(item, markers) for item in value]
     if isinstance(value, str):
         import re
+
         for marker in markers:
             if str(marker):
-                value = re.sub(re.escape(str(marker)), "[BLOCKED_MARKER]", value,
-                               flags=re.IGNORECASE)
+                value = re.sub(
+                    re.escape(str(marker)),
+                    "[BLOCKED_MARKER]",
+                    value,
+                    flags=re.IGNORECASE,
+                )
     return value
 
 
@@ -616,8 +1127,11 @@ def _execution_request(**values: Any) -> CaptureRequest:
     """Build trusted executor input without applying the persistence-only JSON policy."""
     executable_config = values.get("config", {})
     executable_metadata = values.get("metadata", {})
-    portable = {**values, "config": canonicalize_persisted_value(executable_config),
-                "metadata": canonicalize_persisted_value(executable_metadata)}
+    portable = {
+        **values,
+        "config": canonicalize_persisted_value(executable_config),
+        "metadata": canonicalize_persisted_value(executable_metadata),
+    }
     validated = CaptureRequest.model_validate(portable)
     if portable["config"] == executable_config:
         return validated
@@ -643,11 +1157,20 @@ def _numeric_id(value: str) -> int:
 
 
 def _legacy_executor_id(fetch_mode: str) -> str:
-    return "browser_rendered" if fetch_mode.casefold() in {
-        "browser", "rendered", "playwright", "browser_rendered"
-    } else "web_http"
+    return (
+        "browser_rendered"
+        if fetch_mode.casefold()
+        in {"browser", "rendered", "playwright", "browser_rendered"}
+        else "web_http"
+    )
 
 
-__all__ = ["AcquisitionGateway", "AcquisitionOutcome", "GovernedAcquisitionGateway",
-           "LegacyCrawlerGateway", "canonical_redacted_attempt", "legacy_document_runtime_attempt",
-           "redact_persisted_value"]
+__all__ = [
+    "AcquisitionGateway",
+    "AcquisitionOutcome",
+    "GovernedAcquisitionGateway",
+    "LegacyCrawlerGateway",
+    "canonical_redacted_attempt",
+    "legacy_document_runtime_attempt",
+    "redact_persisted_value",
+]

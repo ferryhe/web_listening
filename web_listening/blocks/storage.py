@@ -11,7 +11,9 @@ import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
+from types import FunctionType
 from typing import Final, List, Optional
 
 from web_listening.models import (
@@ -38,6 +40,36 @@ from web_listening.contracts._protocol import validate_portable_relative_path
 
 
 _EXECUTION_ARTIFACT_CLEANUP_LOCK = threading.RLock()
+_CROSS_THREAD_TRANSACTION_HANDOFF_METHODS = frozenset(
+    {"rollback_execution_transaction"}
+)
+
+
+def _serialize_public_storage_operations(cls):
+    """Give every public operation one owner-aware turn on a Storage instance."""
+
+    for name, method in tuple(vars(cls).items()):
+        if name.startswith("_") or not isinstance(method, FunctionType):
+            continue
+
+        @wraps(method)
+        def serialized(self, *args, __method=method, **kwargs):
+            condition = getattr(self, "_execution_transaction_condition", None)
+            if condition is None:
+                return __method(self, *args, **kwargs)
+            with condition:
+                thread_id = threading.get_ident()
+                while (
+                    self._execution_transaction_depth > 0
+                    and self._execution_transaction_owner != thread_id
+                    and __method.__name__
+                    not in _CROSS_THREAD_TRANSACTION_HANDOFF_METHODS
+                ):
+                    condition.wait()
+                return __method(self, *args, **kwargs)
+
+        setattr(cls, name, serialized)
+    return cls
 
 
 def _parse_dt(value) -> Optional[datetime]:
@@ -72,10 +104,13 @@ class _ExecutionCreatedDirectoryOwnership:
     descriptor: int
 
 
+@_serialize_public_storage_operations
 class Storage:
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
         self._execution_transaction_depth = 0
+        self._execution_transaction_owner: int | None = None
+        self._execution_transaction_condition = threading.Condition(threading.RLock())
         self._execution_created_paths: list[_ExecutionCreatedPathOwnership] = []
         self._execution_created_directories: list[
             _ExecutionCreatedDirectoryOwnership
@@ -88,42 +123,70 @@ class Storage:
 
     @property
     def execution_transaction_active(self) -> bool:
-        return self._execution_transaction_depth > 0
+        with self._execution_transaction_condition:
+            return self._execution_transaction_depth > 0
+
+    @property
+    def execution_transaction_owned_by_current_thread(self) -> bool:
+        with self._execution_transaction_condition:
+            return (
+                self._execution_transaction_depth > 0
+                and self._execution_transaction_owner == threading.get_ident()
+            )
 
     def begin_execution_transaction(self) -> None:
         """Defer all execution writes until the governed traversal succeeds."""
-        if self._execution_transaction_depth == 0:
-            self.conn.execute("BEGIN IMMEDIATE")
-        self._execution_transaction_depth += 1
+        thread_id = threading.get_ident()
+        with self._execution_transaction_condition:
+            while (
+                self._execution_transaction_depth > 0
+                and self._execution_transaction_owner != thread_id
+            ):
+                self._execution_transaction_condition.wait()
+            if self._execution_transaction_depth == 0:
+                self.conn.execute("BEGIN IMMEDIATE")
+                self._execution_transaction_owner = thread_id
+            self._execution_transaction_depth += 1
 
     def commit_execution_transaction(self) -> None:
-        if self._execution_transaction_depth == 0:
-            return
-        if self._execution_transaction_depth > 1:
-            self._execution_transaction_depth -= 1
-            return
-        try:
-            self.conn.commit()
-        except BaseException:
+        thread_id = threading.get_ident()
+        with self._execution_transaction_condition:
+            if self._execution_transaction_depth == 0:
+                return
+            if self._execution_transaction_owner != thread_id:
+                raise RuntimeError("execution transaction is owned by another thread")
+            if self._execution_transaction_depth > 1:
+                self._execution_transaction_depth -= 1
+                return
             try:
-                transaction_pending = self.conn.in_transaction
+                self.conn.commit()
             except BaseException:
-                transaction_pending = True
-            if transaction_pending:
                 try:
-                    self.rollback_execution_transaction()
+                    transaction_pending = self.conn.in_transaction
                 except BaseException:
-                    pass
+                    transaction_pending = True
+                if transaction_pending:
+                    try:
+                        self.rollback_execution_transaction()
+                    except BaseException:
+                        pass
+                else:
+                    self._execution_transaction_depth = 0
+                    try:
+                        self._release_execution_created_paths()
+                    except BaseException:
+                        pass
+                    finally:
+                        self._execution_transaction_owner = None
+                        self._execution_transaction_condition.notify_all()
+                raise
             else:
                 self._execution_transaction_depth = 0
                 try:
                     self._release_execution_created_paths()
-                except BaseException:
-                    pass
-            raise
-        else:
-            self._execution_transaction_depth = 0
-            self._release_execution_created_paths()
+                finally:
+                    self._execution_transaction_owner = None
+                    self._execution_transaction_condition.notify_all()
 
     def register_execution_created_path(
         self,
@@ -1346,56 +1409,59 @@ class Storage:
             ) from exc
 
     def rollback_execution_transaction(self) -> None:
-        rollback_failure: BaseException | None = None
-        try:
-            if self._execution_transaction_depth:
-                self.conn.rollback()
-        except BaseException as exc:
-            rollback_failure = exc
-        finally:
-            self._execution_transaction_depth = 0
-            ownerships = self._execution_created_paths
-            directory_ownerships = self._execution_created_directories
-            self._execution_created_paths = []
-            self._execution_created_directories = []
-            for ownership in reversed(ownerships):
-                try:
-                    opened = os.fstat(ownership.descriptor)
-                    self.remove_execution_created_path_if_identity(
-                        ownership.path,
-                        cleanup_root=ownership.cleanup_root,
-                        expected_identity=(opened.st_dev, opened.st_ino),
-                    )
-                except BaseException as exc:
-                    rollback_failure = rollback_failure or exc
-                finally:
+        with self._execution_transaction_condition:
+            rollback_failure: BaseException | None = None
+            try:
+                if self._execution_transaction_depth:
+                    self.conn.rollback()
+            except BaseException as exc:
+                rollback_failure = exc
+            finally:
+                self._execution_transaction_depth = 0
+                ownerships = self._execution_created_paths
+                directory_ownerships = self._execution_created_directories
+                self._execution_created_paths = []
+                self._execution_created_directories = []
+                for ownership in reversed(ownerships):
+                    try:
+                        opened = os.fstat(ownership.descriptor)
+                        self.remove_execution_created_path_if_identity(
+                            ownership.path,
+                            cleanup_root=ownership.cleanup_root,
+                            expected_identity=(opened.st_dev, opened.st_ino),
+                        )
+                    except BaseException as exc:
+                        rollback_failure = rollback_failure or exc
+                    finally:
+                        try:
+                            os.close(ownership.descriptor)
+                        except BaseException as exc:
+                            rollback_failure = rollback_failure or exc
+                directory_ownerships.sort(
+                    key=lambda ownership: len(
+                        ownership.path.relative_to(ownership.cleanup_root).parts
+                    ),
+                    reverse=True,
+                )
+                for ownership in directory_ownerships:
+                    try:
+                        opened = os.fstat(ownership.descriptor)
+                        self._remove_execution_created_directory_if_identity(
+                            ownership.path,
+                            cleanup_root=ownership.cleanup_root,
+                            expected_identity=(opened.st_dev, opened.st_ino),
+                        )
+                    except BaseException as exc:
+                        rollback_failure = rollback_failure or exc
+                for ownership in reversed(directory_ownerships):
                     try:
                         os.close(ownership.descriptor)
                     except BaseException as exc:
                         rollback_failure = rollback_failure or exc
-            directory_ownerships.sort(
-                key=lambda ownership: len(
-                    ownership.path.relative_to(ownership.cleanup_root).parts
-                ),
-                reverse=True,
-            )
-            for ownership in directory_ownerships:
-                try:
-                    opened = os.fstat(ownership.descriptor)
-                    self._remove_execution_created_directory_if_identity(
-                        ownership.path,
-                        cleanup_root=ownership.cleanup_root,
-                        expected_identity=(opened.st_dev, opened.st_ino),
-                    )
-                except BaseException as exc:
-                    rollback_failure = rollback_failure or exc
-            for ownership in reversed(directory_ownerships):
-                try:
-                    os.close(ownership.descriptor)
-                except BaseException as exc:
-                    rollback_failure = rollback_failure or exc
-        if rollback_failure is not None:
-            raise rollback_failure
+                self._execution_transaction_owner = None
+                self._execution_transaction_condition.notify_all()
+            if rollback_failure is not None:
+                raise rollback_failure
 
     def _commit(self) -> None:
         if not self.execution_transaction_active:
@@ -1475,6 +1541,181 @@ class Storage:
                 first_seen_at TEXT NOT NULL,
                 last_seen_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS artifact_blobs (
+                sha256 TEXT PRIMARY KEY,
+                artifact_uri TEXT NOT NULL UNIQUE,
+                storage_path TEXT NOT NULL UNIQUE,
+                entity_size_bytes INTEGER NOT NULL,
+                stored_size_bytes INTEGER NOT NULL,
+                storage_encoding TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS artifact_blob_retirements (
+                sha256 TEXT PRIMARY KEY,
+                retired_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS artifact_versions (
+                version_id TEXT PRIMARY KEY,
+                manifest_version TEXT NOT NULL,
+                source_run_id TEXT NOT NULL,
+                normalized_source_identity TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                artifact_uri TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(manifest_version, source_run_id, normalized_source_identity, sha256),
+                FOREIGN KEY (sha256) REFERENCES artifact_blobs(sha256)
+            );
+
+            CREATE TABLE IF NOT EXISTS artifact_observations (
+                artifact_id TEXT PRIMARY KEY,
+                version_id TEXT NOT NULL,
+                manifest_version TEXT NOT NULL,
+                source_run_id TEXT NOT NULL,
+                normalized_source_identity TEXT NOT NULL,
+                requested_url TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                final_url TEXT NOT NULL,
+                filename TEXT NOT NULL DEFAULT '',
+                retrieved_at TEXT NOT NULL,
+                http_status INTEGER NOT NULL,
+                mime_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                artifact_uri TEXT NOT NULL,
+                wire_encoding TEXT NOT NULL,
+                content_encoding TEXT NOT NULL,
+                artifact_role TEXT NOT NULL,
+                artifact_status TEXT NOT NULL,
+                access_decision_id TEXT NOT NULL,
+                adapter_id TEXT NOT NULL,
+                adapter_version TEXT NOT NULL,
+                redirect_chain_json TEXT NOT NULL DEFAULT '[]',
+                discovered_from_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                UNIQUE(manifest_version, source_run_id, normalized_source_identity, sha256),
+                FOREIGN KEY (version_id) REFERENCES artifact_versions(version_id),
+                FOREIGN KEY (sha256) REFERENCES artifact_blobs(sha256)
+            );
+
+            CREATE TABLE IF NOT EXISTS artifact_lineage (
+                lineage_id TEXT PRIMARY KEY,
+                artifact_id TEXT NOT NULL,
+                relation TEXT NOT NULL,
+                related_artifact_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(artifact_id, relation, related_artifact_id),
+                FOREIGN KEY (artifact_id) REFERENCES artifact_observations(artifact_id),
+                FOREIGN KEY (related_artifact_id) REFERENCES artifact_observations(artifact_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_artifact_versions_sha256
+                ON artifact_versions(sha256);
+            CREATE INDEX IF NOT EXISTS idx_artifact_observations_source
+                ON artifact_observations(normalized_source_identity, retrieved_at, artifact_id);
+            CREATE INDEX IF NOT EXISTS idx_artifact_observations_version
+                ON artifact_observations(version_id);
+            CREATE INDEX IF NOT EXISTS idx_artifact_lineage_related
+                ON artifact_lineage(related_artifact_id, artifact_id);
+
+            CREATE TRIGGER IF NOT EXISTS artifact_versions_blob_insert_guard
+            BEFORE INSERT ON artifact_versions
+            WHEN NOT EXISTS (
+                SELECT 1 FROM artifact_blobs WHERE sha256 = NEW.sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'artifact version requires an existing blob');
+            END;
+            CREATE TRIGGER IF NOT EXISTS artifact_versions_blob_update_guard
+            BEFORE UPDATE OF sha256 ON artifact_versions
+            WHEN NOT EXISTS (
+                SELECT 1 FROM artifact_blobs WHERE sha256 = NEW.sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'artifact version requires an existing blob');
+            END;
+            CREATE TRIGGER IF NOT EXISTS artifact_observations_reference_insert_guard
+            BEFORE INSERT ON artifact_observations
+            WHEN NOT EXISTS (
+                    SELECT 1 FROM artifact_versions WHERE version_id = NEW.version_id
+                 )
+                 OR NOT EXISTS (
+                    SELECT 1 FROM artifact_blobs WHERE sha256 = NEW.sha256
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, 'artifact observation requires existing references');
+            END;
+            CREATE TRIGGER IF NOT EXISTS artifact_observations_reference_update_guard
+            BEFORE UPDATE OF version_id, sha256 ON artifact_observations
+            WHEN NOT EXISTS (
+                    SELECT 1 FROM artifact_versions WHERE version_id = NEW.version_id
+                 )
+                 OR NOT EXISTS (
+                    SELECT 1 FROM artifact_blobs WHERE sha256 = NEW.sha256
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, 'artifact observation requires existing references');
+            END;
+            CREATE TRIGGER IF NOT EXISTS artifact_lineage_reference_insert_guard
+            BEFORE INSERT ON artifact_lineage
+            WHEN NOT EXISTS (
+                    SELECT 1 FROM artifact_observations
+                    WHERE artifact_id = NEW.artifact_id
+                 )
+                 OR NOT EXISTS (
+                    SELECT 1 FROM artifact_observations
+                    WHERE artifact_id = NEW.related_artifact_id
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, 'artifact lineage requires existing observations');
+            END;
+            CREATE TRIGGER IF NOT EXISTS artifact_lineage_reference_update_guard
+            BEFORE UPDATE OF artifact_id, related_artifact_id ON artifact_lineage
+            WHEN NOT EXISTS (
+                    SELECT 1 FROM artifact_observations
+                    WHERE artifact_id = NEW.artifact_id
+                 )
+                 OR NOT EXISTS (
+                    SELECT 1 FROM artifact_observations
+                    WHERE artifact_id = NEW.related_artifact_id
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, 'artifact lineage requires existing observations');
+            END;
+            CREATE TRIGGER IF NOT EXISTS artifact_blobs_reference_delete_guard
+            BEFORE DELETE ON artifact_blobs
+            WHEN EXISTS (
+                    SELECT 1 FROM artifact_versions WHERE sha256 = OLD.sha256
+                 )
+                 OR EXISTS (
+                    SELECT 1 FROM artifact_observations WHERE sha256 = OLD.sha256
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, 'referenced artifact blob cannot be deleted');
+            END;
+            CREATE TRIGGER IF NOT EXISTS artifact_versions_reference_delete_guard
+            BEFORE DELETE ON artifact_versions
+            WHEN EXISTS (
+                SELECT 1 FROM artifact_observations WHERE version_id = OLD.version_id
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'referenced artifact version cannot be deleted');
+            END;
+            CREATE TRIGGER IF NOT EXISTS artifact_observations_reference_delete_guard
+            BEFORE DELETE ON artifact_observations
+            WHEN EXISTS (
+                    SELECT 1 FROM artifact_lineage WHERE artifact_id = OLD.artifact_id
+                 )
+                 OR EXISTS (
+                    SELECT 1 FROM artifact_lineage
+                    WHERE related_artifact_id = OLD.artifact_id
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, 'referenced artifact observation cannot be deleted');
+            END;
 
             CREATE TABLE IF NOT EXISTS analysis_reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1704,6 +1945,94 @@ class Storage:
         )
         self._ensure_column("page_snapshots", "attempt_id", "TEXT")
         self._ensure_column("file_observations", "attempt_id", "TEXT")
+        self._ensure_column(
+            "artifact_versions", "mime_type", "TEXT NOT NULL DEFAULT ''"
+        )
+        self._ensure_column(
+            "artifact_observations", "filename", "TEXT NOT NULL DEFAULT ''"
+        )
+        self.conn.executescript(
+            """
+            CREATE TRIGGER IF NOT EXISTS documents_retired_blob_insert_guard
+            BEFORE INSERT ON documents
+            WHEN COALESCE(NEW.sha256, '') != '' AND EXISTS (
+                SELECT 1 FROM artifact_blob_retirements WHERE sha256 = NEW.sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'retired artifact blob cannot be referenced');
+            END;
+            CREATE TRIGGER IF NOT EXISTS documents_retired_blob_update_guard
+            BEFORE UPDATE OF sha256 ON documents
+            WHEN COALESCE(NEW.sha256, '') != '' AND EXISTS (
+                SELECT 1 FROM artifact_blob_retirements WHERE sha256 = NEW.sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'retired artifact blob cannot be referenced');
+            END;
+            CREATE TRIGGER IF NOT EXISTS document_blobs_retired_insert_guard
+            BEFORE INSERT ON document_blobs
+            WHEN EXISTS (
+                SELECT 1 FROM artifact_blob_retirements WHERE sha256 = NEW.sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'retired artifact blob cannot be referenced');
+            END;
+            CREATE TRIGGER IF NOT EXISTS document_blobs_retired_update_guard
+            BEFORE UPDATE OF sha256 ON document_blobs
+            WHEN EXISTS (
+                SELECT 1 FROM artifact_blob_retirements WHERE sha256 = NEW.sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'retired artifact blob cannot be referenced');
+            END;
+            CREATE TRIGGER IF NOT EXISTS tracked_files_retired_blob_insert_guard
+            BEFORE INSERT ON tracked_files
+            WHEN COALESCE(NEW.latest_sha256, '') != '' AND EXISTS (
+                SELECT 1 FROM artifact_blob_retirements
+                WHERE sha256 = NEW.latest_sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'retired artifact blob cannot be referenced');
+            END;
+            CREATE TRIGGER IF NOT EXISTS tracked_files_retired_blob_update_guard
+            BEFORE UPDATE OF latest_sha256 ON tracked_files
+            WHEN COALESCE(NEW.latest_sha256, '') != '' AND EXISTS (
+                SELECT 1 FROM artifact_blob_retirements
+                WHERE sha256 = NEW.latest_sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'retired artifact blob cannot be referenced');
+            END;
+            CREATE TRIGGER IF NOT EXISTS acquisition_artifacts_retired_insert_guard
+            BEFORE INSERT ON acquisition_artifacts
+            WHEN EXISTS (
+                SELECT 1 FROM artifact_blob_retirements WHERE sha256 = NEW.sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'retired artifact blob cannot be referenced');
+            END;
+            CREATE TRIGGER IF NOT EXISTS acquisition_artifacts_retired_update_guard
+            BEFORE UPDATE OF sha256 ON acquisition_artifacts
+            WHEN EXISTS (
+                SELECT 1 FROM artifact_blob_retirements WHERE sha256 = NEW.sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'retired artifact blob cannot be referenced');
+            END;
+            """
+        )
+        self.conn.execute(
+            """UPDATE artifact_versions
+               SET mime_type = COALESCE(
+                   (SELECT artifact_observations.mime_type
+                    FROM artifact_observations
+                    WHERE artifact_observations.version_id = artifact_versions.version_id
+                    ORDER BY artifact_observations.artifact_id
+                    LIMIT 1),
+                   mime_type
+               )
+               WHERE mime_type = ''"""
+        )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_page_snapshots_attempt_id ON page_snapshots(attempt_id)"
         )

@@ -1,6 +1,6 @@
 # web_listening
 
-`web_listening` 1.2 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
+`web_listening` 1.3 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
 
 The supported 1.0 scope is complete and stable. Future changes follow the semantic-version policy below. The canonical product flow is:
 
@@ -13,6 +13,8 @@ The packaged `web-listening` CLI is the canonical operator and agent interface. 
 Version 1.1 adds a producer-only, robots-first diagnostic command for new Agentic planning paths. It does not change the supported 1.0 `discover -> classify -> select -> plan-scope` behavior or grant acquisition authority.
 
 Version 1.2 adds strict, offline `access-policy.v1` and `access-decision.v1` contracts for future read-path migration. It does not migrate or change any current network, crawler, sitemap, download, REST, or MCP execution path.
+
+Version 1.3 publishes the producer-confirmed `acquisition-manifest.v1` contract bundle and its strict offline validator. It freezes a future producer/consumer handoff without implementing acquisition runtime, immutable storage, retention, or manifest production.
 
 ## Robots and sitemap diagnosis
 
@@ -73,6 +75,24 @@ web-listening validate-access-contract --path docs/testing/fixtures/access-decis
 With `--json`, contract validation failures and command-parser/path failures (including a missing, nonexistent, directory, or unreadable `--path`) emit exactly one compact canonical `access-rejection-error.v1` envelope with `contract.invalid`; human mode retains the usual Typer diagnostics.
 
 Parsing is strict and fail-closed: unknown fields, duplicate JSON keys, excessive JSON nesting, wrong required/null fields or enums, non-canonical URLs/origins/queries, stale evidence, raw/encoded/nested/fullwidth-delimiter secret-key URLs, namespaced NFKC/compact/camel secret-key forms, raw/once/twice-percent-encoded header or credential-key free text (including long HTTP tokens), nested delimiter- or whitespace-shaped secret-bearing evidence/identity text, raw/percent/double-percent HTTP/SOCKS/network-path userinfo (including pipe/text-punctuation-delimited network paths), sensitive or matrix-conflicting standalone envelope evidence, missing or tampered per-hop proofs, out-of-authority or out-of-window request timing, overlapping/redefined budget windows, broken origin pacing or reservation lineage, extreme numeric/time arithmetic, and identity/cache/policy/decision digest tampering are rejected. Repeated validation is idempotent and does not mutate the input. Model pre-parsing and the offline loader convert parser recursion into governed validation errors; JSON CLI mode still emits exactly one canonical `contract.invalid` envelope.
+
+## Acquisition manifest contract bundle
+
+The producer authority for the future cross-repository handoff is the exact three-file bundle under `contracts/acquisition-manifest.v1/`: `schema.json`, `fixture.json`, and `producer-confirmation.json`. The schema identifies `acquisition-manifest.v1`, uses JSON Schema draft 2020-12, closes every normative object shape, and uses `source_run_id` consistently. The confirmation binds the exact repository, Issues #46 and #48, producer-confirmed scope, and SHA-256 digests of the committed UTF-8 LF schema and fixture bytes.
+
+The contract separates blob identity from observation identity. `retrieval.sha256` identifies content bytes and may therefore be shared by different URLs. A stable `artifact_id` is `artifact-` plus the first 24 hexadecimal characters of SHA-256 over canonical JSON containing exactly `manifest_version`, `source_run_id`, `normalized_source_identity`, and the nullable retrieval `sha256`. Consequently, a later body at the same normalized source and identical bytes at different normalized sources remain distinct observations. Stable artifact IDs bind parent, source, discovered-from, and derived lineage. Portable content locations use `artifact:sha256:<digest>` URIs rather than machine paths.
+
+Each observation records requested, source, and final URLs; the complete ordered redirect chain; a stable `access_decision_id` reference to the 1.2 access contract; acquisition adapter/version; discovery and lineage; retrieval time, HTTP status, MIME type, size, SHA-256, wire/content encoding, and portable artifact URI. Run and artifact status enums independently support `completed`, `partial`, `rejected`, and `failed`. The producer-confirmed fixture covers HTML, PDF, derived Markdown, parent/child lineage, allowed and rejected redirects, same-URL new content, different-URL identical bytes, shared blob URIs, and idempotent no-mutation replay. It contains no production data or credential material.
+
+Validate the canonical bundle or an exact vendored copy without network or runtime activity:
+
+```bash
+web-listening validate-acquisition-contract \
+  --bundle-path contracts/acquisition-manifest.v1 \
+  --json
+```
+
+The command emits canonical `acquisition-contract-validation.v1` JSON. Missing, unreadable, corrupt, non-LF, digest-mismatched, identity-mismatched, unknown-file, unknown-shape, sample-only, old-version, sensitive, broken-lineage, and invalid-replay bundles fail closed with stable reason codes. Validation verifies the schema meta-contract, fixture, producer identity, exact byte hashes, artifact identities, redirect continuity, lineage, portable blob URIs, coverage assertions, and repeatability without modifying any bundle byte. The existing `web-listening-manifest.v1` is a separate compatibility export and cannot substitute for this contract.
 
 ## Product model and authority
 
@@ -215,6 +235,7 @@ Use `web-listening COMMAND --help` for complete options. The lower-level `tools/
 
 - `diagnose-site` — probe robots.txt first and emit bounded, digest-verifiable sitemap planning evidence; it does not run discovery or grant authority.
 - `validate-access-contract` — strictly validate and inspect one local access policy or decision artifact offline.
+- `validate-acquisition-contract` — validate the canonical producer-confirmed acquisition manifest contract bundle offline without mutation.
 - `list-site-skills`, `inspect-site-skill`, `validate-site-skill` — statically inspect governed Site Skill packages.
 - `list-acquisition-tools` — return the stable acquisition picker catalog.
 - `build-acquisition-profile` — create a reviewed profile input.
@@ -280,6 +301,7 @@ Stable machine contracts in the current surface include:
 - `acquisition-probe.v1`
 - `acquisition-execution-plan.v1` and `acquisition-execution-plan-preview.v1`
 - `acquisition-evidence.v1`
+- `acquisition-manifest.v1`
 - `web-listening-manifest.v1`
 - `web-listening-tool-result.v1`
 - `artifact_contract.v1` and `job_delivery.v1`
@@ -287,6 +309,8 @@ Stable machine contracts in the current surface include:
 - `browseract-inspection.v1`
 
 Canonical machine-readable examples remain active under `docs/testing/fixtures/`:
+
+- The producer-confirmed [acquisition-manifest.v1 schema](contracts/acquisition-manifest.v1/schema.json), [fixture](contracts/acquisition-manifest.v1/fixture.json), and [confirmation](contracts/acquisition-manifest.v1/producer-confirmation.json) form one digest-bound canonical bundle outside the sample-fixture directory.
 
 - [access-policy-v1.sample.json](docs/testing/fixtures/access-policy-v1.sample.json)
 - [access-decision-v1.sample.json](docs/testing/fixtures/access-decision-v1.sample.json)
@@ -342,7 +366,7 @@ Compatibility inventory last reviewed on **2026-08-20**.
 
 | Component | Compatibility policy / observation |
 |---|---|
-| `web-listening` | `1.2.0` |
+| `web-listening` | `1.3.0` |
 | Python | Declared `>=3.12,<3.13`; verified with 3.12.3 |
 | FastAPI | Project environment verified at 0.139.2 |
 | MCP | Declared `>=1.28.1,<2.0.0`; verified at 1.28.1; 2.x is not qualified |
@@ -365,6 +389,8 @@ BrowserAct has an exact isolated contract: it must run from a separate Python 3.
 Dependency qualification can trigger any level: use patch only when the supported contract is unchanged, minor for additive newly supported runtime capability, and major when consumers or persisted artifacts must migrate.
 
 Issue #49 is an additive contract and offline-CLI capability, so it advances the project from 1.1.0 to **1.2.0**. It deliberately leaves existing execution authority unchanged. A later complete migration that makes current crawler/search/sitemap/download/API/MCP entrypoints obey the new access gateway changes authority semantics and therefore **requires 2.0.0** under this rubric; it must not be presented as a minor release.
+
+Issue #48 is another additive contract and offline-CLI capability, so it advances the project from 1.2.0 to **1.3.0**. It publishes canonical producer bytes only; the later runtime/storage producer work remains separately gated under Issues #52–#54.
 
 ### Weekly review policy
 

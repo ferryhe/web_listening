@@ -1,0 +1,9 @@
+{
+  "contract_version": "acquisition-manifest.v1",
+  "producer_repository": "ferryhe/web_listening",
+  "producer_feature_issue": 46,
+  "producer_contract_issue": 48,
+  "evidence_scope": "producer-confirmed",
+  "schema_sha256": "3498f1028058ff7159bd199e652a972c58a13a01a980f7c06a5e8be06db4054c",
+  "fixture_sha256": "3dac2f9044436bea779877818e72daf5f60346a3831c183b9fdb661c314efc91"
+}

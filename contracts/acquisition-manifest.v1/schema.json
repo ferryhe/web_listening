@@ -1,0 +1,824 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ferryhe/web_listening/contracts/acquisition-manifest.v1/schema.json",
+  "title": "acquisition-manifest.v1",
+  "version": "acquisition-manifest.v1",
+  "description": "Producer-confirmed manifest for immutable acquisition observations and lineage.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "evidence_scope",
+    "source_run_id",
+    "run_status",
+    "produced_at",
+    "producer",
+    "artifacts",
+    "replay"
+  ],
+  "properties": {
+    "manifest_version": {
+      "const": "acquisition-manifest.v1"
+    },
+    "evidence_scope": {
+      "const": "producer-confirmed"
+    },
+    "source_run_id": {
+      "$ref": "#/$defs/sourceRunId"
+    },
+    "run_status": {
+      "$ref": "#/$defs/status"
+    },
+    "produced_at": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "producer": {
+      "$ref": "#/$defs/producer"
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1000,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "replay": {
+      "$ref": "#/$defs/replay"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "description": "Lowercase SHA-256 blob identity over canonical response entity or derived artifact bytes.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "artifactId": {
+      "type": "string",
+      "description": "Stable observation identity: artifact- plus the first 24 hex characters of SHA-256 over canonical JSON containing exactly manifest_version, source_run_id, normalized_source_identity, and nullable sha256.",
+      "pattern": "^artifact-[0-9a-f]{24}$"
+    },
+    "accessDecisionId": {
+      "type": "string",
+      "pattern": "^access-decision-[0-9a-f]{16}$"
+    },
+    "sourceRunId": {
+      "type": "string",
+      "pattern": "^source-run-[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "partial",
+        "rejected",
+        "failed"
+      ]
+    },
+    "httpUrl": {
+      "type": "string",
+      "format": "uri",
+      "maxLength": 2048,
+      "pattern": "^https?://[^@/?#]+(?:[/?#].*)?$"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "feature_issue",
+        "contract_issue"
+      ],
+      "properties": {
+        "repository": {
+          "const": "ferryhe/web_listening"
+        },
+        "feature_issue": {
+          "const": 46
+        },
+        "contract_issue": {
+          "const": 48
+        }
+      }
+    },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter_id",
+        "adapter_version"
+      ],
+      "properties": {
+        "adapter_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+        },
+        "adapter_version": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        }
+      }
+    },
+    "redirectHop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ordinal",
+        "from_url",
+        "to_url",
+        "http_status",
+        "access_decision_id",
+        "decision"
+      ],
+      "properties": {
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "from_url": {
+          "$ref": "#/$defs/httpUrl"
+        },
+        "to_url": {
+          "$ref": "#/$defs/httpUrl"
+        },
+        "http_status": {
+          "type": "integer",
+          "enum": [
+            301,
+            302,
+            303,
+            307,
+            308
+          ]
+        },
+        "access_decision_id": {
+          "$ref": "#/$defs/accessDecisionId"
+        },
+        "decision": {
+          "enum": [
+            "allow",
+            "reject"
+          ]
+        }
+      }
+    },
+    "discoveredFrom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "artifact_id",
+        "source_url"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "seed",
+            "link",
+            "crawler",
+            "search",
+            "derived"
+          ]
+        },
+        "artifact_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_url": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/httpUrl"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parent_artifact_id",
+        "source_artifact_id",
+        "derived_from_artifact_ids"
+      ],
+      "properties": {
+        "parent_artifact_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_artifact_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "derived_from_artifact_ids": {
+          "type": "array",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/artifactId"
+          }
+        }
+      }
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retrieved_at",
+        "http_status",
+        "mime_type",
+        "size_bytes",
+        "sha256",
+        "artifact_uri",
+        "wire_encoding",
+        "content_encoding"
+      ],
+      "properties": {
+        "retrieved_at": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "http_status": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 599
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mime_type": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 255,
+              "pattern": "^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size_bytes": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "artifact_uri": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Portable digest-addressed URI; never a local absolute path.",
+              "format": "uri",
+              "pattern": "^artifact:sha256:[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wire_encoding": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content_encoding": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "artifact_role",
+        "artifact_status",
+        "source_run_id",
+        "normalized_source_identity",
+        "requested_url",
+        "source_url",
+        "final_url",
+        "redirect_chain",
+        "discovered_from",
+        "lineage",
+        "access_decision_id",
+        "acquisition_adapter",
+        "retrieval"
+      ],
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/artifactId"
+        },
+        "artifact_role": {
+          "enum": [
+            "source",
+            "derived"
+          ]
+        },
+        "artifact_status": {
+          "$ref": "#/$defs/status"
+        },
+        "source_run_id": {
+          "$ref": "#/$defs/sourceRunId"
+        },
+        "normalized_source_identity": {
+          "type": "string",
+          "description": "Canonical source URL for source artifacts or a stable urn:web-listening:derived identity bound to the source artifact for derived artifacts.",
+          "format": "uri",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "requested_url": {
+          "$ref": "#/$defs/httpUrl"
+        },
+        "source_url": {
+          "$ref": "#/$defs/httpUrl"
+        },
+        "final_url": {
+          "$ref": "#/$defs/httpUrl"
+        },
+        "redirect_chain": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/redirectHop"
+          }
+        },
+        "discovered_from": {
+          "$ref": "#/$defs/discoveredFrom"
+        },
+        "lineage": {
+          "$ref": "#/$defs/lineage"
+        },
+        "access_decision_id": {
+          "$ref": "#/$defs/accessDecisionId"
+        },
+        "acquisition_adapter": {
+          "$ref": "#/$defs/adapter"
+        },
+        "retrieval": {
+          "$ref": "#/$defs/retrieval"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "artifact_status": {
+                "enum": [
+                  "completed",
+                  "partial"
+                ]
+              }
+            },
+            "required": [
+              "artifact_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "retrieval": {
+                "properties": {
+                  "retrieved_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "maxLength": 64
+                  },
+                  "http_status": {
+                    "type": "integer",
+                    "minimum": 200,
+                    "maximum": 299
+                  },
+                  "mime_type": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "size_bytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "sha256": {
+                    "$ref": "#/$defs/sha256"
+                  },
+                  "artifact_uri": {
+                    "type": "string",
+                    "format": "uri",
+                    "pattern": "^artifact:sha256:[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "artifact_role": {
+                "const": "source"
+              }
+            },
+            "required": [
+              "artifact_role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "lineage": {
+                "properties": {
+                  "source_artifact_id": {
+                    "type": "null"
+                  },
+                  "derived_from_artifact_ids": {
+                    "maxItems": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "artifact_status": {
+                "enum": [
+                  "rejected",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "artifact_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "retrieval": {
+                "properties": {
+                  "mime_type": {
+                    "type": "null"
+                  },
+                  "size_bytes": {
+                    "type": "null"
+                  },
+                  "sha256": {
+                    "type": "null"
+                  },
+                  "artifact_uri": {
+                    "type": "null"
+                  },
+                  "wire_encoding": {
+                    "type": "null"
+                  },
+                  "content_encoding": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "artifact_role": {
+                "const": "derived"
+              }
+            },
+            "required": [
+              "artifact_role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "normalized_source_identity": {
+                "pattern": "^urn:web-listening:derived:artifact-[0-9a-f]{24}:[a-z0-9][a-z0-9._-]{0,31}$"
+              },
+              "lineage": {
+                "properties": {
+                  "source_artifact_id": {
+                    "$ref": "#/$defs/artifactId"
+                  },
+                  "derived_from_artifact_ids": {
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "discovered_from": {
+                "properties": {
+                  "kind": {
+                    "const": "seed"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "artifact_role": {
+                "const": "source"
+              },
+              "discovered_from": {
+                "properties": {
+                  "artifact_id": {
+                    "type": "null"
+                  },
+                  "source_url": {
+                    "type": "null"
+                  }
+                }
+              },
+              "lineage": {
+                "properties": {
+                  "parent_artifact_id": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "discovered_from": {
+                "properties": {
+                  "kind": {
+                    "const": "link"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "artifact_role": {
+                "const": "source"
+              },
+              "discovered_from": {
+                "properties": {
+                  "artifact_id": {
+                    "$ref": "#/$defs/artifactId"
+                  },
+                  "source_url": {
+                    "$ref": "#/$defs/httpUrl"
+                  }
+                }
+              },
+              "lineage": {
+                "properties": {
+                  "parent_artifact_id": {
+                    "$ref": "#/$defs/artifactId"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "discovered_from": {
+                "properties": {
+                  "kind": {
+                    "const": "crawler"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "artifact_role": {
+                "const": "source"
+              },
+              "discovered_from": {
+                "properties": {
+                  "source_url": {
+                    "$ref": "#/$defs/httpUrl"
+                  }
+                }
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "discovered_from": {
+                    "properties": {
+                      "artifact_id": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "lineage": {
+                    "properties": {
+                      "parent_artifact_id": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "discovered_from": {
+                    "properties": {
+                      "artifact_id": {
+                        "$ref": "#/$defs/artifactId"
+                      }
+                    }
+                  },
+                  "lineage": {
+                    "properties": {
+                      "parent_artifact_id": {
+                        "$ref": "#/$defs/artifactId"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "discovered_from": {
+                "properties": {
+                  "kind": {
+                    "const": "search"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "artifact_role": {
+                "const": "source"
+              },
+              "discovered_from": {
+                "properties": {
+                  "artifact_id": {
+                    "type": "null"
+                  },
+                  "source_url": {
+                    "$ref": "#/$defs/httpUrl"
+                  }
+                }
+              },
+              "lineage": {
+                "properties": {
+                  "parent_artifact_id": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "discovered_from": {
+                "properties": {
+                  "kind": {
+                    "const": "derived"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "artifact_role": {
+                "const": "derived"
+              },
+              "discovered_from": {
+                "properties": {
+                  "artifact_id": {
+                    "$ref": "#/$defs/artifactId"
+                  },
+                  "source_url": {
+                    "$ref": "#/$defs/httpUrl"
+                  }
+                }
+              },
+              "lineage": {
+                "properties": {
+                  "parent_artifact_id": {
+                    "$ref": "#/$defs/artifactId"
+                  },
+                  "source_artifact_id": {
+                    "$ref": "#/$defs/artifactId"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "mutates_input",
+        "expected_artifact_ids"
+      ],
+      "properties": {
+        "mode": {
+          "const": "idempotent"
+        },
+        "mutates_input": {
+          "const": false
+        },
+        "expected_artifact_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/artifactId"
+          }
+        }
+      }
+    }
+  }
+}

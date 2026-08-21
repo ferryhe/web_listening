@@ -31,6 +31,8 @@ jobs:
           from pathlib import Path
           from zipfile import ZipFile
 
+          from packaging.requirements import Requirement
+
           wheel = next(Path("dist").glob("*.whl"))
           with ZipFile(wheel) as archive:
               metadata_path = next(
@@ -38,6 +40,16 @@ jobs:
               )
               metadata = Parser().parsestr(archive.read(metadata_path).decode())
           assert set(metadata["Requires-Python"].split(",")) == {">=3.12", "<3.13"}
+          requirements = [
+              Requirement(value) for value in metadata.get_all("Requires-Dist", [])
+          ]
+          jsonschema = [item for item in requirements if item.name == "jsonschema"]
+          assert len(jsonschema) == 1
+          assert jsonschema[0].extras == {"format-nongpl"}
+          assert {str(item) for item in jsonschema[0].specifier} == {
+              ">=4.23.0",
+              "<5.0.0",
+          }
           PY
 
       - name: Install wheel and test dependencies
@@ -70,9 +82,16 @@ jobs:
         run: |
           web-listening --help > /dev/null
           web-listening list-acquisition-tools --json > /dev/null
+          web-listening validate-acquisition-contract --bundle-path contracts/acquisition-manifest.v1 --json > /tmp/acquisition-contract-validation.json
           web-listening inspect-browseract --executable /tmp/browseract-missing --json > /tmp/browseract-unavailable.json
           python - <<'PY'
           import json
+
+          with open("/tmp/acquisition-contract-validation.json", encoding="utf-8") as stream:
+              contract = json.load(stream)
+          assert contract["schema_version"] == "acquisition-contract-validation.v1"
+          assert contract["valid"] is True
+          assert contract["contract_version"] == "acquisition-manifest.v1"
 
           with open("/tmp/browseract-unavailable.json", encoding="utf-8") as stream:
               payload = json.load(stream)

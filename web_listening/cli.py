@@ -33,6 +33,7 @@ _SITE_SKILL_JSON_SCHEMAS = {
     "run-scope": ("job_delivery.v1", "scope.run"),
 }
 _ACCESS_CONTRACT_COMMAND = "validate-access-contract"
+_ACQUISITION_CONTRACT_COMMAND = "validate-acquisition-contract"
 
 
 def _access_contract_error_json() -> str:
@@ -52,6 +53,15 @@ def _access_contract_error_json() -> str:
 
 def _emit_access_contract_error() -> None:
     typer.echo(_access_contract_error_json())
+
+
+def _emit_acquisition_contract_error(reason_code: str) -> None:
+    from web_listening.blocks.acquisition_contract import (
+        acquisition_contract_error_result,
+    )
+    from web_listening.contracts.site_diagnostic import canonical_json
+
+    typer.echo(canonical_json(acquisition_contract_error_result(reason_code)))
 
 
 def _parser_failure(command: str, message: str) -> dict[str, object]:
@@ -135,9 +145,10 @@ class _SiteSkillJsonGroup(TyperGroup):
         argv = list(sys.argv[1:] if args is None else args)
         command = next((arg for arg in argv if not arg.startswith("-")), "")
         json_requested = "--json" in argv
-        json_aware_command = (
-            command in _SITE_SKILL_JSON_SCHEMAS or command == _ACCESS_CONTRACT_COMMAND
-        )
+        json_aware_command = command in _SITE_SKILL_JSON_SCHEMAS or command in {
+            _ACCESS_CONTRACT_COMMAND,
+            _ACQUISITION_CONTRACT_COMMAND,
+        }
         if not json_aware_command or not json_requested:
             return super().main(
                 args=args,
@@ -164,6 +175,8 @@ class _SiteSkillJsonGroup(TyperGroup):
         except (ClickUsageError, TyperUsageError) as exc:
             if command == _ACCESS_CONTRACT_COMMAND:
                 _emit_access_contract_error()
+            elif command == _ACQUISITION_CONTRACT_COMMAND:
+                _emit_acquisition_contract_error("bundle.argument_invalid")
             else:
                 _stable_json(_parser_failure(command, exc.format_message()))
             if standalone_mode:
@@ -284,6 +297,47 @@ def validate_access_contract_command(
     if artifact_sha256:
         details.append(f"Digest: {artifact_sha256}")
     console.print(Panel("\n".join(details)))
+
+
+@app.command("validate-acquisition-contract")
+def validate_acquisition_contract_command(
+    bundle_path: Path = typer.Option(
+        ...,
+        "--bundle-path",
+        help="Local acquisition-manifest.v1 contract bundle directory.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the canonical acquisition-contract-validation.v1 result.",
+    ),
+):
+    """Validate a producer-confirmed acquisition contract bundle offline."""
+    from web_listening.blocks.acquisition_contract import (
+        AcquisitionContractError,
+        validate_acquisition_contract_bundle,
+    )
+    from web_listening.contracts.site_diagnostic import canonical_json
+
+    try:
+        result = validate_acquisition_contract_bundle(bundle_path)
+    except AcquisitionContractError as exc:
+        if json_output:
+            _emit_acquisition_contract_error(exc.reason_code)
+            raise typer.Exit(code=1) from exc
+        raise typer.BadParameter(str(exc)) from exc
+
+    if json_output:
+        typer.echo(canonical_json(result))
+        return
+    console.print(
+        Panel(
+            "[green]Valid acquisition contract bundle[/green]\n"
+            f"Contract: {result['contract_version']}\n"
+            f"Schema SHA-256: {result['schema_sha256']}\n"
+            f"Fixture SHA-256: {result['fixture_sha256']}"
+        )
+    )
 
 
 @app.command("diagnose-site")

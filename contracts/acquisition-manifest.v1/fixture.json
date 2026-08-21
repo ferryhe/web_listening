@@ -1,0 +1,271 @@
+{
+  "manifest_version": "acquisition-manifest.v1",
+  "evidence_scope": "producer-confirmed",
+  "source_run_id": "source-run-20260820-contract-001",
+  "run_status": "partial",
+  "produced_at": "2026-08-20T13:00:00Z",
+  "producer": {
+    "repository": "ferryhe/web_listening",
+    "feature_issue": 46,
+    "contract_issue": 48
+  },
+  "artifacts": [
+    {
+      "artifact_id": "artifact-b8a9e356298d63a97bea32c8",
+      "artifact_role": "source",
+      "artifact_status": "completed",
+      "source_run_id": "source-run-20260820-contract-001",
+      "normalized_source_identity": "https://example.invalid/reports/annual",
+      "requested_url": "https://example.invalid/reports/annual",
+      "source_url": "https://example.invalid/reports/annual",
+      "final_url": "https://example.invalid/reports/annual/",
+      "redirect_chain": [
+        {
+          "ordinal": 0,
+          "from_url": "https://example.invalid/reports/annual",
+          "to_url": "https://example.invalid/reports/annual/",
+          "http_status": 301,
+          "access_decision_id": "access-decision-1111111111111111",
+          "decision": "allow"
+        }
+      ],
+      "discovered_from": {
+        "kind": "seed",
+        "artifact_id": null,
+        "source_url": null
+      },
+      "lineage": {
+        "parent_artifact_id": null,
+        "source_artifact_id": null,
+        "derived_from_artifact_ids": []
+      },
+      "access_decision_id": "access-decision-1111111111111111",
+      "acquisition_adapter": {
+        "adapter_id": "web_http",
+        "adapter_version": "1.0.0"
+      },
+      "retrieval": {
+        "retrieved_at": "2026-08-20T12:00:00Z",
+        "http_status": 200,
+        "mime_type": "text/html",
+        "size_bytes": 1200,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "artifact_uri": "artifact:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "wire_encoding": "gzip",
+        "content_encoding": "identity"
+      }
+    },
+    {
+      "artifact_id": "artifact-294138757f4fed153b39edc5",
+      "artifact_role": "source",
+      "artifact_status": "completed",
+      "source_run_id": "source-run-20260820-contract-001",
+      "normalized_source_identity": "https://example.invalid/reports/annual",
+      "requested_url": "https://example.invalid/reports/annual",
+      "source_url": "https://example.invalid/reports/annual",
+      "final_url": "https://example.invalid/reports/annual/",
+      "redirect_chain": [
+        {
+          "ordinal": 0,
+          "from_url": "https://example.invalid/reports/annual",
+          "to_url": "https://example.invalid/reports/annual/",
+          "http_status": 301,
+          "access_decision_id": "access-decision-2222222222222222",
+          "decision": "allow"
+        }
+      ],
+      "discovered_from": {
+        "kind": "crawler",
+        "artifact_id": null,
+        "source_url": "https://example.invalid/reports/annual"
+      },
+      "lineage": {
+        "parent_artifact_id": null,
+        "source_artifact_id": null,
+        "derived_from_artifact_ids": []
+      },
+      "access_decision_id": "access-decision-2222222222222222",
+      "acquisition_adapter": {
+        "adapter_id": "web_http",
+        "adapter_version": "1.0.0"
+      },
+      "retrieval": {
+        "retrieved_at": "2026-08-20T12:10:00Z",
+        "http_status": 200,
+        "mime_type": "text/html",
+        "size_bytes": 1275,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "artifact_uri": "artifact:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "wire_encoding": "gzip",
+        "content_encoding": "identity"
+      }
+    },
+    {
+      "artifact_id": "artifact-20f1324f641b62f852008d0d",
+      "artifact_role": "source",
+      "artifact_status": "completed",
+      "source_run_id": "source-run-20260820-contract-001",
+      "normalized_source_identity": "https://example.invalid/reports/annual.pdf",
+      "requested_url": "https://example.invalid/reports/annual.pdf",
+      "source_url": "https://example.invalid/reports/annual.pdf",
+      "final_url": "https://example.invalid/reports/annual.pdf",
+      "redirect_chain": [],
+      "discovered_from": {
+        "kind": "link",
+        "artifact_id": "artifact-b8a9e356298d63a97bea32c8",
+        "source_url": "https://example.invalid/reports/annual/"
+      },
+      "lineage": {
+        "parent_artifact_id": "artifact-b8a9e356298d63a97bea32c8",
+        "source_artifact_id": null,
+        "derived_from_artifact_ids": []
+      },
+      "access_decision_id": "access-decision-3333333333333333",
+      "acquisition_adapter": {
+        "adapter_id": "web_http",
+        "adapter_version": "1.0.0"
+      },
+      "retrieval": {
+        "retrieved_at": "2026-08-20T12:01:00Z",
+        "http_status": 200,
+        "mime_type": "application/pdf",
+        "size_bytes": 4096,
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "artifact_uri": "artifact:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "wire_encoding": "identity",
+        "content_encoding": "identity"
+      }
+    },
+    {
+      "artifact_id": "artifact-1c4fac1ee7c90187b982f3ac",
+      "artifact_role": "source",
+      "artifact_status": "completed",
+      "source_run_id": "source-run-20260820-contract-001",
+      "normalized_source_identity": "https://cdn.example.invalid/archive/annual.pdf",
+      "requested_url": "https://cdn.example.invalid/archive/annual.pdf",
+      "source_url": "https://cdn.example.invalid/archive/annual.pdf",
+      "final_url": "https://cdn.example.invalid/archive/annual.pdf",
+      "redirect_chain": [],
+      "discovered_from": {
+        "kind": "search",
+        "artifact_id": null,
+        "source_url": "https://example.invalid/search"
+      },
+      "lineage": {
+        "parent_artifact_id": null,
+        "source_artifact_id": null,
+        "derived_from_artifact_ids": []
+      },
+      "access_decision_id": "access-decision-4444444444444444",
+      "acquisition_adapter": {
+        "adapter_id": "web_http",
+        "adapter_version": "1.0.0"
+      },
+      "retrieval": {
+        "retrieved_at": "2026-08-20T12:02:00Z",
+        "http_status": 200,
+        "mime_type": "application/pdf",
+        "size_bytes": 4096,
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "artifact_uri": "artifact:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "wire_encoding": "identity",
+        "content_encoding": "identity"
+      }
+    },
+    {
+      "artifact_id": "artifact-e2c0250f389916f34e37ae00",
+      "artifact_role": "derived",
+      "artifact_status": "completed",
+      "source_run_id": "source-run-20260820-contract-001",
+      "normalized_source_identity": "urn:web-listening:derived:artifact-b8a9e356298d63a97bea32c8:markdown",
+      "requested_url": "https://example.invalid/reports/annual/",
+      "source_url": "https://example.invalid/reports/annual/",
+      "final_url": "https://example.invalid/reports/annual/",
+      "redirect_chain": [],
+      "discovered_from": {
+        "kind": "derived",
+        "artifact_id": "artifact-b8a9e356298d63a97bea32c8",
+        "source_url": "https://example.invalid/reports/annual/"
+      },
+      "lineage": {
+        "parent_artifact_id": "artifact-b8a9e356298d63a97bea32c8",
+        "source_artifact_id": "artifact-b8a9e356298d63a97bea32c8",
+        "derived_from_artifact_ids": [
+          "artifact-b8a9e356298d63a97bea32c8"
+        ]
+      },
+      "access_decision_id": "access-decision-1111111111111111",
+      "acquisition_adapter": {
+        "adapter_id": "markdown_transform",
+        "adapter_version": "1.0.0"
+      },
+      "retrieval": {
+        "retrieved_at": "2026-08-20T12:03:00Z",
+        "http_status": 200,
+        "mime_type": "text/markdown",
+        "size_bytes": 800,
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "artifact_uri": "artifact:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "wire_encoding": "identity",
+        "content_encoding": "identity"
+      }
+    },
+    {
+      "artifact_id": "artifact-d3d8e86557d47dbbaca8d4e7",
+      "artifact_role": "source",
+      "artifact_status": "rejected",
+      "source_run_id": "source-run-20260820-contract-001",
+      "normalized_source_identity": "https://example.invalid/private/report",
+      "requested_url": "https://example.invalid/private/report",
+      "source_url": "https://example.invalid/private/report",
+      "final_url": "https://restricted.example.invalid/report",
+      "redirect_chain": [
+        {
+          "ordinal": 0,
+          "from_url": "https://example.invalid/private/report",
+          "to_url": "https://restricted.example.invalid/report",
+          "http_status": 302,
+          "access_decision_id": "access-decision-6666666666666666",
+          "decision": "reject"
+        }
+      ],
+      "discovered_from": {
+        "kind": "crawler",
+        "artifact_id": "artifact-b8a9e356298d63a97bea32c8",
+        "source_url": "https://example.invalid/reports/annual/"
+      },
+      "lineage": {
+        "parent_artifact_id": "artifact-b8a9e356298d63a97bea32c8",
+        "source_artifact_id": null,
+        "derived_from_artifact_ids": []
+      },
+      "access_decision_id": "access-decision-6666666666666666",
+      "acquisition_adapter": {
+        "adapter_id": "web_http",
+        "adapter_version": "1.0.0"
+      },
+      "retrieval": {
+        "retrieved_at": "2026-08-20T12:04:00Z",
+        "http_status": 302,
+        "mime_type": null,
+        "size_bytes": null,
+        "sha256": null,
+        "artifact_uri": null,
+        "wire_encoding": null,
+        "content_encoding": null
+      }
+    }
+  ],
+  "replay": {
+    "mode": "idempotent",
+    "mutates_input": false,
+    "expected_artifact_ids": [
+      "artifact-b8a9e356298d63a97bea32c8",
+      "artifact-294138757f4fed153b39edc5",
+      "artifact-20f1324f641b62f852008d0d",
+      "artifact-1c4fac1ee7c90187b982f3ac",
+      "artifact-e2c0250f389916f34e37ae00",
+      "artifact-d3d8e86557d47dbbaca8d4e7"
+    ]
+  }
+}

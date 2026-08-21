@@ -122,6 +122,11 @@ def _is_public(address: str) -> bool:
     )
 
 
+def is_public_address(address: str) -> bool:
+    """Return whether an address passes the pinned transport's SSRF policy."""
+    return _is_public(address)
+
+
 def canonical_host_header(origin: NormalizedOrigin) -> str:
     host = f"[{origin.host}]" if ":" in origin.host else origin.host
     default = 80 if origin.scheme == "http" else 443
@@ -155,6 +160,7 @@ class SafePinnedTransport:
         normalized, origin = normalize_http_url(url)
         addresses = self._addresses(origin.host, origin.effective_port)
         last_error: OSError | None = None
+        connection_failures: list[OSError] = []
         raw: socket.socket | None = None
         for address in addresses:
             try:
@@ -162,17 +168,28 @@ class SafePinnedTransport:
                 break
             except (TimeoutError, OSError) as exc:
                 last_error = exc
+                connection_failures.append(exc)
         if raw is None:
-            raise TransportFailure("connect", str(last_error or "connection failed"), retryable=True)
+            kind = (
+                "timeout"
+                if connection_failures
+                and all(isinstance(item, TimeoutError) for item in connection_failures)
+                else "connect"
+            )
+            raise TransportFailure(
+                kind,
+                str(last_error or "connection failed"),
+                retryable=True,
+            )
 
         connection: http.client.HTTPConnection | http.client.HTTPSConnection
+        response: http.client.HTTPResponse | None = None
         try:
             raw.settimeout(self.timeout)
             if origin.scheme == "https":
                 try:
                     raw = ssl.create_default_context().wrap_socket(raw, server_hostname=origin.host)
                 except ssl.SSLError as exc:
-                    raw.close()
                     classification = _classify_tls_failure(exc)
                     assert classification is not None
                     raise TransportFailure(
@@ -186,7 +203,6 @@ class SafePinnedTransport:
             except ValueError:
                 peer = ""
             if peer not in addresses or not _is_public(peer):
-                raw.close()
                 raise TransportFailure("peer_mismatch", "connected peer is outside the validated DNS set", safety=True)
 
             # Assign the already-connected, already-verified socket. http.client therefore
@@ -210,7 +226,6 @@ class SafePinnedTransport:
         except TransportFailure:
             raise
         except ssl.SSLError as exc:
-            raw.close()
             classification = _classify_tls_failure(exc)
             assert classification is not None
             raise TransportFailure(
@@ -220,19 +235,35 @@ class SafePinnedTransport:
                 safety=classification.safety,
             ) from exc
         except http.client.RemoteDisconnected as exc:
-            raw.close()
             raise TransportFailure("remote_disconnected", str(exc), retryable=True) from exc
         except (http.client.BadStatusLine, http.client.LineTooLong, http.client.IncompleteRead) as exc:
-            raw.close()
             raise TransportFailure(
                 "malformed_status", str(exc), deterministic=True
             ) from exc
-        except (TimeoutError, ConnectionError, OSError) as exc:
-            raw.close()
+        except TimeoutError as exc:
+            raise TransportFailure("timeout", str(exc), retryable=True) from exc
+        except (ConnectionError, OSError) as exc:
             raise TransportFailure("connect_or_http", str(exc), retryable=True) from exc
         except http.client.HTTPException as exc:
-            raw.close()
             raise TransportFailure("unclassified_http_protocol", str(exc), safety=True) from exc
+        except Exception as exc:
+            raise TransportFailure(
+                "unclassified_pre_response",
+                str(exc),
+                safety=True,
+            ) from exc
+        finally:
+            if response is None:
+                try:
+                    raw.close()
+                except Exception:
+                    pass
+
+        def close_response() -> None:
+            try:
+                response.close()
+            finally:
+                connection.close()
 
         def chunks() -> Iterator[bytes]:
             try:
@@ -242,22 +273,37 @@ class SafePinnedTransport:
                         break
                     yield chunk
             finally:
-                response.close()
-                connection.close()
+                close_response()
 
         response_headers: dict[str, str] = {}
-        for key, value in response.getheaders():
-            normalized_key = key.casefold()
-            response_headers[normalized_key] = (
-                f"{response_headers[normalized_key]}, {value}"
-                if normalized_key in response_headers else value
+        handed_off = False
+        try:
+            for key, value in response.getheaders():
+                normalized_key = key.casefold()
+                response_headers[normalized_key] = (
+                    f"{response_headers[normalized_key]}, {value}"
+                    if normalized_key in response_headers else value
+                )
+            result = RawHttpResponse(
+                status=response.status,
+                headers=response_headers,
+                body_chunks=chunks(),
+                close=close_response,
             )
-        return RawHttpResponse(
-            status=response.status,
-            headers=response_headers,
-            body_chunks=chunks(),
-            close=lambda: (response.close(), connection.close()),
-        )
+            handed_off = True
+            return result
+        except Exception as exc:
+            raise TransportFailure(
+                "unclassified_http_protocol",
+                str(exc),
+                safety=True,
+            ) from exc
+        finally:
+            if not handed_off:
+                try:
+                    close_response()
+                except BaseException:
+                    pass
 
 
 def _normalize_host(host: str) -> str:
@@ -1360,6 +1406,46 @@ def _origin_key(origin: NormalizedOrigin) -> tuple[str, str, int]:
     return origin.scheme, origin.host, origin.effective_port
 
 
+def build_origin_policy_evidence(
+    *,
+    origin: NormalizedOrigin,
+    robots: ParsedRobots,
+    robots_sha256: str,
+    robots_status: str,
+    identity: DiagnosticIdentity,
+    fetched_at: datetime,
+    expires_at: datetime,
+) -> OriginPolicyEvidence:
+    """Build the shared digest-bound evidence for one robots observation."""
+    if robots_status not in {"available", "absent"}:
+        raise SiteDiagnosticError("invalid robots policy evidence status")
+    selected_rules = [
+        RobotsPolicyRule(allow=rule.allow, pattern=rule.pattern, line_number=rule.line_number)
+        for rule in robots.selected_rules()
+    ]
+    policy_payload = {
+        "origin": origin.model_dump(mode="json"),
+        "robots_sha256": robots_sha256,
+        "selected_rules": [rule.model_dump(mode="json") for rule in selected_rules],
+        "identity_sha256": identity.identity_sha256,
+    }
+    digest = canonical_sha256(policy_payload)
+    return OriginPolicyEvidence(
+        origin=origin,
+        policy_id=f"robots-policy-{digest[:16]}",
+        policy_sha256=digest,
+        robots_status=robots_status,
+        robots_sha256=robots_sha256,
+        selected_rules=selected_rules,
+        declared_sitemaps=robots.sitemaps,
+        warnings=robots.warnings,
+        fetched_at=fetched_at,
+        expires_at=expires_at,
+        identity_id=identity.identity_id,
+        identity_sha256=identity.identity_sha256,
+    )
+
+
 def _policy_evidence(
     origin: NormalizedOrigin,
     robots: ParsedRobots,
@@ -1368,31 +1454,16 @@ def _policy_evidence(
     completed_at: datetime,
     freshness: timedelta,
 ) -> OriginPolicyEvidence:
-    selected_rules = [
-        RobotsPolicyRule(allow=rule.allow, pattern=rule.pattern, line_number=rule.line_number)
-        for rule in robots.selected_rules()
-    ]
-    policy_payload = {
-        "origin": origin.model_dump(mode="json"),
-        "robots_sha256": result.sha256,
-        "selected_rules": [rule.model_dump(mode="json") for rule in selected_rules],
-        "identity_sha256": identity.identity_sha256,
-    }
-    digest = canonical_sha256(policy_payload)
     fetched_at = result.fetched_at or completed_at
-    return OriginPolicyEvidence(
+    assert result.sha256 is not None
+    return build_origin_policy_evidence(
         origin=origin,
-        policy_id=f"robots-policy-{digest[:16]}",
-        policy_sha256=digest,
-        robots_status="available" if result.outcome == "success" else "absent",
+        robots=robots,
         robots_sha256=result.sha256,
-        selected_rules=selected_rules,
-        declared_sitemaps=robots.sitemaps,
-        warnings=robots.warnings,
+        robots_status="available" if result.outcome == "success" else "absent",
+        identity=identity,
         fetched_at=fetched_at,
         expires_at=fetched_at + freshness,
-        identity_id=identity.identity_id,
-        identity_sha256=identity.identity_sha256,
     )
 
 
@@ -2481,9 +2552,11 @@ __all__ = [
     "SafePinnedTransport",
     "SiteDiagnosticError",
     "TransportFailure",
+    "build_origin_policy_evidence",
     "canonical_host_header",
     "diagnose_site",
     "load_site_diagnostic",
+    "is_public_address",
     "normalize_http_url",
     "parse_robots",
     "write_site_diagnostic",

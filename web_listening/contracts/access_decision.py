@@ -203,6 +203,11 @@ def _canonical_url(value: str) -> str:
     return value
 
 
+def canonicalize_access_url(value: str) -> str:
+    """Validate and return the frozen canonical access URL representation."""
+    return _canonical_url(value)
+
+
 def _portable_reservation_timestamp(value: datetime) -> datetime:
     value = require_aware_timestamp(value)
     try:
@@ -232,6 +237,18 @@ def _identity_sha256(identity: DiagnosticIdentity) -> str:
             "user_agent": identity.user_agent,
         }
     )
+
+
+def validate_access_identity(identity: DiagnosticIdentity) -> DiagnosticIdentity:
+    """Validate one transparent identity with the frozen access-policy rules."""
+    if identity.identity_sha256 != _identity_sha256(identity):
+        raise ValueError("access identity digest mismatch")
+    for field_name in ("identity_id", "user_agent", "product_token"):
+        _validate_non_sensitive_text(
+            getattr(identity, field_name),
+            location=f"identity.{field_name}",
+        )
+    return identity
 
 
 def access_policy_cache_key_sha256(
@@ -288,13 +305,7 @@ class _AccessPolicyPayload(StrictContractModel):
 
     @model_validator(mode="after")
     def valid_policy_binding(self) -> "_AccessPolicyPayload":
-        if self.identity.identity_sha256 != _identity_sha256(self.identity):
-            raise ValueError("access identity digest mismatch")
-        for field_name in ("identity_id", "user_agent", "product_token"):
-            _validate_non_sensitive_text(
-                getattr(self.identity, field_name),
-                location=f"identity.{field_name}",
-            )
+        validate_access_identity(self.identity)
         expected_cache_key = access_policy_cache_key_sha256(
             canonical_origin=self.canonical_origin,
             identity_sha256=self.identity.identity_sha256,
@@ -640,6 +651,14 @@ def _decision_disposition(
         "parse_error": ("error", "robots.parse_error", False, "parser", []),
     }
     return matrix[kind]
+
+
+def evaluate_access_policy(
+    policy: AccessPolicy,
+    canonical_url: str,
+) -> tuple[AccessOutcome, AccessReasonCode, bool, RuleSource, list[int]]:
+    """Evaluate one URL with the frozen access-policy decision matrix."""
+    return _decision_disposition(policy, _canonical_url(canonical_url))
 
 
 def _decision_evidence(policy: AccessPolicy) -> AccessDecisionEvidence:
@@ -1162,6 +1181,9 @@ __all__ = [
     "build_access_decision",
     "build_access_policy",
     "build_redirect_access_proof",
+    "canonicalize_access_url",
     "canonical_json",
     "canonical_sha256",
+    "evaluate_access_policy",
+    "validate_access_identity",
 ]

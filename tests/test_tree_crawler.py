@@ -1,7 +1,9 @@
 import base64
+from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,9 +12,14 @@ import httpx
 import pytest
 
 from web_listening.blocks.crawler import Crawler, FetchResult, HttpCrawler
-from web_listening.blocks.acquisition_gateway import AcquisitionOutcome, GovernedAcquisitionGateway, LegacyCrawlerGateway
+from web_listening.blocks.acquisition_gateway import (
+    AcquisitionOutcome,
+    GovernedAcquisitionGateway,
+    LegacyCrawlerGateway,
+)
 from web_listening.blocks.staged_workflow import _compile_acquisition_gateway
 from web_listening.blocks.document import DocumentProcessor
+from web_listening.blocks.governed_read import MockClientReadGateway
 from web_listening.blocks.polite import PolitePacer
 from web_listening.blocks.storage import Storage
 from web_listening.contracts import CaptureContent, CaptureResult
@@ -26,6 +33,20 @@ from web_listening.blocks.tree_crawler import (
     sanitize_request_url,
 )
 from web_listening.models import CrawlScope, CrawlRun, Site
+
+
+def _admit(
+    gateway, url: str, *, run_id: str = "1", scope_id: str = "1"
+) -> AcquisitionOutcome:
+    outcome = gateway.acquire(
+        url,
+        run_id=run_id,
+        scope_id=scope_id,
+    )
+    if outcome.request is None:
+        outcome = replace(outcome, request=SimpleNamespace(url=url))
+    assert outcome.accepted
+    return outcome
 
 
 def make_tree_transport():
@@ -69,18 +90,68 @@ def make_tree_transport():
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if url == "https://example.com/section":
-            return httpx.Response(200, text=html_root, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_root,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         if url == "https://example.com/section/page-a":
-            return httpx.Response(200, text=html_page_a, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_page_a,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         if url == "https://example.com/section/page-b":
-            return httpx.Response(200, text=html_page_b, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_page_b,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         if url == "https://example.com/files/report.pdf":
-            return httpx.Response(200, content=pdf_bytes, headers={"content-type": "application/pdf"}, request=request)
+            return httpx.Response(
+                200,
+                content=pdf_bytes,
+                headers={"content-type": "application/pdf"},
+                request=request,
+            )
         if url == "https://example.com/files/deep-report.pdf":
-            return httpx.Response(200, content=pdf_deep_bytes, headers={"content-type": "application/pdf"}, request=request)
+            return httpx.Response(
+                200,
+                content=pdf_deep_bytes,
+                headers={"content-type": "application/pdf"},
+                request=request,
+            )
         return httpx.Response(404, text="not found", request=request)
 
     return httpx.MockTransport(handler)
+
+
+@pytest.mark.parametrize("preexisting_directories", [False, True])
+def test_governed_blob_rollback_respects_directory_creation_provenance(
+    tmp_path: Path, preexisting_directories: bool
+) -> None:
+    payload = b"governed-document"
+    digest = hashlib.sha256(payload).hexdigest()
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    local_path = downloads / "_blobs" / digest[:2] / f"{digest}.pdf"
+    if preexisting_directories:
+        local_path.parent.mkdir(parents=True)
+    storage = Storage(tmp_path / "blob-directory-provenance.db")
+    storage.begin_execution_transaction()
+
+    assert TreeCrawler._publish_governed_blob(
+        local_path, payload, digest, storage=storage
+    )
+    storage.rollback_execution_transaction()
+
+    assert not local_path.exists()
+    assert local_path.parent.exists() is preexisting_directories
+    assert (downloads / "_blobs").exists() is preexisting_directories
+    storage.close()
 
 
 def make_root_entry_transport():
@@ -127,13 +198,33 @@ def make_root_entry_transport():
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if url == "https://example.com/":
-            return httpx.Response(200, text=html_root, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_root,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         if url == "https://example.com/research/page-a":
-            return httpx.Response(200, text=html_research, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_research,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         if url == "https://example.com/research/page-c":
-            return httpx.Response(200, text=html_research_c, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_research_c,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         if url == "https://example.com/education/page-b":
-            return httpx.Response(200, text=html_education, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_education,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         return httpx.Response(404, text="not found", request=request)
 
     return httpx.MockTransport(handler)
@@ -216,24 +307,69 @@ def make_incremental_tree_transport():
         url = str(request.url)
         if state["phase"] == "bootstrap":
             if url == "https://example.com/section":
-                return httpx.Response(200, text=html_root_bootstrap, headers={"content-type": "text/html"}, request=request)
+                return httpx.Response(
+                    200,
+                    text=html_root_bootstrap,
+                    headers={"content-type": "text/html"},
+                    request=request,
+                )
             if url == "https://example.com/section/page-a":
-                return httpx.Response(200, text=html_page_a_bootstrap, headers={"content-type": "text/html"}, request=request)
+                return httpx.Response(
+                    200,
+                    text=html_page_a_bootstrap,
+                    headers={"content-type": "text/html"},
+                    request=request,
+                )
             if url == "https://example.com/section/page-b":
-                return httpx.Response(200, text=html_page_b_bootstrap, headers={"content-type": "text/html"}, request=request)
+                return httpx.Response(
+                    200,
+                    text=html_page_b_bootstrap,
+                    headers={"content-type": "text/html"},
+                    request=request,
+                )
             if url == "https://example.com/files/report.pdf":
-                return httpx.Response(200, content=pdf_bootstrap, headers={"content-type": "application/pdf"}, request=request)
+                return httpx.Response(
+                    200,
+                    content=pdf_bootstrap,
+                    headers={"content-type": "application/pdf"},
+                    request=request,
+                )
         else:
             if url == "https://example.com/section":
-                return httpx.Response(200, text=html_root_incremental, headers={"content-type": "text/html"}, request=request)
+                return httpx.Response(
+                    200,
+                    text=html_root_incremental,
+                    headers={"content-type": "text/html"},
+                    request=request,
+                )
             if url == "https://example.com/section/page-a":
-                return httpx.Response(200, text=html_page_a_incremental, headers={"content-type": "text/html"}, request=request)
+                return httpx.Response(
+                    200,
+                    text=html_page_a_incremental,
+                    headers={"content-type": "text/html"},
+                    request=request,
+                )
             if url == "https://example.com/section/page-c":
-                return httpx.Response(200, text=html_page_c_incremental, headers={"content-type": "text/html"}, request=request)
+                return httpx.Response(
+                    200,
+                    text=html_page_c_incremental,
+                    headers={"content-type": "text/html"},
+                    request=request,
+                )
             if url == "https://example.com/files/report.pdf":
-                return httpx.Response(200, content=pdf_incremental, headers={"content-type": "application/pdf"}, request=request)
+                return httpx.Response(
+                    200,
+                    content=pdf_incremental,
+                    headers={"content-type": "application/pdf"},
+                    request=request,
+                )
             if url == "https://example.com/files/new-report.pdf":
-                return httpx.Response(200, content=pdf_new, headers={"content-type": "application/pdf"}, request=request)
+                return httpx.Response(
+                    200,
+                    content=pdf_new,
+                    headers={"content-type": "application/pdf"},
+                    request=request,
+                )
         return httpx.Response(404, text="not found", request=request)
 
     return state, httpx.MockTransport(handler)
@@ -297,8 +433,17 @@ def test_tree_crawler_bootstrap_tracks_pages_files_and_edges(tmp_path):
     with patch("web_listening.blocks.document.settings") as mock_doc_settings:
         mock_doc_settings.user_agent = "test-agent"
         mock_doc_settings.downloads_dir = tmp_path / "downloads"
-        with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={}), document_processor=processor) as tree:
-            result = tree.bootstrap_scope(scope, institution="Example", download_files=True)
+        gateway = LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})
+        with TreeCrawler(
+            storage=storage,
+            crawler=crawler,
+            acquisition_gateway=gateway,
+            document_processor=processor,
+            initial_outcome=_admit(gateway, scope.seed_url),
+        ) as tree:
+            result = tree.bootstrap_scope(
+                scope, institution="Example", download_files=True
+            )
 
     assert result.scope.is_initialized is True
     assert result.run.status == "completed"
@@ -319,7 +464,9 @@ def test_tree_crawler_bootstrap_tracks_pages_files_and_edges(tmp_path):
 
     docs = storage.list_documents(site_id=site.id)
     assert len(docs) == 2
-    assert {doc.sha256 for doc in docs} == {item.latest_sha256 for item in tracked_files}
+    assert {doc.sha256 for doc in docs} == {
+        item.latest_sha256 for item in tracked_files
+    }
     assert all(Path(doc.local_path).exists() for doc in docs)
 
     observations = storage.list_file_observations(result.scope.id, run_id=result.run.id)
@@ -346,8 +493,16 @@ def test_tree_crawler_uses_out_of_scope_seed_as_entrypoint_only(tmp_path):
         fetch_mode="http",
     )
 
-    with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})) as tree:
-        result = tree.bootstrap_scope(scope, institution="Example", download_files=False)
+    gateway = LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})
+    with TreeCrawler(
+        storage=storage,
+        crawler=crawler,
+        acquisition_gateway=gateway,
+        initial_outcome=_admit(gateway, scope.seed_url),
+    ) as tree:
+        result = tree.bootstrap_scope(
+            scope, institution="Example", download_files=False
+        )
 
     tracked_pages = storage.list_tracked_pages(result.scope.id)
     tracked_urls = {item.canonical_url for item in tracked_pages}
@@ -383,7 +538,9 @@ def test_storage_scope_and_run_round_trip(tmp_path):
             started_at=datetime.now(timezone.utc),
         )
     )
-    updated = storage.update_crawl_run(run.id, status="completed", finished_at=datetime.now(timezone.utc))
+    updated = storage.update_crawl_run(
+        run.id, status="completed", finished_at=datetime.now(timezone.utc)
+    )
 
     assert scope.id is not None
     assert updated.status == "completed"
@@ -417,19 +574,44 @@ def test_tree_crawler_preserves_seed_trailing_slash(tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if url == "https://example.com/section/":
-            return httpx.Response(200, text=html_root, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_root,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         if url == "https://example.com/section/page-a/":
-            return httpx.Response(200, text=html_page, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_page,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         return httpx.Response(404, text="not found", request=request)
 
     storage = Storage(tmp_path / "slash.db")
     client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
     crawler = Crawler(client=client)
-    site = storage.add_site(Site(url="https://example.com/section/", name="Example Slash"))
-    scope = build_scope_from_site(site, allowed_page_prefixes=["/section"], allowed_file_prefixes=["/"], max_depth=2)
+    site = storage.add_site(
+        Site(url="https://example.com/section/", name="Example Slash")
+    )
+    scope = build_scope_from_site(
+        site,
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"],
+        max_depth=2,
+    )
 
-    with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})) as tree:
-        result = tree.bootstrap_scope(scope, institution="Example Slash", download_files=False)
+    gateway = LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})
+    with TreeCrawler(
+        storage=storage,
+        crawler=crawler,
+        acquisition_gateway=gateway,
+        initial_outcome=_admit(gateway, scope.seed_url),
+    ) as tree:
+        result = tree.bootstrap_scope(
+            scope, institution="Example Slash", download_files=False
+        )
 
     assert result.run.status == "completed"
     assert len(result.pages) == 2
@@ -444,7 +626,9 @@ def test_tree_crawler_incremental_reports_new_changed_and_missing_items(tmp_path
     client = httpx.Client(transport=transport, follow_redirects=True)
     crawler = Crawler(client=client)
     processor = DocumentProcessor(client=client, storage=storage)
-    site = storage.add_site(Site(url="https://example.com/section", name="Example Incremental"))
+    site = storage.add_site(
+        Site(url="https://example.com/section", name="Example Incremental")
+    )
     scope = CrawlScope(
         site_id=site.id,
         seed_url="https://example.com/section",
@@ -460,10 +644,22 @@ def test_tree_crawler_incremental_reports_new_changed_and_missing_items(tmp_path
     with patch("web_listening.blocks.document.settings") as mock_doc_settings:
         mock_doc_settings.user_agent = "test-agent"
         mock_doc_settings.downloads_dir = tmp_path / "downloads"
-        with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={}), document_processor=processor) as tree:
-            bootstrap = tree.bootstrap_scope(scope, institution="Example Incremental", download_files=True)
+        gateway = LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})
+        with TreeCrawler(
+            storage=storage,
+            crawler=crawler,
+            acquisition_gateway=gateway,
+            document_processor=processor,
+            initial_outcome=_admit(gateway, scope.seed_url),
+        ) as tree:
+            bootstrap = tree.bootstrap_scope(
+                scope, institution="Example Incremental", download_files=True
+            )
             state["phase"] = "incremental"
-            incremental = tree.run_scope(bootstrap.scope, institution="Example Incremental", download_files=True)
+            tree.initial_outcome = _admit(gateway, bootstrap.scope.seed_url, run_id="2")
+            incremental = tree.run_scope(
+                bootstrap.scope, institution="Example Incremental", download_files=True
+            )
 
     assert bootstrap.run.status == "completed"
     assert incremental.run.status == "completed"
@@ -494,7 +690,12 @@ def test_tree_crawler_bootstrap_tolerates_file_download_failures(tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if url == "https://example.com/root":
-            return httpx.Response(200, text=html_root, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_root,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         if url == "https://example.com/files/missing.pdf":
             return httpx.Response(404, text="missing", request=request)
         return httpx.Response(404, text="not found", request=request)
@@ -519,9 +720,21 @@ def test_tree_crawler_bootstrap_tolerates_file_download_failures(tmp_path):
     with patch("web_listening.blocks.document.settings") as mock_doc_settings:
         mock_doc_settings.user_agent = "test-agent"
         mock_doc_settings.downloads_dir = tmp_path / "downloads"
-        with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={}), document_processor=processor) as tree:
-            result = tree.bootstrap_scope(scope, institution="File Failure", download_files=True)
-            incremental = tree.run_scope(result.scope, institution="File Failure", download_files=True)
+        gateway = LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})
+        with TreeCrawler(
+            storage=storage,
+            crawler=crawler,
+            acquisition_gateway=gateway,
+            document_processor=processor,
+            initial_outcome=_admit(gateway, scope.seed_url),
+        ) as tree:
+            result = tree.bootstrap_scope(
+                scope, institution="File Failure", download_files=True
+            )
+            tree.initial_outcome = _admit(gateway, result.scope.seed_url, run_id="2")
+            incremental = tree.run_scope(
+                result.scope, institution="File Failure", download_files=True
+            )
 
     assert result.run.status == "completed"
     assert result.pages
@@ -531,13 +744,17 @@ def test_tree_crawler_bootstrap_tolerates_file_download_failures(tmp_path):
     assert len(incremental.file_failures) == 1
     for run in (result.run, incremental.run):
         attempts = storage.list_acquisition_attempts(result.scope.id, run.id)
-        document_attempts = [item for item in attempts if item.content_kind == "document"]
+        document_attempts = [
+            item for item in attempts if item.content_kind == "document"
+        ]
         assert len(document_attempts) == 1
         assert document_attempts[0].authority_mode == "legacy_runtime"
         assert document_attempts[0].accepted is False
-        assert document_attempts[0].classification == "executor_error"
-        assert document_attempts[0].final_url is None
-        assert json.loads(document_attempts[0].canonical_json)["result"]["final_url"] is None
+        assert document_attempts[0].classification == "not_found"
+        assert document_attempts[0].final_url == "https://example.com/files/missing.pdf"
+        assert json.loads(document_attempts[0].canonical_json)["result"][
+            "final_url"
+        ] == ("https://example.com/files/missing.pdf")
         assert document_attempts[0].executor_id != "legacy_compatibility_import"
 
     storage.close()
@@ -564,20 +781,39 @@ def test_tree_crawler_skips_pages_that_redirect_outside_scope(tmp_path):
     </html>
     """
 
+    requests = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
+        requests.append(url)
         if url == "https://example.com/root":
-            return httpx.Response(200, text=html_root, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_root,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         if url == "https://example.com/go":
-            return httpx.Response(302, headers={"location": "https://secure.example.com/login"}, request=request)
+            return httpx.Response(
+                302,
+                headers={"location": "https://secure.example.com/login"},
+                request=request,
+            )
         if url == "https://secure.example.com/login":
-            return httpx.Response(200, text=html_login, headers={"content-type": "text/html"}, request=request)
+            return httpx.Response(
+                200,
+                text=html_login,
+                headers={"content-type": "text/html"},
+                request=request,
+            )
         return httpx.Response(404, text="not found", request=request)
 
     storage = Storage(tmp_path / "redirect.db")
     client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
     crawler = Crawler(client=client)
-    site = storage.add_site(Site(url="https://example.com/root", name="Redirect Example"))
+    site = storage.add_site(
+        Site(url="https://example.com/root", name="Redirect Example")
+    )
     scope = CrawlScope(
         site_id=site.id,
         seed_url="https://example.com/root",
@@ -590,15 +826,25 @@ def test_tree_crawler_skips_pages_that_redirect_outside_scope(tmp_path):
         fetch_mode="http",
     )
 
-    with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})) as tree:
-        result = tree.bootstrap_scope(scope, institution="Redirect Example", download_files=False)
+    gateway = LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})
+    with TreeCrawler(
+        storage=storage,
+        crawler=crawler,
+        acquisition_gateway=gateway,
+        initial_outcome=_admit(gateway, scope.seed_url),
+    ) as tree:
+        result = tree.bootstrap_scope(
+            scope, institution="Redirect Example", download_files=False
+        )
 
     tracked_pages = storage.list_tracked_pages(result.scope.id)
 
     assert result.run.status == "completed"
     assert len(tracked_pages) == 1
     assert tracked_pages[0].canonical_url == "https://example.com/root"
-    assert result.skipped_external_pages >= 1
+    assert result.skipped_external_pages == 0
+    assert result.page_failures == ["https://example.com/go: executor_error"]
+    assert "https://secure.example.com/login" not in requests
 
     storage.close()
 
@@ -607,9 +853,14 @@ def test_governed_tree_budget_bounds_requested_pages_and_readmits_results(tmp_pa
     storage = Storage(tmp_path / "governed-budget.db")
     site = storage.add_site(Site(url="https://example.com/section", name="Governed"))
     scope = CrawlScope(
-        site_id=site.id, seed_url="https://example.com/section",
-        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
-        allowed_file_prefixes=["/files"], max_depth=2, max_pages=2, max_files=1,
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"],
+        max_depth=2,
+        max_pages=2,
+        max_files=1,
         fetch_mode="http",
     )
 
@@ -626,31 +877,51 @@ def test_governed_tree_budget_bounds_requested_pages_and_readmits_results(tmp_pa
                     '<a href="/private/secret.pdf">bad doc</a>'
                 )
                 page = FetchResult(html, html, html, html, html, {}, url, 200)
-                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+                return AcquisitionOutcome(
+                    None, None, page, "accepted", ("accepted",), True
+                )
             return AcquisitionOutcome(None, None, None, "timeout", ("timeout",), False)
 
         def close(self):
             return None
 
     gateway = Gateway()
-    with TreeCrawler(storage=storage, acquisition_gateway=gateway) as tree:
+    with TreeCrawler(
+        storage=storage,
+        acquisition_gateway=gateway,
+        initial_outcome=_admit(gateway, scope.seed_url),
+    ) as tree:
         result = tree.bootstrap_scope(scope, download_files=False)
 
-    assert gateway.urls == ["https://example.com/section", "https://example.com/section/a"]
-    assert [page.canonical_url for page in result.pages] == ["https://example.com/section"]
+    assert gateway.urls == [
+        "https://example.com/section",
+        "https://example.com/section/a",
+    ]
+    assert [page.canonical_url for page in result.pages] == [
+        "https://example.com/section"
+    ]
     assert result.skipped_external_pages == 1
     assert result.skipped_external_files == 1
     assert len(storage.list_tracked_pages(result.scope.id)) == 1
     storage.close()
 
 
-def test_governed_snapshot_fetch_mode_uses_accepted_executor_for_bootstrap_and_incremental(tmp_path):
+def test_governed_snapshot_fetch_mode_uses_accepted_executor_for_bootstrap_and_incremental(
+    tmp_path,
+):
     storage = Storage(tmp_path / "governed-snapshot-mode.db")
-    site = storage.add_site(Site(url="https://example.com/section", name="Governed Mode"))
+    site = storage.add_site(
+        Site(url="https://example.com/section", name="Governed Mode")
+    )
     scope = CrawlScope(
-        site_id=site.id, seed_url="https://example.com/section",
-        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
-        allowed_file_prefixes=["/"], max_depth=0, max_pages=1, max_files=0,
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"],
+        max_depth=0,
+        max_pages=1,
+        max_files=0,
         fetch_mode="http",
     )
 
@@ -661,42 +932,72 @@ def test_governed_snapshot_fetch_mode_uses_accepted_executor_for_bootstrap_and_i
             page = FetchResult("ok", "ok", "ok", "ok", "ok", {}, url, 200)
             legacy = LegacyCrawlerGateway(
                 SimpleNamespace(fetch_page=lambda *args, **kwargs: page),
-                fetch_mode="http", fetch_config_json={},
+                fetch_mode="http",
+                fetch_config_json={},
             ).acquire(url, run_id=run_id, scope_id=scope_id, content_kind=content_kind)
             canonical = json.loads(legacy.attempt_records[0].canonical_json)
             canonical["request"]["executor_id"] = "browser_rendered"
-            canonical["request"]["metadata"].update({
-                "authority_mode": "governed", "acquisition_fingerprint": None,
-                "scope_fingerprint": None, "entrypoint": None, "script_sha256": None,
-                "required_capabilities": [], "executor_capabilities": [],
-                "requires_authorized_access": False, "verification_rules": [],
-                "resource_limits": {}, "quality_gates": {}, "scope_budgets": {},
-            })
+            canonical["request"]["metadata"].update(
+                {
+                    "authority_mode": "governed",
+                    "acquisition_fingerprint": None,
+                    "scope_fingerprint": None,
+                    "entrypoint": None,
+                    "script_sha256": None,
+                    "required_capabilities": [],
+                    "executor_capabilities": [],
+                    "requires_authorized_access": False,
+                    "verification_rules": [],
+                    "resource_limits": {},
+                    "quality_gates": {},
+                    "scope_budgets": {},
+                }
+            )
             canonical["result"]["executor_id"] = "browser_rendered"
-            attempt = legacy.attempt_records[0].model_copy(update={
-                "executor_id": "browser_rendered",
-                "authority_mode": "governed",
-                "canonical_json": json.dumps(canonical),
-            })
+            attempt = legacy.attempt_records[0].model_copy(
+                update={
+                    "executor_id": "browser_rendered",
+                    "authority_mode": "governed",
+                    "canonical_json": json.dumps(canonical),
+                }
+            )
             self.attempt_ids.append(attempt.attempt_id)
             return AcquisitionOutcome(
-                legacy.request, legacy.result, page, "accepted", ("accepted",), True, (attempt,)
+                legacy.request,
+                legacy.result,
+                page,
+                "accepted",
+                ("accepted",),
+                True,
+                (attempt,),
             )
 
         def close(self):
             return None
 
-    tree = TreeCrawler(storage=storage, acquisition_gateway=Gateway())
+    gateway = Gateway()
+    tree = TreeCrawler(
+        storage=storage,
+        acquisition_gateway=gateway,
+        initial_outcome=_admit(gateway, scope.seed_url),
+    )
     bootstrap = tree.bootstrap_scope(scope, download_files=False)
+    tree.initial_outcome = _admit(gateway, bootstrap.scope.seed_url, run_id="2")
     incremental = tree.run_scope(bootstrap.scope, download_files=False)
 
-    bootstrap_snapshot = storage.list_page_snapshots_for_run(bootstrap.scope.id, bootstrap.run.id)[0]
-    incremental_snapshot = storage.list_page_snapshots_for_run(incremental.scope.id, incremental.run.id)[0]
+    bootstrap_snapshot = storage.list_page_snapshots_for_run(
+        bootstrap.scope.id, bootstrap.run.id
+    )[0]
+    incremental_snapshot = storage.list_page_snapshots_for_run(
+        incremental.scope.id, incremental.run.id
+    )[0]
     assert (bootstrap_snapshot.fetch_mode, bootstrap_snapshot.attempt_id) == (
-        "browser_rendered", tree.acquisition_gateway.attempt_ids[0]
+        "browser_rendered",
+        tree.acquisition_gateway.attempt_ids[0],
     )
     assert (incremental_snapshot.fetch_mode, incremental_snapshot.attempt_id) == (
-        "browser_rendered", tree.acquisition_gateway.attempt_ids[1]
+        "browser_rendered",
+        tree.acquisition_gateway.attempt_ids[1],
     )
     for snapshot in (bootstrap_snapshot, incremental_snapshot):
         attempt = storage.get_acquisition_attempt(snapshot.attempt_id)
@@ -710,34 +1011,54 @@ def test_legacy_snapshot_fetch_mode_remains_scope_value(tmp_path):
     storage = Storage(tmp_path / "legacy-snapshot-mode.db")
     site = storage.add_site(Site(url="https://example.com/section", name="Legacy Mode"))
     scope = CrawlScope(
-        site_id=site.id, seed_url="https://example.com/section",
-        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
-        allowed_file_prefixes=["/"], max_depth=0, max_pages=1, max_files=0,
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"],
+        max_depth=0,
+        max_pages=1,
+        max_files=0,
         fetch_mode="browser",
     )
     page = FetchResult("ok", "ok", "ok", "ok", "ok", {}, scope.seed_url, 200)
     crawler = SimpleNamespace(fetch_page=lambda *args, **kwargs: page)
     gateway = LegacyCrawlerGateway(crawler, fetch_mode="browser", fetch_config_json={})
 
-    tree = TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=gateway)
+    tree = TreeCrawler(
+        storage=storage,
+        crawler=crawler,
+        acquisition_gateway=gateway,
+        initial_outcome=_admit(gateway, scope.seed_url),
+    )
     result = tree.bootstrap_scope(scope, download_files=False)
     snapshot = storage.list_page_snapshots_for_run(result.scope.id, result.run.id)[0]
 
     assert snapshot.fetch_mode == "browser"
-    assert snapshot.attempt_id == gateway.acquire(
-        scope.seed_url, run_id=str(result.run.id), scope_id=str(result.scope.id)
-    ).accepted_attempt.attempt_id
+    assert (
+        snapshot.attempt_id
+        == gateway.acquire(
+            scope.seed_url, run_id=str(result.run.id), scope_id=str(result.scope.id)
+        ).accepted_attempt.attempt_id
+    )
     tree.close()
     storage.close()
 
 
 def test_incremental_failures_only_mark_exact_confirmed_not_found_missing(tmp_path):
     storage = Storage(tmp_path / "governed-missing.db")
-    site = storage.add_site(Site(url="https://example.com/section", name="Governed Missing"))
+    site = storage.add_site(
+        Site(url="https://example.com/section", name="Governed Missing")
+    )
     scope = CrawlScope(
-        site_id=site.id, seed_url="https://example.com/section",
-        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
-        allowed_file_prefixes=["/"], max_depth=1, max_pages=3, max_files=1,
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"],
+        max_depth=1,
+        max_pages=3,
+        max_files=1,
         fetch_mode="http",
     )
 
@@ -748,21 +1069,41 @@ def test_incremental_failures_only_mark_exact_confirmed_not_found_missing(tmp_pa
             if url.endswith("/section"):
                 html = '<a href="/section/a">A</a><a href="/section/b">B</a>'
                 page = FetchResult(html, html, html, html, html, {}, url, 200)
-                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+                return AcquisitionOutcome(
+                    None, None, page, "accepted", ("accepted",), True
+                )
             if self.phase == "bootstrap":
                 page = FetchResult("ok", "ok", "ok", "ok", "ok", {}, url, 200)
-                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+                return AcquisitionOutcome(
+                    None, None, page, "accepted", ("accepted",), True
+                )
             classification = "not_found" if url.endswith("/a") else "timeout"
-            result = SimpleNamespace(final_url=url) if classification == "not_found" else None
-            return AcquisitionOutcome(None, result, None, classification, (classification,), classification == "not_found")
+            result = (
+                SimpleNamespace(final_url=url)
+                if classification == "not_found"
+                else None
+            )
+            return AcquisitionOutcome(
+                None,
+                result,
+                None,
+                classification,
+                (classification,),
+                classification == "not_found",
+            )
 
         def close(self):
             return None
 
     gateway = Gateway()
-    tree = TreeCrawler(storage=storage, acquisition_gateway=gateway)
+    tree = TreeCrawler(
+        storage=storage,
+        acquisition_gateway=gateway,
+        initial_outcome=_admit(gateway, scope.seed_url),
+    )
     bootstrap = tree.bootstrap_scope(scope, download_files=False)
     gateway.phase = "incremental"
+    tree.initial_outcome = _admit(gateway, bootstrap.scope.seed_url, run_id="2")
     incremental = tree.run_scope(bootstrap.scope, download_files=False)
 
     assert incremental.missing_pages == ["https://example.com/section/a"]
@@ -774,11 +1115,18 @@ def test_incremental_failures_only_mark_exact_confirmed_not_found_missing(tmp_pa
 
 def test_incremental_out_of_prefix_same_origin_404_redirect_is_not_missing(tmp_path):
     storage = Storage(tmp_path / "redirected-missing.db")
-    site = storage.add_site(Site(url="https://example.com/section", name="Redirected Missing"))
+    site = storage.add_site(
+        Site(url="https://example.com/section", name="Redirected Missing")
+    )
     scope = CrawlScope(
-        site_id=site.id, seed_url="https://example.com/section",
-        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
-        allowed_file_prefixes=["/"], max_depth=1, max_pages=2, max_files=1,
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"],
+        max_depth=1,
+        max_pages=2,
+        max_files=1,
         fetch_mode="http",
     )
 
@@ -789,20 +1137,33 @@ def test_incremental_out_of_prefix_same_origin_404_redirect_is_not_missing(tmp_p
             if url.endswith("/section"):
                 html = '<a href="/section/a">A</a>'
                 page = FetchResult(html, html, html, html, html, {}, url, 200)
-                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+                return AcquisitionOutcome(
+                    None, None, page, "accepted", ("accepted",), True
+                )
             if self.phase == "bootstrap":
                 page = FetchResult("ok", "ok", "ok", "ok", "ok", {}, url, 200)
-                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
-            result = SimpleNamespace(final_url="https://example.com/elsewhere/missing", status_code=404)
-            return AcquisitionOutcome(None, result, None, "not_found", ("not_found",), True)
+                return AcquisitionOutcome(
+                    None, None, page, "accepted", ("accepted",), True
+                )
+            result = SimpleNamespace(
+                final_url="https://example.com/elsewhere/missing", status_code=404
+            )
+            return AcquisitionOutcome(
+                None, result, None, "not_found", ("not_found",), True
+            )
 
         def close(self):
             return None
 
     gateway = Gateway()
-    tree = TreeCrawler(storage=storage, acquisition_gateway=gateway)
+    tree = TreeCrawler(
+        storage=storage,
+        acquisition_gateway=gateway,
+        initial_outcome=_admit(gateway, scope.seed_url),
+    )
     bootstrap = tree.bootstrap_scope(scope, download_files=False)
     gateway.phase = "incremental"
+    tree.initial_outcome = _admit(gateway, bootstrap.scope.seed_url, run_id="2")
     incremental = tree.run_scope(bootstrap.scope, download_files=False)
 
     assert incremental.missing_pages == []
@@ -812,13 +1173,22 @@ def test_incremental_out_of_prefix_same_origin_404_redirect_is_not_missing(tmp_p
 
 
 @pytest.mark.parametrize("rejection", ["blocked", "out_of_scope_final"])
-def test_governed_document_rejection_consumes_budget_before_storage(tmp_path, rejection):
+def test_governed_document_rejection_consumes_budget_before_storage(
+    tmp_path, rejection
+):
     storage = Storage(tmp_path / f"governed-file-{rejection}.db")
-    site = storage.add_site(Site(url="https://example.com/section", name="Governed Files"))
+    site = storage.add_site(
+        Site(url="https://example.com/section", name="Governed Files")
+    )
     scope = CrawlScope(
-        site_id=site.id, seed_url="https://example.com/section",
-        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
-        allowed_file_prefixes=["/files"], max_depth=1, max_pages=2, max_files=1,
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"],
+        max_depth=1,
+        max_pages=2,
+        max_files=1,
         fetch_mode="http",
     )
 
@@ -842,11 +1212,23 @@ def test_governed_document_rejection_consumes_budget_before_storage(tmp_path, re
             if content_kind == "page":
                 html = '<a href="/files/a.pdf">A</a><a href="/files/b.pdf">B</a>'
                 page = FetchResult(html, html, html, html, html, {}, url, 200)
-                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+                return AcquisitionOutcome(
+                    None, None, page, "accepted", ("accepted",), True
+                )
             if rejection == "blocked":
-                return AcquisitionOutcome(None, None, None, "blocked", ("blocked",), False)
-            page = FetchResult("pdf", "pdf", "pdf", "pdf", "pdf", {},
-                               "https://evil.example/files/a.pdf", 200)
+                return AcquisitionOutcome(
+                    None, None, None, "blocked", ("blocked",), False
+                )
+            page = FetchResult(
+                "pdf",
+                "pdf",
+                "pdf",
+                "pdf",
+                "pdf",
+                {},
+                "https://evil.example/files/a.pdf",
+                200,
+            )
             return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
 
         def close(self):
@@ -855,7 +1237,10 @@ def test_governed_document_rejection_consumes_budget_before_storage(tmp_path, re
     gateway = Gateway()
     processor = Processor()
     with TreeCrawler(
-        storage=storage, acquisition_gateway=gateway, document_processor=processor
+        storage=storage,
+        acquisition_gateway=gateway,
+        document_processor=processor,
+        initial_outcome=_admit(gateway, scope.seed_url),
     ) as tree:
         result = tree.bootstrap_scope(scope, download_files=True)
 
@@ -873,57 +1258,106 @@ def test_governed_document_rejection_consumes_budget_before_storage(tmp_path, re
     ("encoded", "digest"),
     [
         ("%%%not-base64%%%", hashlib.sha256(b"anything").hexdigest()),
-        (base64.b64encode(b"actual bytes").decode(), hashlib.sha256(b"other bytes").hexdigest()),
+        (
+            base64.b64encode(b"actual bytes").decode(),
+            hashlib.sha256(b"other bytes").hexdigest(),
+        ),
     ],
 )
 def test_governed_document_integrity_failure_creates_no_file_state_without_downloads(
-    tmp_path, encoded, digest,
+    tmp_path,
+    encoded,
+    digest,
 ):
     storage = Storage(tmp_path / "governed-integrity.db")
     site = storage.add_site(Site(url="https://example.com/section", name="Integrity"))
     scope = CrawlScope(
-        site_id=site.id, seed_url="https://example.com/section",
-        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
-        allowed_file_prefixes=["/files"], max_depth=1, max_pages=1, max_files=1,
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"],
+        max_depth=1,
+        max_pages=1,
+        max_files=1,
         fetch_mode="http",
     )
     plan = SimpleNamespace(
         mode="governed",
-        steps=({
-            "position": 0, "executor_id": "web_http", "executor_version": "1.0.0",
-            "recipe_id": "recipe", "script_sha256": "a" * 64, "config": {},
-        },),
-        acquisition_fingerprint="b" * 64, scope_fingerprint="c" * 64,
-        profile_id="profile", site_key="demo", site_skill_id="skill",
-        site_skill_version="1.0.0", site_skill_package_sha256="a" * 64,
+        steps=(
+            {
+                "position": 0,
+                "executor_id": "web_http",
+                "executor_version": "1.0.0",
+                "recipe_id": "recipe",
+                "script_sha256": "a" * 64,
+                "config": {},
+            },
+        ),
+        acquisition_fingerprint="b" * 64,
+        scope_fingerprint="c" * 64,
+        profile_id="profile",
+        site_key="demo",
+        site_skill_id="skill",
+        site_skill_version="1.0.0",
+        site_skill_package_sha256="a" * 64,
         scope_budgets={"max_depth": 2, "max_files": 10, "max_pages": 20},
-        quality_gates={"min_words": 1, "min_links": 0, "min_document_links": 0,
-                       "blocked_markers": ()},
+        quality_gates={
+            "min_words": 1,
+            "min_links": 0,
+            "min_document_links": 0,
+            "blocked_markers": (),
+        },
     )
 
     class Registry:
         def execute(self, request):
             now = datetime.now(timezone.utc)
-            lineage = {field: getattr(request, field) for field in (
-                "request_id", "site_key", "site_skill_id", "site_skill_version",
-                "site_skill_digest", "recipe_id", "run_id", "scope_id", "executor_id",
-            )}
+            lineage = {
+                field: getattr(request, field)
+                for field in (
+                    "request_id",
+                    "site_key",
+                    "site_skill_id",
+                    "site_skill_version",
+                    "site_skill_digest",
+                    "recipe_id",
+                    "run_id",
+                    "scope_id",
+                    "executor_id",
+                )
+            }
             if request.metadata["content_kind"] == "page":
                 content = CaptureContent(
-                    media_type="text/html", text='<p>visible</p><a href="/files/report.pdf">R</a>',
+                    media_type="text/html",
+                    text='<p>visible</p><a href="/files/report.pdf">R</a>',
                 )
             else:
                 content = CaptureContent(
-                    media_type="application/pdf", text=encoded, sha256=digest,
-                    metadata={"representation": "base64", "sha256_scope": "decoded-bytes"},
+                    media_type="application/pdf",
+                    text=encoded,
+                    sha256=digest,
+                    metadata={
+                        "representation": "base64",
+                        "sha256_scope": "decoded-bytes",
+                    },
                 )
             return CaptureResult(
-                **lineage, state="succeeded", started_at=now, finished_at=now,
-                final_url=request.url, status_code=200, content=content,
+                **lineage,
+                state="succeeded",
+                started_at=now,
+                finished_at=now,
+                final_url=request.url,
+                status_code=200,
+                content=content,
             )
 
     gateway = GovernedAcquisitionGateway(plan, Registry())
-    with TreeCrawler(storage=storage, acquisition_gateway=gateway) as tree:
+    with TreeCrawler(
+        storage=storage,
+        acquisition_gateway=gateway,
+        initial_outcome=_admit(gateway, scope.seed_url),
+    ) as tree:
         result = tree.bootstrap_scope(scope, download_files=False)
 
     assert result.files == []
@@ -931,17 +1365,26 @@ def test_governed_document_integrity_failure_creates_no_file_state_without_downl
     assert storage.list_file_observations(result.scope.id) == []
     assert storage.list_documents(site_id=site.id) == []
     assert storage.list_changes(site_id=site.id) == []
-    assert storage.conn.execute("SELECT COUNT(*) FROM document_blobs").fetchone()[0] == 0
+    assert (
+        storage.conn.execute("SELECT COUNT(*) FROM document_blobs").fetchone()[0] == 0
+    )
     storage.close()
 
 
 def test_governed_document_persists_admitted_bytes_without_second_fetch(tmp_path):
     storage = Storage(tmp_path / "governed-document.db")
-    site = storage.add_site(Site(url="https://example.com/section", name="Governed Document"))
+    site = storage.add_site(
+        Site(url="https://example.com/section", name="Governed Document")
+    )
     scope = CrawlScope(
-        site_id=site.id, seed_url="https://example.com/section",
-        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
-        allowed_file_prefixes=["/files"], max_depth=1, max_pages=2, max_files=1,
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"],
+        max_depth=1,
+        max_pages=2,
+        max_files=1,
         fetch_mode="http",
     )
     admitted_text = "governed document bytes"
@@ -962,20 +1405,44 @@ def test_governed_document_persists_admitted_bytes_without_second_fetch(tmp_path
             if content_kind == "page":
                 html = '<a href="/files/original.pdf">A</a><a href="/files/ignored.pdf">B</a>'
                 page = FetchResult(html, html, html, html, html, {}, url, 200)
-                return AcquisitionOutcome(None, None, page, "accepted", ("accepted",), True)
+                return AcquisitionOutcome(
+                    None, None, page, "accepted", ("accepted",), True
+                )
             now = datetime.now(timezone.utc)
             capture = CaptureResult(
-                request_id="request", site_key="demo", site_skill_id="skill",
-                site_skill_version="1.0.0", site_skill_digest="a" * 64,
-                recipe_id="recipe", run_id=run_id, scope_id=scope_id,
-                executor_id="web_http", state="succeeded", started_at=now,
-                finished_at=now, final_url=final_url, status_code=200,
-                content=CaptureContent(media_type="application/pdf", text=admitted_text,
-                                       sha256=admitted_sha),
+                request_id="request",
+                site_key="demo",
+                site_skill_id="skill",
+                site_skill_version="1.0.0",
+                site_skill_digest="a" * 64,
+                recipe_id="recipe",
+                run_id=run_id,
+                scope_id=scope_id,
+                executor_id="web_http",
+                state="succeeded",
+                started_at=now,
+                finished_at=now,
+                final_url=final_url,
+                status_code=200,
+                content=CaptureContent(
+                    media_type="application/pdf",
+                    text=admitted_text,
+                    sha256=admitted_sha,
+                ),
             )
-            page = FetchResult(admitted_text, admitted_text, admitted_text, admitted_text,
-                               admitted_text, {}, final_url, 200)
-            return AcquisitionOutcome(None, capture, page, "accepted", ("accepted",), True)
+            page = FetchResult(
+                admitted_text,
+                admitted_text,
+                admitted_text,
+                admitted_text,
+                admitted_text,
+                {},
+                final_url,
+                200,
+            )
+            return AcquisitionOutcome(
+                None, capture, page, "accepted", ("accepted",), True
+            )
 
         def close(self):
             return None
@@ -984,14 +1451,19 @@ def test_governed_document_persists_admitted_bytes_without_second_fetch(tmp_path
     processor = Processor(storage=storage)
     with patch("web_listening.blocks.document.settings") as doc_settings:
         doc_settings.downloads_dir = tmp_path / "downloads"
-        with TreeCrawler(storage=storage, acquisition_gateway=gateway,
-                         document_processor=processor) as tree:
+        with TreeCrawler(
+            storage=storage,
+            acquisition_gateway=gateway,
+            document_processor=processor,
+            initial_outcome=_admit(gateway, scope.seed_url),
+        ) as tree:
             result = tree.bootstrap_scope(scope, download_files=True)
 
     assert gateway.calls[0] == ("https://example.com/section", "page")
     assert len(gateway.calls) == 2
     assert gateway.calls[1][0] in {
-        "https://example.com/files/original.pdf", "https://example.com/files/ignored.pdf"
+        "https://example.com/files/original.pdf",
+        "https://example.com/files/ignored.pdf",
     }
     assert gateway.calls[1][1] == "document"
     assert [item.canonical_url for item in result.files] == [final_url]
@@ -1003,20 +1475,34 @@ def test_governed_document_persists_admitted_bytes_without_second_fetch(tmp_path
     storage.close()
 
 
-def test_governed_document_type_matches_blob_suffix_for_parameterized_media_type(tmp_path):
+def test_governed_document_type_matches_blob_suffix_for_parameterized_media_type(
+    tmp_path,
+):
     storage = Storage(tmp_path / "governed-document-type.db")
-    site = storage.add_site(Site(url="https://example.com/section", name="Document Type"))
+    site = storage.add_site(
+        Site(url="https://example.com/section", name="Document Type")
+    )
     payload = b"%PDF governed"
     digest = hashlib.sha256(payload).hexdigest()
     now = datetime.now(timezone.utc)
     capture = CaptureResult(
-        request_id="request", site_key="demo", site_skill_id="skill",
-        site_skill_version="1.0.0", site_skill_digest="a" * 64,
-        recipe_id="recipe", run_id="run", scope_id="scope",
-        executor_id="web_http", state="succeeded", started_at=now,
-        finished_at=now, final_url="https://example.com/files/report", status_code=200,
+        request_id="request",
+        site_key="demo",
+        site_skill_id="skill",
+        site_skill_version="1.0.0",
+        site_skill_digest="a" * 64,
+        recipe_id="recipe",
+        run_id="run",
+        scope_id="scope",
+        executor_id="web_http",
+        state="succeeded",
+        started_at=now,
+        finished_at=now,
+        final_url="https://example.com/files/report",
+        status_code=200,
         content=CaptureContent(
-            media_type="application/pdf; version=1.7", text=base64.b64encode(payload).decode(),
+            media_type="application/pdf; version=1.7",
+            text=base64.b64encode(payload).decode(),
             sha256=digest,
             metadata={"representation": "base64", "sha256_scope": "decoded-bytes"},
         ),
@@ -1025,10 +1511,16 @@ def test_governed_document_type_matches_blob_suffix_for_parameterized_media_type
 
     with patch("web_listening.blocks.document.settings") as doc_settings:
         doc_settings.downloads_dir = tmp_path / "downloads"
-        with TreeCrawler(storage=storage, acquisition_gateway=SimpleNamespace(close=lambda: None),
-                         document_processor=processor) as tree:
+        with TreeCrawler(
+            storage=storage,
+            acquisition_gateway=SimpleNamespace(close=lambda: None),
+            document_processor=processor,
+        ) as tree:
             document = tree._document_from_capture(
-                capture, site_id=site.id, institution="", page_url=site.url,
+                capture,
+                site_id=site.id,
+                institution="",
+                page_url=site.url,
                 file_url="https://example.com/files/report",
             )
 
@@ -1037,13 +1529,20 @@ def test_governed_document_type_matches_blob_suffix_for_parameterized_media_type
     storage.close()
 
 
-def test_real_governed_http_document_preserves_non_utf8_response_bytes(tmp_path, monkeypatch):
+def test_real_governed_http_document_preserves_non_utf8_response_bytes(
+    tmp_path, monkeypatch
+):
     storage = Storage(tmp_path / "governed-http-document.db")
     site = storage.add_site(Site(url="https://example.com/section", name="HTTP Bytes"))
     scope = CrawlScope(
-        site_id=site.id, seed_url="https://example.com/section",
-        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
-        allowed_file_prefixes=["/files"], max_depth=1, max_pages=1, max_files=1,
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/files"],
+        max_depth=1,
+        max_pages=1,
+        max_files=1,
         fetch_mode="http",
     )
     payload = b"%PDF-1.7\n\xff\xfe\x00\x80binary\n%%EOF"
@@ -1054,41 +1553,91 @@ def test_real_governed_http_document_preserves_non_utf8_response_bytes(tmp_path,
         requests.append(str(request.url))
         if request.url.path == "/section":
             return httpx.Response(
-                200, request=request,
+                200,
+                request=request,
                 text='<p>visible page words</p><a href="/files/report.pdf">report</a>',
                 headers={"content-type": "text/html; charset=utf-8"},
             )
         return httpx.Response(
-            200, request=request, content=payload,
+            200,
+            request=request,
+            content=payload,
             headers={"content-type": "application/pdf; version=1.7"},
         )
 
     client = httpx.Client(transport=httpx.MockTransport(respond), follow_redirects=True)
     adapter = HttpAcquisitionAdapter(HttpCrawler(client=client))
     step = {
-        "position": 0, "executor_id": "web_http", "executor_version": "1.0.0",
-        "recipe_id": "recipe", "script_sha256": "a" * 64, "config": {},
+        "position": 0,
+        "executor_id": "web_http",
+        "executor_version": "1.0.0",
+        "recipe_id": "recipe",
+        "script_sha256": "a" * 64,
+        "config": {},
+        "limits": {
+            "timeout_seconds": 30.0,
+            "stdout_bytes": 1024 * 1024,
+            "stderr_bytes": 64 * 1024,
+        },
     }
     compiled = SimpleNamespace(
-        mode="governed", steps=(step,), acquisition_fingerprint="b" * 64,
-        scope_fingerprint="c" * 64, profile_id="profile", site_key="demo",
-        site_skill_id="skill", site_skill_version="1.0.0",
+        mode="governed",
+        steps=(step,),
+        acquisition_fingerprint="b" * 64,
+        scope_fingerprint="c" * 64,
+        profile_id="profile",
+        site_key="demo",
+        site_skill_id="skill",
+        site_skill_version="1.0.0",
         site_skill_package_sha256="a" * 64,
         scope_budgets={"max_depth": 2, "max_files": 10, "max_pages": 20},
-        quality_gates={"min_words": 1, "min_links": 0, "min_document_links": 0,
-                       "blocked_markers": ()},
+        quality_gates={
+            "min_words": 1,
+            "min_links": 0,
+            "min_document_links": 0,
+            "blocked_markers": (),
+        },
     )
-    monkeypatch.setattr("web_listening.blocks.acquisition_profile.load_acquisition_profile", lambda *a, **k: object())
-    monkeypatch.setattr("web_listening.site_skill_registry.resolve_site_skill_contract", lambda **k: object())
-    monkeypatch.setattr("web_listening.blocks.acquisition_execution_plan.compile_acquisition_execution_plan",
-                        lambda *a: compiled)
-    monkeypatch.setattr("web_listening.executors.http_wrapper.HttpAcquisitionAdapter", lambda: adapter)
-    plan = SimpleNamespace(site_key="demo", based_on={
-        "acquisition_profile_id": "profile", "site_skill_version": "1.0.0",
-        "site_skill_package_sha256": "a" * 64, "site_skill_recipe_id": "recipe",
-        "site_skill_script_sha256": "a" * 64, "executor_version": "1.0.0",
-    })
-    gateway = _compile_acquisition_gateway(plan, acquisition_profile_path="profile.yaml")
+    profile = SimpleNamespace(safety=SimpleNamespace(allowed_domains=["example.com"]))
+    monkeypatch.setattr(
+        "web_listening.blocks.acquisition_profile.load_acquisition_profile",
+        lambda *a, **k: profile,
+    )
+    monkeypatch.setattr(
+        "web_listening.site_skill_registry.resolve_site_skill_contract",
+        lambda **k: object(),
+    )
+    monkeypatch.setattr(
+        "web_listening.blocks.acquisition_execution_plan.compile_acquisition_execution_plan",
+        lambda *a: compiled,
+    )
+    monkeypatch.setattr(
+        "web_listening.executors.http_wrapper.HttpAcquisitionAdapter", lambda: adapter
+    )
+    monkeypatch.setattr(
+        "web_listening.blocks.governed_read.build_runtime_read_gateway",
+        lambda **kwargs: MockClientReadGateway(
+            client,
+            user_agent="web-listening-bot/2.0",
+            max_body_bytes=1024 * 1024,
+        ),
+    )
+    plan = SimpleNamespace(
+        site_key="demo",
+        seed_url="https://example.com/section",
+        homepage_url="https://example.com/",
+        based_on={
+            "acquisition_profile_id": "profile",
+            "site_skill_version": "1.0.0",
+            "site_skill_package_sha256": "a" * 64,
+            "site_skill_recipe_id": "recipe",
+            "site_skill_script_sha256": "a" * 64,
+            "executor_version": "1.0.0",
+        },
+    )
+    gateway = _compile_acquisition_gateway(
+        plan, acquisition_profile_path="profile.yaml"
+    )
 
     class Processor(DocumentProcessor):
         def process(self, url, **kwargs):  # pragma: no cover - no refetch guard
@@ -1097,12 +1646,19 @@ def test_real_governed_http_document_preserves_non_utf8_response_bytes(tmp_path,
     processor = Processor(storage=storage)
     with patch("web_listening.blocks.document.settings") as doc_settings:
         doc_settings.downloads_dir = tmp_path / "downloads"
-        with TreeCrawler(storage=storage, acquisition_gateway=gateway,
-                         document_processor=processor) as tree:
+        with TreeCrawler(
+            storage=storage,
+            acquisition_gateway=gateway,
+            document_processor=processor,
+            initial_outcome=_admit(gateway, scope.seed_url),
+        ) as tree:
             result = tree.bootstrap_scope(scope, download_files=True)
 
     document = storage.list_documents(site_id=site.id)[0]
-    assert requests == ["https://example.com/section", "https://example.com/files/report.pdf"]
+    assert requests == [
+        "https://example.com/section",
+        "https://example.com/files/report.pdf",
+    ]
     assert Path(document.local_path).read_bytes() == payload
     assert document.content_type == "application/pdf; version=1.7"
     assert document.sha256 == digest
@@ -1116,24 +1672,40 @@ def test_narrower_incremental_depth_does_not_infer_deeper_pages_missing(tmp_path
     transport = make_tree_transport()
     client = httpx.Client(transport=transport, follow_redirects=True)
     crawler = Crawler(client=client)
-    site = storage.add_site(Site(url="https://example.com/section", name="Depth Coverage"))
+    site = storage.add_site(
+        Site(url="https://example.com/section", name="Depth Coverage")
+    )
     scope = CrawlScope(
-        site_id=site.id, seed_url="https://example.com/section",
-        allowed_origin="https://example.com", allowed_page_prefixes=["/section"],
-        allowed_file_prefixes=["/"], max_depth=2, max_pages=10, max_files=1,
+        site_id=site.id,
+        seed_url="https://example.com/section",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/section"],
+        allowed_file_prefixes=["/"],
+        max_depth=2,
+        max_pages=10,
+        max_files=1,
         fetch_mode="http",
     )
 
-    with TreeCrawler(storage=storage, crawler=crawler, acquisition_gateway=LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})) as tree:
+    gateway = LegacyCrawlerGateway(crawler, fetch_mode="http", fetch_config_json={})
+    with TreeCrawler(
+        storage=storage,
+        crawler=crawler,
+        acquisition_gateway=gateway,
+        initial_outcome=_admit(gateway, scope.seed_url),
+    ) as tree:
         bootstrap = tree.bootstrap_scope(scope, download_files=False)
         shallower = CrawlScope(**{**bootstrap.scope.model_dump(), "max_depth": 1})
+        tree.initial_outcome = _admit(gateway, shallower.seed_url, run_id="2")
         incremental = tree.run_scope(shallower, download_files=False)
 
     assert "https://example.com/section/page-b" not in incremental.missing_pages
     storage.close()
 
 
-def test_governed_blob_publication_cleans_temp_after_publish_failure(tmp_path, monkeypatch):
+def test_governed_blob_publication_cleans_temp_after_publish_failure(
+    tmp_path, monkeypatch
+):
     destination = tmp_path / "blobs" / "payload.bin"
     payload = b"complete governed bytes"
     digest = hashlib.sha256(payload).hexdigest()
@@ -1147,6 +1719,148 @@ def test_governed_blob_publication_cleans_temp_after_publish_failure(tmp_path, m
 
     assert not destination.exists()
     assert list(destination.parent.iterdir()) == []
+
+
+def test_governed_blob_hardlink_effect_then_interrupt_cleans_owned_target(
+    tmp_path, monkeypatch
+):
+    destination = tmp_path / "blobs" / "payload.bin"
+    payload = b"complete governed bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    failure = KeyboardInterrupt("blob link effected")
+    real_link = os.link
+
+    def link_then_interrupt(source, target, *args, **kwargs):
+        real_link(source, target, *args, **kwargs)
+        raise failure
+
+    monkeypatch.setattr(
+        "web_listening.blocks.tree_crawler.os.link", link_then_interrupt
+    )
+    with pytest.raises(KeyboardInterrupt) as caught:
+        TreeCrawler._publish_governed_blob(destination, payload, digest)
+
+    assert caught.value is failure
+    assert not destination.exists()
+    assert list(destination.parent.iterdir()) == []
+
+
+def test_governed_blob_journal_handoff_interrupt_cleans_local_owned_target(
+    tmp_path, monkeypatch
+):
+    downloads = tmp_path / "downloads"
+    destination = downloads / "_blobs" / "aa" / "payload.bin"
+    payload = b"complete governed bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    storage = Storage(tmp_path / "blob-handoff.db")
+    storage.begin_execution_transaction()
+    failure = SystemExit(41)
+    real_register = storage.register_execution_created_path
+
+    def register_then_interrupt(*args, **kwargs):
+        real_register(*args, **kwargs)
+        raise failure
+
+    monkeypatch.setattr(
+        storage, "register_execution_created_path", register_then_interrupt
+    )
+    with pytest.raises(SystemExit) as caught:
+        TreeCrawler._publish_governed_blob(
+            destination, payload, digest, storage=storage
+        )
+
+    assert caught.value is failure
+    assert not destination.exists()
+    storage.rollback_execution_transaction()
+    assert storage._execution_created_paths == []
+    storage.close()
+
+
+def test_governed_blob_link_interrupt_preserves_replacement_inode(
+    tmp_path, monkeypatch
+):
+    destination = tmp_path / "blobs" / "payload.bin"
+    payload = b"complete governed bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    failure = KeyboardInterrupt("blob replaced after link")
+    replacement = b"replacement survives"
+    replacement_identity = None
+    real_link = os.link
+
+    def link_replace_then_interrupt(source, target, *args, **kwargs):
+        nonlocal replacement_identity
+        real_link(source, target, *args, **kwargs)
+        Path(target).unlink()
+        Path(target).write_bytes(replacement)
+        info = Path(target).stat(follow_symlinks=False)
+        replacement_identity = (info.st_dev, info.st_ino)
+        raise failure
+
+    monkeypatch.setattr(
+        "web_listening.blocks.tree_crawler.os.link", link_replace_then_interrupt
+    )
+    with pytest.raises(KeyboardInterrupt) as caught:
+        TreeCrawler._publish_governed_blob(destination, payload, digest)
+
+    current = destination.stat(follow_symlinks=False)
+    assert caught.value is failure
+    assert destination.read_bytes() == replacement
+    assert (current.st_dev, current.st_ino) == replacement_identity
+
+
+def test_governed_blob_temp_cleanup_failure_does_not_mask_publish_interrupt(
+    tmp_path, monkeypatch
+):
+    destination = tmp_path / "blobs" / "payload.bin"
+    payload = b"complete governed bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    primary = KeyboardInterrupt("blob link effected")
+    secondary = SystemExit(43)
+    real_link = os.link
+    real_unlink = Path.unlink
+
+    def link_then_interrupt(source, target, *args, **kwargs):
+        real_link(source, target, *args, **kwargs)
+        raise primary
+
+    def unlink_then_maybe_fail(path, *args, **kwargs):
+        real_unlink(path, *args, **kwargs)
+        if path != destination:
+            raise secondary
+
+    monkeypatch.setattr(
+        "web_listening.blocks.tree_crawler.os.link", link_then_interrupt
+    )
+    monkeypatch.setattr(
+        "web_listening.blocks.tree_crawler.Path.unlink", unlink_then_maybe_fail
+    )
+    with pytest.raises(KeyboardInterrupt) as caught:
+        TreeCrawler._publish_governed_blob(destination, payload, digest)
+
+    assert caught.value is primary
+    assert not destination.exists()
+    assert list(destination.parent.iterdir()) == []
+
+
+def test_governed_blob_preexisting_exact_inode_is_not_claimed(tmp_path, monkeypatch):
+    destination = tmp_path / "blobs" / "payload.bin"
+    destination.parent.mkdir(parents=True)
+    payload = b"complete governed bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    destination.write_bytes(payload)
+    before = destination.stat(follow_symlinks=False)
+    monkeypatch.setattr(
+        "web_listening.blocks.tree_crawler.os.link",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("preexisting blob must not be republished")
+        ),
+    )
+
+    assert not TreeCrawler._publish_governed_blob(destination, payload, digest)
+
+    after = destination.stat(follow_symlinks=False)
+    assert destination.read_bytes() == payload
+    assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
 
 
 @pytest.mark.parametrize("operation", ["bootstrap_scope", "run_scope"])
@@ -1239,6 +1953,7 @@ def test_formal_tree_pacing_ignores_legacy_scope_config(
         crawler=crawler,
         acquisition_gateway=gateway,
         pacing_config=pacing_config,
+        initial_outcome=_admit(gateway, scope.seed_url),
     ) as tree:
         bootstrap = tree.bootstrap_scope(scope, download_files=False)
         if operation == "run_scope":
@@ -1253,12 +1968,15 @@ def test_formal_tree_pacing_ignores_legacy_scope_config(
                     },
                 }
             )
+            tree.initial_outcome = _admit(
+                gateway, changed_legacy_scope.seed_url, run_id="2"
+            )
             tree.run_scope(changed_legacy_scope, download_files=False)
 
     assert observed
-    assert {(delay, file_delay, jitter) for _, delay, file_delay, jitter in observed} == {
-        expected
-    }
+    assert {
+        (delay, file_delay, jitter) for _, delay, file_delay, jitter in observed
+    } == {expected}
     storage.close()
 
 
@@ -1275,8 +1993,10 @@ def test_tree_crawler_close_attempts_every_resource_and_is_idempotent():
                 raise RuntimeError(f"{self.name} close failed")
 
     tree = TreeCrawler(
-        storage=SimpleNamespace(), crawler=Resource("crawler", fail=True),
-        acquisition_gateway=Resource("gateway"), document_processor=Resource("document"),
+        storage=SimpleNamespace(),
+        crawler=Resource("crawler", fail=True),
+        acquisition_gateway=Resource("gateway"),
+        document_processor=Resource("document"),
     )
     tree._owns_crawler = True
 

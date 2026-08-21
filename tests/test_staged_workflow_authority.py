@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ast
 import inspect
+from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +17,8 @@ import tools.plan_monitor_scope as plan_monitor_scope_tool
 import tools.run_site_tree as run_site_tree_tool
 from web_listening.config import settings
 from web_listening.models import CrawlScope
+from web_listening.blocks.acquisition_gateway import AcquisitionOutcome
+from web_listening.blocks.crawler import FetchResult
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan
 import web_listening.blocks.staged_workflow as staged_workflow
 import web_listening.blocks.tree_bootstrap_workflow as tree_bootstrap_workflow
@@ -23,10 +27,56 @@ import web_listening.blocks.tree_run_workflow as tree_run_workflow
 
 def _monitor_plan():
     return MonitorScopePlan(
-        "scope", "demo", "Demo", "dev", "2026-01-01Z", "approved", "manual",
-        "Track", "https://example.com/", "https://example.com/", "http", {},
-        "selected_scope", "selected_scope_default", "site_root", ["/research"], ["/"],
-        max_depth=3, max_pages=8, max_files=1,
+        "scope",
+        "demo",
+        "Demo",
+        "dev",
+        "2026-01-01Z",
+        "approved",
+        "manual",
+        "Track",
+        "https://example.com/",
+        "https://example.com/",
+        "http",
+        {},
+        "selected_scope",
+        "selected_scope_default",
+        "site_root",
+        ["/research"],
+        ["/"],
+        max_depth=3,
+        max_pages=8,
+        max_files=1,
+    )
+
+
+def _accepted_seed(url: str = "https://example.com/") -> AcquisitionOutcome:
+    page = FetchResult(
+        "<main>ok</main>", "<main>ok</main>", "ok", "ok", "ok", {}, url, 200
+    )
+    return AcquisitionOutcome(
+        SimpleNamespace(url=url), None, page, "accepted", ("accepted",), True
+    )
+
+
+def _prepared(
+    plan: MonitorScopePlan,
+    *,
+    operation: str,
+    gateway: object,
+    target: object | None = None,
+    effective_plan: MonitorScopePlan | None = None,
+) -> staged_workflow.PreparedScopeExecution:
+    return staged_workflow.PreparedScopeExecution(
+        operation=operation,
+        scope_path=Path("dummy"),
+        acquisition_profile_path=None,
+        plan=plan,
+        effective_plan=effective_plan or plan,
+        target=target or staged_workflow.monitor_scope_to_tree_target(plan),
+        execution_seed_url=plan.seed_url,
+        acquisition_gateway=gateway,
+        admitted_seed=_accepted_seed(plan.seed_url),
     )
 
 
@@ -80,13 +130,17 @@ def test_run_tool_delegates_to_package_run_workflow():
     assert "web_listening.blocks.tree_run_workflow" in source
 
 
-def test_default_output_path_builders_sanitize_catalog_and_site_keys(tmp_path, monkeypatch):
+def test_default_output_path_builders_sanitize_catalog_and_site_keys(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     report_path = staged_workflow.build_default_scope_report_path("../Bad Site/Name")
     inventory_path = staged_workflow.build_default_inventory_path("../Bad Catalog/Name")
     tree_run_path = tree_run_workflow.build_default_report_path("../Bad Catalog/Name")
-    tree_bootstrap_path = tree_bootstrap_workflow.build_default_report_path("../Bad Catalog/Name")
+    tree_bootstrap_path = tree_bootstrap_workflow.build_default_report_path(
+        "../Bad Catalog/Name"
+    )
 
     assert report_path.parent == tmp_path / "reports"
     assert inventory_path.parent == tmp_path / "plans"
@@ -105,7 +159,9 @@ def test_default_output_path_builders_sanitize_catalog_and_site_keys(tmp_path, m
 def test_dated_output_path_accepts_naive_datetime(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
-    path = staged_workflow.build_default_scope_report_path("demo", now=datetime(2026, 4, 20, 12, 0, 0))
+    path = staged_workflow.build_default_scope_report_path(
+        "demo", now=datetime(2026, 4, 20, 12, 0, 0)
+    )
 
     assert path.parent == tmp_path / "reports"
     assert path.name.startswith("monitor_scope_demo_2026-04-20")
@@ -143,7 +199,9 @@ def test_staged_run_scope_provides_document_processor_when_downloading(monkeypat
             captured["document_processor_closed"] = True
 
     class FakeTreeCrawler:
-        def __init__(self, *, storage, document_processor=None, acquisition_gateway=None):
+        def __init__(self, **kwargs):
+            storage = kwargs["storage"]
+            document_processor = kwargs.get("document_processor")
             captured["tree_storage"] = storage
             captured["document_processor"] = document_processor
 
@@ -174,10 +232,16 @@ def test_staged_run_scope_provides_document_processor_when_downloading(monkeypat
     monkeypatch.setattr(staged_workflow, "Storage", FakeStorage)
     monkeypatch.setattr(staged_workflow, "DocumentProcessor", FakeDocumentProcessor)
     monkeypatch.setattr(staged_workflow, "TreeCrawler", FakeTreeCrawler)
-    monkeypatch.setattr(staged_workflow, "_compile_acquisition_gateway", lambda *a, **k: object())
-    monkeypatch.setattr(staged_workflow, "find_scope_for_plan", lambda storage, loaded_plan: (None, stored_scope))
+    monkeypatch.setattr(
+        staged_workflow,
+        "find_scope_for_plan",
+        lambda storage, loaded_plan: (None, stored_scope),
+    )
 
-    artifacts = staged_workflow.run_scope(scope_path="dummy", download_files=True)
+    artifacts = staged_workflow.run_scope(
+        download_files=True,
+        prepared=_prepared(plan, operation="run", gateway=object()),
+    )
 
     assert artifacts.result.run_id == 11
     assert captured["download_files"] is True
@@ -186,6 +250,7 @@ def test_staged_run_scope_provides_document_processor_when_downloading(monkeypat
 
 def test_build_section_inventory_treats_zero_max_pages_as_bounded(monkeypatch):
     fake_target = SimpleNamespace(
+        catalog="dev",
         site_key="demo",
         display_name="Demo",
         seed_url="https://example.com/",
@@ -198,6 +263,9 @@ def test_build_section_inventory_treats_zero_max_pages_as_bounded(monkeypatch):
     )
 
     class FakeDiscoverer:
+        def __init__(self, *, crawler):
+            self.crawler = crawler
+
         def __enter__(self):
             return self
 
@@ -207,8 +275,12 @@ def test_build_section_inventory_treats_zero_max_pages_as_bounded(monkeypatch):
         def discover_target(self, **kwargs):
             return SimpleNamespace(site_key=kwargs["site_key"])
 
-    monkeypatch.setattr(staged_workflow, "load_tree_targets", lambda catalog: [fake_target])
-    monkeypatch.setattr(staged_workflow, "filter_tree_targets", lambda targets, site_keys: targets)
+    monkeypatch.setattr(
+        staged_workflow, "load_tree_targets", lambda catalog: [fake_target]
+    )
+    monkeypatch.setattr(
+        staged_workflow, "filter_tree_targets", lambda targets, site_keys: targets
+    )
     monkeypatch.setattr(staged_workflow, "SectionDiscoverer", FakeDiscoverer)
 
     inventory = staged_workflow.build_section_inventory(catalog="dev", max_pages=0)
@@ -220,24 +292,33 @@ def test_build_section_inventory_treats_zero_max_pages_as_bounded(monkeypatch):
 def test_staged_bootstrap_scope_preserves_zero_limit_overrides(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
     plan = _monitor_plan()
-    fake_target = SimpleNamespace(site_key="demo")
+    fake_target = SimpleNamespace(site_key="demo", seed_url=plan.seed_url)
 
     monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
-    monkeypatch.setattr(staged_workflow, "monitor_scope_to_tree_target", lambda plan: fake_target)
+    monkeypatch.setattr(
+        staged_workflow, "monitor_scope_to_tree_target", lambda plan: fake_target
+    )
     monkeypatch.setattr(
         staged_workflow,
         "run_bootstrap",
         lambda **kwargs: captured.setdefault("bootstrap_kwargs", kwargs) or [],
     )
-    monkeypatch.setattr(staged_workflow, "render_bootstrap_run_markdown", lambda *args, **kwargs: "report")
-    monkeypatch.setattr(staged_workflow, "_compile_acquisition_gateway", lambda *a, **k: object())
+    monkeypatch.setattr(
+        staged_workflow,
+        "render_bootstrap_run_markdown",
+        lambda *args, **kwargs: "report",
+    )
+    effective_plan = replace(plan, max_depth=0, max_pages=0, max_files=0)
 
     artifacts = staged_workflow.bootstrap_scope(
-        scope_path="dummy",
-        max_depth=0,
-        max_pages=0,
-        max_files=0,
         report_path=tmp_path / "bootstrap.md",
+        prepared=_prepared(
+            plan,
+            operation="bootstrap",
+            gateway=object(),
+            target=fake_target,
+            effective_plan=effective_plan,
+        ),
     )
 
     assert artifacts.report_path == tmp_path / "bootstrap.md"
@@ -246,47 +327,107 @@ def test_staged_bootstrap_scope_preserves_zero_limit_overrides(monkeypatch, tmp_
     assert captured["bootstrap_kwargs"]["max_files"] == 0
 
 
-def test_governed_bootstrap_compiles_overrides_before_bootstrap_mutation(monkeypatch, tmp_path):
+def test_governed_bootstrap_compiles_overrides_before_bootstrap_mutation(
+    monkeypatch, tmp_path
+):
     captured = {}
     plan = MonitorScopePlan(
-        "scope", "demo", "Demo", "dev", "2026-01-01Z", "approved", "manual",
-        "Track", "https://example.com/research", "https://example.com/", "http", {},
-        "selected_scope", "selected_scope_default", "site_root", ["/research"], ["/"],
-        max_depth=3, max_pages=8, max_files=2,
+        "scope",
+        "demo",
+        "Demo",
+        "dev",
+        "2026-01-01Z",
+        "approved",
+        "manual",
+        "Track",
+        "https://example.com/research",
+        "https://example.com/",
+        "http",
+        {},
+        "selected_scope",
+        "selected_scope_default",
+        "site_root",
+        ["/research"],
+        ["/"],
+        max_depth=3,
+        max_pages=8,
+        max_files=2,
         based_on={"acquisition_profile_id": "governed"},
     )
 
     def compile_gateway(effective_plan, **kwargs):
-        captured["budgets"] = (effective_plan.max_depth, effective_plan.max_pages, effective_plan.max_files)
+        captured["budgets"] = (
+            effective_plan.max_depth,
+            effective_plan.max_pages,
+            effective_plan.max_files,
+        )
         raise ValueError("authority rejected")
 
     monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
-    monkeypatch.setattr(staged_workflow, "_compile_acquisition_gateway", compile_gateway)
     monkeypatch.setattr(
-        staged_workflow, "run_bootstrap",
+        staged_workflow, "_compile_acquisition_gateway", compile_gateway
+    )
+    monkeypatch.setattr(
+        staged_workflow,
+        "run_bootstrap",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("mutation path reached")),
     )
 
     with pytest.raises(ValueError, match="authority rejected"):
         staged_workflow.bootstrap_scope(
-            scope_path="dummy", max_depth=1, max_pages=4, max_files=1,
+            scope_path="dummy",
+            max_depth=1,
+            max_pages=4,
+            max_files=1,
             report_path=tmp_path / "unused.md",
         )
 
     assert captured["budgets"] == (1, 4, 1)
 
 
-def test_staged_bootstrap_target_conversion_failure_precedes_gateway_construction(
-    monkeypatch, tmp_path,
+def test_runtime_limits_cannot_enlarge_reviewed_scope_before_authority_compile(
+    monkeypatch,
+    tmp_path,
 ):
     plan = _monitor_plan()
     monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
     monkeypatch.setattr(
-        staged_workflow, "monitor_scope_to_tree_target",
+        staged_workflow,
+        "_compile_acquisition_gateway",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("enlarged authority reached compilation")
+        ),
+    )
+    monkeypatch.setattr(
+        staged_workflow,
+        "Storage",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("enlarged authority reached Storage")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="max_pages cannot enlarge reviewed scope"):
+        staged_workflow.bootstrap_scope(
+            scope_path="dummy",
+            max_pages=plan.max_pages + 1,
+            report_path=tmp_path / "unused.md",
+        )
+
+
+def test_staged_bootstrap_target_conversion_failure_precedes_gateway_construction(
+    monkeypatch,
+    tmp_path,
+):
+    plan = _monitor_plan()
+    monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
+    monkeypatch.setattr(
+        staged_workflow,
+        "monitor_scope_to_tree_target",
         lambda _: (_ for _ in ()).throw(ValueError("target conversion failed")),
     )
     monkeypatch.setattr(
-        staged_workflow, "_compile_acquisition_gateway",
+        staged_workflow,
+        "_compile_acquisition_gateway",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("gateway constructed before target conversion")
         ),
@@ -294,26 +435,47 @@ def test_staged_bootstrap_target_conversion_failure_precedes_gateway_constructio
 
     with pytest.raises(ValueError, match="target conversion failed"):
         staged_workflow.bootstrap_scope(
-            scope_path="dummy", report_path=tmp_path / "unused.md",
+            scope_path="dummy",
+            report_path=tmp_path / "unused.md",
         )
 
 
 def test_governed_run_authority_failure_happens_before_storage(monkeypatch):
     plan = MonitorScopePlan(
-        "scope", "demo", "Demo", "dev", "2026-01-01Z", "approved", "manual",
-        "Track", "https://example.com/research", "https://example.com/", "http", {},
-        "selected_scope", "selected_scope_default", "site_root", ["/research"], ["/"],
-        max_depth=3, max_pages=8, max_files=2,
+        "scope",
+        "demo",
+        "Demo",
+        "dev",
+        "2026-01-01Z",
+        "approved",
+        "manual",
+        "Track",
+        "https://example.com/research",
+        "https://example.com/",
+        "http",
+        {},
+        "selected_scope",
+        "selected_scope_default",
+        "site_root",
+        ["/research"],
+        ["/"],
+        max_depth=3,
+        max_pages=8,
+        max_files=2,
         based_on={"acquisition_profile_id": "governed"},
     )
     monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
     monkeypatch.setattr(
-        staged_workflow, "_compile_acquisition_gateway",
+        staged_workflow,
+        "_compile_acquisition_gateway",
         lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("authority rejected")),
     )
     monkeypatch.setattr(
-        staged_workflow, "Storage",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("storage constructed")),
+        staged_workflow,
+        "Storage",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("storage constructed")
+        ),
     )
 
     with pytest.raises(ValueError, match="authority rejected"):
@@ -322,20 +484,32 @@ def test_governed_run_authority_failure_happens_before_storage(monkeypatch):
 
 @pytest.mark.parametrize("operation", ["bootstrap", "run"])
 def test_formal_scope_execution_requires_governed_authority_before_storage(
-    monkeypatch, tmp_path, operation,
+    monkeypatch,
+    tmp_path,
+    operation,
 ):
     plan = _monitor_plan()
     monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
     monkeypatch.setattr(
-        staged_workflow, "Storage",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("storage constructed")),
+        staged_workflow,
+        "Storage",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("storage constructed")
+        ),
     )
     monkeypatch.setattr(
-        staged_workflow, "run_bootstrap",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("bootstrap mutation reached")),
+        staged_workflow,
+        "run_bootstrap",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("bootstrap mutation reached")
+        ),
     )
 
-    call = staged_workflow.bootstrap_scope if operation == "bootstrap" else staged_workflow.run_scope
+    call = (
+        staged_workflow.bootstrap_scope
+        if operation == "bootstrap"
+        else staged_workflow.run_scope
+    )
     with pytest.raises(ValueError, match="complete governed acquisition bindings"):
         call(scope_path="dummy", report_path=tmp_path / "unused.md")
 
@@ -365,7 +539,8 @@ def test_staged_run_scope_preserves_zero_limit_overrides(monkeypatch, tmp_path):
             captured["storage_closed"] = True
 
     class FakeTreeCrawler:
-        def __init__(self, *, storage, document_processor=None, acquisition_gateway=None):
+        def __init__(self, **kwargs):
+            document_processor = kwargs.get("document_processor")
             captured["document_processor"] = document_processor
 
         def __enter__(self):
@@ -394,16 +569,24 @@ def test_staged_run_scope_preserves_zero_limit_overrides(monkeypatch, tmp_path):
     monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
     monkeypatch.setattr(staged_workflow, "Storage", FakeStorage)
     monkeypatch.setattr(staged_workflow, "TreeCrawler", FakeTreeCrawler)
-    monkeypatch.setattr(staged_workflow, "_compile_acquisition_gateway", lambda *a, **k: object())
-    monkeypatch.setattr(staged_workflow, "find_scope_for_plan", lambda storage, loaded_plan: (None, stored_scope))
-    monkeypatch.setattr(staged_workflow, "render_run_markdown", lambda *args, **kwargs: "report")
+    monkeypatch.setattr(
+        staged_workflow,
+        "find_scope_for_plan",
+        lambda storage, loaded_plan: (None, stored_scope),
+    )
+    monkeypatch.setattr(
+        staged_workflow, "render_run_markdown", lambda *args, **kwargs: "report"
+    )
+    effective_plan = replace(plan, max_depth=0, max_pages=0, max_files=0)
 
     artifacts = staged_workflow.run_scope(
-        scope_path="dummy",
-        max_depth=0,
-        max_pages=0,
-        max_files=0,
         report_path=tmp_path / "run.md",
+        prepared=_prepared(
+            plan,
+            operation="run",
+            gateway=object(),
+            effective_plan=effective_plan,
+        ),
     )
 
     assert artifacts.report_path == tmp_path / "run.md"
@@ -426,13 +609,17 @@ def test_tree_bootstrap_main_preserves_explicit_zero_cli_limits(monkeypatch, tmp
         report_path=tmp_path / "bootstrap-cli.md",
     )
 
-    monkeypatch.setattr(tree_bootstrap_workflow.argparse.ArgumentParser, "parse_args", lambda self: args)
+    monkeypatch.setattr(
+        tree_bootstrap_workflow.argparse.ArgumentParser, "parse_args", lambda self: args
+    )
     monkeypatch.setattr(
         tree_bootstrap_workflow,
         "run_bootstrap",
         lambda **kwargs: captured.setdefault("bootstrap_kwargs", kwargs) or [],
     )
-    monkeypatch.setattr(tree_bootstrap_workflow, "render_markdown", lambda *args, **kwargs: "report")
+    monkeypatch.setattr(
+        tree_bootstrap_workflow, "render_markdown", lambda *args, **kwargs: "report"
+    )
 
     tree_bootstrap_workflow.main()
 
@@ -441,13 +628,22 @@ def test_tree_bootstrap_main_preserves_explicit_zero_cli_limits(monkeypatch, tmp
     assert captured["bootstrap_kwargs"]["max_files"] == 0
 
 
-def test_run_scope_primary_gateway_failure_still_closes_processor_and_storage(monkeypatch):
+def test_run_scope_primary_gateway_failure_still_closes_processor_and_storage(
+    monkeypatch,
+):
     closed = []
     plan = _monitor_plan()
     scope = CrawlScope(
-        id=7, site_id=1, seed_url="https://example.com/", allowed_origin="https://example.com",
-        allowed_page_prefixes=["/"], allowed_file_prefixes=["/"], max_depth=1,
-        max_pages=1, max_files=1, is_initialized=True,
+        id=7,
+        site_id=1,
+        seed_url="https://example.com/",
+        allowed_origin="https://example.com",
+        allowed_page_prefixes=["/"],
+        allowed_file_prefixes=["/"],
+        max_depth=1,
+        max_pages=1,
+        max_files=1,
+        is_initialized=True,
     )
 
     class Resource:
@@ -480,21 +676,26 @@ def test_run_scope_primary_gateway_failure_still_closes_processor_and_storage(mo
 
     gateway = Resource("gateway")
     monkeypatch.setattr(staged_workflow, "load_monitor_scope_plan", lambda _: plan)
-    monkeypatch.setattr(staged_workflow, "_compile_acquisition_gateway", lambda *a, **k: gateway)
     monkeypatch.setattr(staged_workflow, "Storage", FakeStorage)
     monkeypatch.setattr(staged_workflow, "DocumentProcessor", FakeProcessor)
-    monkeypatch.setattr(staged_workflow, "find_scope_for_plan", lambda *a: (None, scope))
+    monkeypatch.setattr(
+        staged_workflow, "find_scope_for_plan", lambda *a: (None, scope)
+    )
     monkeypatch.setattr(staged_workflow, "TreeCrawler", FakeTree)
 
     with pytest.raises(RuntimeError, match="gateway failed"):
-        staged_workflow.run_scope(scope_path="dummy", download_files=True)
+        staged_workflow.run_scope(
+            download_files=True,
+            prepared=_prepared(plan, operation="run", gateway=gateway),
+        )
 
     assert closed == ["gateway", "processor", "storage"]
 
 
 @pytest.mark.parametrize("failure_point", ["load", "filter"])
 def test_run_bootstrap_target_resolution_failure_closes_gateway_without_masking_primary(
-    monkeypatch, failure_point,
+    monkeypatch,
+    failure_point,
 ):
     attempted = []
 
@@ -514,13 +715,17 @@ def test_run_bootstrap_target_resolution_failure_closes_gateway_without_masking_
     monkeypatch.setattr(tree_bootstrap_workflow, "load_tree_targets", fail_load)
     monkeypatch.setattr(tree_bootstrap_workflow, "filter_tree_targets", fail_filter)
     monkeypatch.setattr(
-        tree_bootstrap_workflow, "Storage",
+        tree_bootstrap_workflow,
+        "Storage",
         lambda *args: (_ for _ in ()).throw(AssertionError("storage constructed")),
     )
 
     with pytest.raises(ValueError, match=f"target {failure_point} failed"):
         tree_bootstrap_workflow.run_bootstrap(
-            catalog="scope", max_depth=1, max_pages=1, max_files=1,
+            catalog="scope",
+            max_depth=1,
+            max_pages=1,
+            max_files=1,
             acquisition_gateway=Gateway(),
         )
 
@@ -529,7 +734,8 @@ def test_run_bootstrap_target_resolution_failure_closes_gateway_without_masking_
 
 @pytest.mark.parametrize("failure_point", ["construction", "entry"])
 def test_run_bootstrap_primary_tree_failure_survives_failing_all_resource_cleanup(
-    monkeypatch, failure_point,
+    monkeypatch,
+    failure_point,
 ):
     attempted = []
 
@@ -542,6 +748,8 @@ def test_run_bootstrap_primary_tree_failure_survives_failing_all_resource_cleanu
             raise RuntimeError(f"{self.name} cleanup failed")
 
     storage = Resource("storage")
+    storage.begin_execution_transaction = lambda: None
+    storage.commit_execution_transaction = lambda: None
     processor = Resource("processor")
     gateway = Resource("gateway")
 
@@ -576,8 +784,14 @@ def test_run_bootstrap_primary_tree_failure_survives_failing_all_resource_cleanu
 
     with pytest.raises(ValueError, match=f"tree {failure_point} failed"):
         tree_bootstrap_workflow.run_bootstrap(
-            catalog="scope", max_depth=1, max_pages=1, max_files=1,
-            targets=[], download_files=True, acquisition_gateway=gateway,
+            catalog="scope",
+            max_depth=1,
+            max_pages=1,
+            max_files=1,
+            targets=[_legacy_target("demo", "http", {})],
+            download_files=True,
+            acquisition_gateway=gateway,
+            initial_outcome=_accepted_seed("https://demo.example/"),
         )
 
     expected = ["gateway", "processor", "storage"]
@@ -586,7 +800,9 @@ def test_run_bootstrap_primary_tree_failure_survives_failing_all_resource_cleanu
     assert attempted == expected
 
 
-def test_run_bootstrap_surfaces_first_cleanup_only_failure_and_attempts_all(monkeypatch):
+def test_run_bootstrap_surfaces_first_cleanup_only_failure_and_attempts_all(
+    monkeypatch,
+):
     attempted = []
 
     class Resource:
@@ -599,6 +815,8 @@ def test_run_bootstrap_surfaces_first_cleanup_only_failure_and_attempts_all(monk
                 raise RuntimeError(f"{self.name} cleanup failed")
 
     storage = Resource("storage", fail=True)
+    storage.begin_execution_transaction = lambda: None
+    storage.commit_execution_transaction = lambda: None
     processor = Resource("processor", fail=True)
     gateway = Resource("gateway", fail=True)
 
@@ -617,19 +835,41 @@ def test_run_bootstrap_surfaces_first_cleanup_only_failure_and_attempts_all(monk
                     resource.close()
 
     monkeypatch.setattr(tree_bootstrap_workflow, "Storage", lambda *a: storage)
-    monkeypatch.setattr(tree_bootstrap_workflow, "DocumentProcessor", lambda **k: processor)
+    monkeypatch.setattr(
+        tree_bootstrap_workflow, "DocumentProcessor", lambda **k: processor
+    )
     monkeypatch.setattr(tree_bootstrap_workflow, "TreeCrawler", FakeTree)
+    monkeypatch.setattr(
+        tree_bootstrap_workflow,
+        "ensure_tree_site",
+        lambda *args: SimpleNamespace(id=1),
+    )
+    monkeypatch.setattr(
+        tree_bootstrap_workflow,
+        "ensure_tree_scope",
+        lambda *args, **kwargs: SimpleNamespace(
+            id=1, is_initialized=True, baseline_run_id=None
+        ),
+    )
 
     with pytest.raises(RuntimeError, match="gateway cleanup failed"):
         tree_bootstrap_workflow.run_bootstrap(
-            catalog="scope", max_depth=1, max_pages=1, max_files=1,
-            targets=[], download_files=True, acquisition_gateway=gateway,
+            catalog="scope",
+            max_depth=1,
+            max_pages=1,
+            max_files=1,
+            targets=[_legacy_target("demo", "http", {})],
+            download_files=True,
+            acquisition_gateway=gateway,
+            initial_outcome=_accepted_seed("https://demo.example/"),
         )
 
     assert attempted == ["tree", "gateway", "processor", "storage"]
 
 
-def test_run_bootstrap_preserves_recorded_target_failure_and_attempts_all_cleanup(monkeypatch):
+def test_run_bootstrap_preserves_recorded_target_failure_and_attempts_all_cleanup(
+    monkeypatch,
+):
     attempted = []
 
     class Resource:
@@ -641,6 +881,8 @@ def test_run_bootstrap_preserves_recorded_target_failure_and_attempts_all_cleanu
             raise RuntimeError(f"{self.name} cleanup failed")
 
     storage = Resource("storage")
+    storage.begin_execution_transaction = lambda: None
+    storage.commit_execution_transaction = lambda: None
     processor = Resource("processor")
     gateway = Resource("gateway")
 
@@ -660,20 +902,37 @@ def test_run_bootstrap_preserves_recorded_target_failure_and_attempts_all_cleanu
             raise RuntimeError("tree cleanup failed")
 
     target = SimpleNamespace(
-        catalog="scope", site_key="demo", display_name="Demo",
-        seed_url="https://example.com/", tree_max_depth=None,
-        tree_max_pages=None, tree_max_files=None, notes="",
+        catalog="scope",
+        site_key="demo",
+        display_name="Demo",
+        seed_url="https://example.com/",
+        tree_max_depth=None,
+        tree_max_pages=None,
+        tree_max_files=None,
+        notes="",
     )
     scope = SimpleNamespace(id=7, is_initialized=False)
     monkeypatch.setattr(tree_bootstrap_workflow, "Storage", lambda *a: storage)
-    monkeypatch.setattr(tree_bootstrap_workflow, "DocumentProcessor", lambda **k: processor)
+    monkeypatch.setattr(
+        tree_bootstrap_workflow, "DocumentProcessor", lambda **k: processor
+    )
     monkeypatch.setattr(tree_bootstrap_workflow, "TreeCrawler", FakeTree)
-    monkeypatch.setattr(tree_bootstrap_workflow, "ensure_tree_site", lambda *a: object())
-    monkeypatch.setattr(tree_bootstrap_workflow, "ensure_tree_scope", lambda *a, **k: scope)
+    monkeypatch.setattr(
+        tree_bootstrap_workflow, "ensure_tree_site", lambda *a: object()
+    )
+    monkeypatch.setattr(
+        tree_bootstrap_workflow, "ensure_tree_scope", lambda *a, **k: scope
+    )
 
     results = tree_bootstrap_workflow.run_bootstrap(
-        catalog="scope", max_depth=1, max_pages=1, max_files=1,
-        targets=[target], download_files=True, acquisition_gateway=gateway,
+        catalog="scope",
+        max_depth=1,
+        max_pages=1,
+        max_files=1,
+        targets=[target],
+        download_files=True,
+        acquisition_gateway=gateway,
+        initial_outcome=_accepted_seed(),
     )
 
     assert len(results) == 1
@@ -719,10 +978,14 @@ def _completed_tree_crawl(scope, run_id):
     )
 
 
-def test_legacy_bootstrap_binds_target_gateway_and_pacing_before_mutation(monkeypatch):
+def test_legacy_bootstrap_is_rejected_before_mutation(monkeypatch):
     targets = [
-        _legacy_target("alpha", "http", {"min_delay_seconds": 0.1, "headers": {"X-A": "1"}}),
-        _legacy_target("beta", "browser", {"min_delay_seconds": 0.7, "wait_until": "networkidle"}),
+        _legacy_target(
+            "alpha", "http", {"min_delay_seconds": 0.1, "headers": {"X-A": "1"}}
+        ),
+        _legacy_target(
+            "beta", "browser", {"min_delay_seconds": 0.7, "wait_until": "networkidle"}
+        ),
     ]
     events = []
     crawler = SimpleNamespace(close=lambda: events.append(("crawler_close",)))
@@ -745,7 +1008,14 @@ def test_legacy_bootstrap_binds_target_gateway_and_pacing_before_mutation(monkey
             return self
 
         def bootstrap_scope(self, scope, **kwargs):
-            events.append(("bootstrap", scope.site_id, self.acquisition_gateway, dict(self.pacing_config)))
+            events.append(
+                (
+                    "bootstrap",
+                    scope.site_id,
+                    self.acquisition_gateway,
+                    dict(self.pacing_config),
+                )
+            )
             return _completed_tree_crawl(scope, scope.site_id + 10)
 
         def close(self):
@@ -781,88 +1051,45 @@ def test_legacy_bootstrap_binds_target_gateway_and_pacing_before_mutation(monkey
     monkeypatch.setattr(tree_bootstrap_workflow, "ensure_tree_site", ensure_site)
     monkeypatch.setattr(tree_bootstrap_workflow, "ensure_tree_scope", ensure_scope)
 
-    results = tree_bootstrap_workflow.run_bootstrap(
-        catalog="scope", max_depth=1, max_pages=1, max_files=1, targets=targets,
-    )
+    with pytest.raises(ValueError, match="governed acquisition gateway"):
+        tree_bootstrap_workflow.run_bootstrap(
+            catalog="scope",
+            max_depth=1,
+            max_pages=1,
+            max_files=1,
+            targets=targets,
+        )
 
-    gateways = [event[2] for event in events if event[0] == "bootstrap"]
-    assert len(results) == 2
-    assert gateways[0] is not gateways[1]
-    assert [event[0] for event in events] == [
-        "site", "scope", "bootstrap", "site", "scope", "bootstrap", "crawler_close", "storage_close",
-    ]
+    assert events == []
 
 
-def test_legacy_incremental_binds_target_gateway_and_pacing_before_each_run(monkeypatch):
-    targets = [
-        _legacy_target("alpha", "http", {"min_delay_seconds": 0.2}),
-        _legacy_target("beta", "browser", {"min_delay_seconds": 0.8, "wait_until": "load"}),
-    ]
+def test_legacy_incremental_is_rejected_before_mutation(monkeypatch):
     calls = []
-    crawler = SimpleNamespace()
 
     class FakeStorage:
         def __init__(self, *args):
-            pass
+            calls.append(("storage_open",))
 
         def close(self):
             calls.append(("storage_close",))
 
-    class FakeTree:
-        def __init__(self, **kwargs):
-            self.crawler = crawler
-            self.acquisition_gateway = None
-            self.pacing_config = {}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return None
-
-        def run_scope(self, scope, **kwargs):
-            gateway = self.acquisition_gateway
-            calls.append(("run", scope.site_id, gateway, dict(self.pacing_config)))
-            assert isinstance(gateway, tree_run_workflow.LegacyCrawlerGateway)
-            assert gateway.crawler is crawler
-            return _completed_tree_crawl(scope, scope.site_id + 20)
-
-    scopes = {
-        target.site_key: CrawlScope(
-            id=index, site_id=index, seed_url=target.seed_url,
-            allowed_origin=f"https://{target.site_key}.example",
-            allowed_page_prefixes=["/"], allowed_file_prefixes=["/"],
-            max_depth=1, max_pages=1, max_files=1, is_initialized=True,
-        )
-        for index, target in enumerate(targets, start=1)
-    }
-    monkeypatch.setattr(tree_run_workflow, "load_tree_targets", lambda catalog: targets)
-    monkeypatch.setattr(tree_run_workflow, "filter_tree_targets", lambda loaded, keys: loaded)
     monkeypatch.setattr(tree_run_workflow, "Storage", FakeStorage)
-    monkeypatch.setattr(tree_run_workflow, "TreeCrawler", FakeTree)
-    monkeypatch.setattr(
-        tree_run_workflow, "find_scope",
-        lambda storage, target: (SimpleNamespace(id=scopes[target.site_key].site_id), scopes[target.site_key]),
-    )
 
-    results = tree_run_workflow.run_incremental(
-        catalog="scope", max_depth=1, max_pages=1, max_files=1,
-    )
+    with pytest.raises(ValueError, match="PreparedScopeExecution"):
+        tree_run_workflow.run_incremental(
+            catalog="scope",
+            max_depth=1,
+            max_pages=1,
+            max_files=1,
+        )
 
-    run_calls = [call for call in calls if call[0] == "run"]
-    assert len(results) == 2
-    assert run_calls[0][2] is not run_calls[1][2]
-    for call, target in zip(run_calls, targets):
-        assert call[2].fetch_mode == target.fetch_mode
-        assert call[2].fetch_config_json == target.fetch_config_json
-        assert call[3] == target.fetch_config_json
+    assert calls == []
 
 
-def test_governed_bootstrap_keeps_supplied_gateway_and_ignores_legacy_pacing(monkeypatch):
-    targets = [
-        _legacy_target("alpha", "browser", {"min_delay_seconds": 9}),
-        _legacy_target("beta", "http", {"min_delay_seconds": 17}),
-    ]
+def test_governed_bootstrap_keeps_supplied_gateway_and_ignores_legacy_pacing(
+    monkeypatch,
+):
+    targets = [_legacy_target("alpha", "browser", {"min_delay_seconds": 9})]
     governed_gateway = SimpleNamespace(close=lambda: None)
     observed = []
 
@@ -882,22 +1109,39 @@ def test_governed_bootstrap_keeps_supplied_gateway_and_ignores_legacy_pacing(mon
             observed.append((self.acquisition_gateway, dict(self.pacing_config)))
             return _completed_tree_crawl(scope, scope.site_id + 30)
 
-    monkeypatch.setattr(tree_bootstrap_workflow, "Storage", lambda *args: SimpleNamespace(close=lambda: None))
-    monkeypatch.setattr(tree_bootstrap_workflow, "TreeCrawler", FakeTree)
-    monkeypatch.setattr(tree_bootstrap_workflow, "ensure_tree_site", lambda storage, target: SimpleNamespace(id=1))
     monkeypatch.setattr(
-        tree_bootstrap_workflow, "ensure_tree_scope",
+        tree_bootstrap_workflow,
+        "Storage",
+        lambda *args: SimpleNamespace(
+            begin_execution_transaction=lambda: None,
+            commit_execution_transaction=lambda: None,
+            close=lambda: None,
+        ),
+    )
+    monkeypatch.setattr(tree_bootstrap_workflow, "TreeCrawler", FakeTree)
+    monkeypatch.setattr(
+        tree_bootstrap_workflow,
+        "ensure_tree_site",
+        lambda storage, target: SimpleNamespace(id=1),
+    )
+    monkeypatch.setattr(
+        tree_bootstrap_workflow,
+        "ensure_tree_scope",
         lambda storage, *, target, **kwargs: SimpleNamespace(
-            id=1, site_id=1, is_initialized=False,
+            id=1,
+            site_id=1,
+            is_initialized=False,
         ),
     )
 
     tree_bootstrap_workflow.run_bootstrap(
-        catalog="scope", max_depth=1, max_pages=1, max_files=1,
-        targets=targets, acquisition_gateway=governed_gateway,
+        catalog="scope",
+        max_depth=1,
+        max_pages=1,
+        max_files=1,
+        targets=targets,
+        acquisition_gateway=governed_gateway,
+        initial_outcome=_accepted_seed(targets[0].seed_url),
     )
 
-    assert observed == [
-        (governed_gateway, {"governed": True}),
-        (governed_gateway, {"governed": True}),
-    ]
+    assert observed == [(governed_gateway, {"governed": True})]

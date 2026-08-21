@@ -1,5 +1,4 @@
 import json
-import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,7 +22,15 @@ from web_listening.blocks.monitor_scope_planner import (
 )
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
-from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, Job, PageSnapshot, Site
+from web_listening.models import (
+    CrawlRun,
+    CrawlScope,
+    Document,
+    FileObservation,
+    Job,
+    PageSnapshot,
+    Site,
+)
 
 
 runner = CliRunner()
@@ -35,22 +42,29 @@ def _add_legacy_snapshot(storage: Storage, snapshot: PageSnapshot) -> PageSnapsh
         run_id=snapshot.run_id,
         identity=snapshot.final_url or f"historical-page-{snapshot.page_id}",
     )
-    return storage.add_page_snapshot(snapshot.model_copy(update={"attempt_id": attempt.attempt_id}))
+    return storage.add_page_snapshot(
+        snapshot.model_copy(update={"attempt_id": attempt.attempt_id})
+    )
 
 
-def _add_legacy_observation(storage: Storage, observation: FileObservation) -> FileObservation:
+def _add_legacy_observation(
+    storage: Storage, observation: FileObservation
+) -> FileObservation:
     attempt = storage.add_legacy_compatibility_attempt(
         scope_id=observation.scope_id,
         run_id=observation.run_id,
         identity=observation.download_url,
         content_kind="document",
     )
-    return storage.add_file_observation(observation.model_copy(update={"attempt_id": attempt.attempt_id}))
+    return storage.add_file_observation(
+        observation.model_copy(update={"attempt_id": attempt.attempt_id})
+    )
 
 
 def test_preview_execution_plan_json_legacy_is_byte_identical(tmp_path: Path):
     scope = tmp_path / "scope.yaml"
-    scope.write_text("""site_key: demo
+    scope.write_text(
+        """site_key: demo
 seed_url: https://example.com/news
 homepage_url: https://example.com/
 allowed_page_prefixes: [/news]
@@ -59,7 +73,9 @@ max_depth: 3
 max_pages: 25
 max_files: 10
 based_on: {}
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
     args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
     first = runner.invoke(app, args)
     second = runner.invoke(app, args)
@@ -70,19 +86,28 @@ based_on: {}
     assert len(payload["plan"]["warnings"]) == 1
 
 
-def test_preview_execution_plan_json_parser_and_compiler_errors_are_structured(tmp_path: Path):
+def test_preview_execution_plan_json_parser_and_compiler_errors_are_structured(
+    tmp_path: Path,
+):
     missing = runner.invoke(app, ["preview-execution-plan", "--json"])
     assert missing.exit_code != 0
     assert json.loads(missing.stdout)["error"]["code"] == "parser.invalid"
     scope = tmp_path / "scope.yaml"
-    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {site_skill_version: 1.0.0}\n", encoding="utf-8")
-    failed = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope), "--json"])
+    scope.write_text(
+        "site_key: demo\nseed_url: https://example.com/\nbased_on: {site_skill_version: 1.0.0}\n",
+        encoding="utf-8",
+    )
+    failed = runner.invoke(
+        app, ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+    )
     assert failed.exit_code != 0
     assert json.loads(failed.stdout)["error"]["code"] == "input.invalid"
     assert str(tmp_path) not in failed.stdout
 
 
-def test_preview_execution_plan_json_malformed_scope_yaml_is_stable_and_redacted(tmp_path: Path):
+def test_preview_execution_plan_json_malformed_scope_yaml_is_stable_and_redacted(
+    tmp_path: Path,
+):
     scope = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
     scope.write_text("site_key: [SECRET-CONTENT-CANARY\n", encoding="utf-8")
     args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
@@ -93,14 +118,22 @@ def test_preview_execution_plan_json_malformed_scope_yaml_is_stable_and_redacted
     assert first.exit_code == second.exit_code != 0
     assert first.stdout == second.stdout
     assert json.loads(first.stdout) == {
-        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
-        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+        "schema_version": "acquisition-execution-plan-preview.v1",
+        "ok": False,
+        "plan": None,
+        "error": {
+            "code": "input.invalid",
+            "field": ".",
+            "message": "preview input is invalid: ValueError",
+        },
     }
     assert "SECRET-PATH-CANARY" not in first.stdout
     assert "SECRET-CONTENT-CANARY" not in first.stdout
 
 
-def test_preview_execution_plan_json_sequence_scope_root_is_stable_and_redacted(tmp_path: Path):
+def test_preview_execution_plan_json_sequence_scope_root_is_stable_and_redacted(
+    tmp_path: Path,
+):
     scope = tmp_path / "SECRET-PATH-CANARY-scope.yaml"
     scope.write_text("- SECRET-CONTENT-CANARY\n", encoding="utf-8")
     args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
@@ -111,31 +144,53 @@ def test_preview_execution_plan_json_sequence_scope_root_is_stable_and_redacted(
     assert first.exit_code == second.exit_code != 0
     assert first.stdout == second.stdout
     assert json.loads(first.stdout) == {
-        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
-        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+        "schema_version": "acquisition-execution-plan-preview.v1",
+        "ok": False,
+        "plan": None,
+        "error": {
+            "code": "input.invalid",
+            "field": ".",
+            "message": "preview input is invalid: ValueError",
+        },
     }
     assert "SECRET-PATH-CANARY" not in first.stdout
     assert "SECRET-CONTENT-CANARY" not in first.stdout
 
 
-def test_preview_execution_plan_json_rejects_explicit_empty_governed_binding(tmp_path: Path):
+def test_preview_execution_plan_json_rejects_explicit_empty_governed_binding(
+    tmp_path: Path,
+):
     scope = tmp_path / "SECRET-CANARY-scope.yaml"
-    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {acquisition_profile_id: ''}\n", encoding="utf-8")
+    scope.write_text(
+        "site_key: demo\nseed_url: https://example.com/\nbased_on: {acquisition_profile_id: ''}\n",
+        encoding="utf-8",
+    )
 
-    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope), "--json"])
+    result = runner.invoke(
+        app, ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+    )
 
     assert result.exit_code != 0
     assert json.loads(result.stdout) == {
-        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
-        "error": {"code": "bindings.partial", "field": "based_on", "message": "governed acquisition bindings must be all present or all absent"},
+        "schema_version": "acquisition-execution-plan-preview.v1",
+        "ok": False,
+        "plan": None,
+        "error": {
+            "code": "bindings.partial",
+            "field": "based_on",
+            "message": "governed acquisition bindings must be all present or all absent",
+        },
     }
     assert "SECRET-CANARY" not in result.stdout
 
 
 @pytest.mark.parametrize("limit_yaml", ["true", '"25"'])
-def test_preview_execution_plan_json_rejects_coerced_scope_limits(tmp_path: Path, limit_yaml: str):
+def test_preview_execution_plan_json_rejects_coerced_scope_limits(
+    tmp_path: Path, limit_yaml: str
+):
     scope = tmp_path / "SECRET-CANARY-scope.yaml"
-    scope.write_text(f"""site_key: demo
+    scope.write_text(
+        f"""site_key: demo
 seed_url: https://example.com/news
 homepage_url: https://example.com/
 allowed_page_prefixes: [/news]
@@ -144,12 +199,22 @@ max_depth: 3
 max_pages: {limit_yaml}
 max_files: 10
 based_on: {{}}
-""", encoding="utf-8")
-    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope), "--json"])
+""",
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app, ["preview-execution-plan", "--scope-path", str(scope), "--json"]
+    )
     assert result.exit_code != 0
     assert json.loads(result.stdout) == {
-        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
-        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+        "schema_version": "acquisition-execution-plan-preview.v1",
+        "ok": False,
+        "plan": None,
+        "error": {
+            "code": "input.invalid",
+            "field": ".",
+            "message": "preview input is invalid: ValueError",
+        },
     }
     assert "SECRET-CANARY" not in result.stdout
 
@@ -174,8 +239,14 @@ def test_preview_execution_plan_json_rejects_invalid_scope_lists_deterministical
     assert first.exit_code == second.exit_code != 0
     assert first.stdout == second.stdout
     assert json.loads(first.stdout) == {
-        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
-        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+        "schema_version": "acquisition-execution-plan-preview.v1",
+        "ok": False,
+        "plan": None,
+        "error": {
+            "code": "input.invalid",
+            "field": ".",
+            "message": "preview input is invalid: ValueError",
+        },
     }
     assert "SECRET-CANARY" not in first.stdout
     assert "/news" not in first.stdout
@@ -208,8 +279,14 @@ def test_preview_execution_plan_json_rejects_invalid_scope_mappings_deterministi
     assert first.exit_code == second.exit_code != 0
     assert first.stdout == second.stdout
     assert json.loads(first.stdout) == {
-        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
-        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+        "schema_version": "acquisition-execution-plan-preview.v1",
+        "ok": False,
+        "plan": None,
+        "error": {
+            "code": "input.invalid",
+            "field": ".",
+            "message": "preview input is invalid: ValueError",
+        },
     }
     assert "SECRET-CANARY" not in first.stdout
     assert "selected" not in first.stdout
@@ -217,36 +294,64 @@ def test_preview_execution_plan_json_rejects_invalid_scope_mappings_deterministi
 
 def test_preview_execution_plan_json_rejects_coerced_profile_authority(tmp_path: Path):
     scope = tmp_path / "scope.yaml"
-    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {}\n", encoding="utf-8")
+    scope.write_text(
+        "site_key: demo\nseed_url: https://example.com/\nbased_on: {}\n",
+        encoding="utf-8",
+    )
     profile = tmp_path / "SECRET-PATH-CANARY-profile.yaml"
-    profile.write_text("""profile_id: demo
+    profile.write_text(
+        """profile_id: demo
 site_key: demo
 generated_at: "2026-01-01T00:00:00Z"
 quality_gates: {min_words: "SECRET-VALUE-CANARY"}
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
-    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", str(scope),
-        "--profile-path", str(profile), "--json"])
+    result = runner.invoke(
+        app,
+        [
+            "preview-execution-plan",
+            "--scope-path",
+            str(scope),
+            "--profile-path",
+            str(profile),
+            "--json",
+        ],
+    )
 
     assert result.exit_code != 0
     assert json.loads(result.stdout)["error"] == {
-        "code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError",
+        "code": "input.invalid",
+        "field": ".",
+        "message": "preview input is invalid: ValueError",
     }
     assert "SECRET-PATH-CANARY" not in result.stdout
     assert "SECRET-VALUE-CANARY" not in result.stdout
 
 
-def test_preview_execution_plan_json_rejects_non_string_governed_identity_deterministically(tmp_path: Path):
+def test_preview_execution_plan_json_rejects_non_string_governed_identity_deterministically(
+    tmp_path: Path,
+):
     scope = tmp_path / "SECRET-CANARY-scope.yaml"
-    scope.write_text("site_key: demo\nseed_url: https://example.com/\nbased_on: {acquisition_profile_id: 123}\n", encoding="utf-8")
+    scope.write_text(
+        "site_key: demo\nseed_url: https://example.com/\nbased_on: {acquisition_profile_id: 123}\n",
+        encoding="utf-8",
+    )
     args = ["preview-execution-plan", "--scope-path", str(scope), "--json"]
     first = runner.invoke(app, args)
     second = runner.invoke(app, args)
     assert first.exit_code == second.exit_code != 0
     assert first.stdout == second.stdout
     assert json.loads(first.stdout) == {
-        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
-        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+        "schema_version": "acquisition-execution-plan-preview.v1",
+        "ok": False,
+        "plan": None,
+        "error": {
+            "code": "input.invalid",
+            "field": ".",
+            "message": "preview input is invalid: ValueError",
+        },
     }
     assert "123" not in first.stdout
     assert "SECRET-CANARY" not in first.stdout
@@ -269,8 +374,14 @@ def test_preview_execution_plan_json_rejects_non_mapping_based_on_deterministica
     assert first.exit_code == second.exit_code != 0
     assert first.stdout == second.stdout
     assert json.loads(first.stdout) == {
-        "schema_version": "acquisition-execution-plan-preview.v1", "ok": False, "plan": None,
-        "error": {"code": "input.invalid", "field": ".", "message": "preview input is invalid: ValueError"},
+        "schema_version": "acquisition-execution-plan-preview.v1",
+        "ok": False,
+        "plan": None,
+        "error": {
+            "code": "input.invalid",
+            "field": ".",
+            "message": "preview input is invalid: ValueError",
+        },
     }
     assert "SECRET-CANARY" not in first.stdout
 
@@ -287,9 +398,13 @@ def test_default_scope_loader_preserves_non_mapping_based_on_compatibility(
     assert loaded.based_on == {}
 
 
-def test_default_scope_loader_preserves_numeric_string_limits_for_bootstrap_callers(tmp_path: Path):
+def test_default_scope_loader_preserves_numeric_string_limits_for_bootstrap_callers(
+    tmp_path: Path,
+):
     scope = tmp_path / "scope.yaml"
-    scope.write_text("max_depth: '3'\nmax_pages: '25'\nmax_files: '10'\n", encoding="utf-8")
+    scope.write_text(
+        "max_depth: '3'\nmax_pages: '25'\nmax_files: '10'\n", encoding="utf-8"
+    )
 
     loaded = load_monitor_scope_plan(scope)
 
@@ -298,10 +413,16 @@ def test_default_scope_loader_preserves_numeric_string_limits_for_bootstrap_call
 
 def test_preview_json_missing_path_parser_error_is_redacted_and_stdout_only():
     canary = "/tmp/SECRET-CANARY-scope.yaml"
-    result = runner.invoke(app, ["preview-execution-plan", "--scope-path", canary, "--json"])
+    result = runner.invoke(
+        app, ["preview-execution-plan", "--scope-path", canary, "--json"]
+    )
     assert result.exit_code != 0
     payload = json.loads(result.stdout)
-    assert payload["error"] == {"code": "parser.invalid", "field": ".", "message": "invalid command arguments"}
+    assert payload["error"] == {
+        "code": "parser.invalid",
+        "field": ".",
+        "message": "invalid command arguments",
+    }
     assert "SECRET-CANARY" not in result.output
     assert result.stderr == ""
 
@@ -410,21 +531,37 @@ def test_list_acquisition_tools_json_lists_probe_capabilities():
     tools = {tool["adapter"]: tool for tool in payload["tools"]}
     assert tools["web_http"]["probe_capable"] is True
     assert tools["browser_rendered"]["probe_capable"] is True
-    assert tools["browser_rendered"]["recommended_when"][0] == "dynamic JavaScript-rendered public pages"
+    assert (
+        tools["browser_rendered"]["recommended_when"][0]
+        == "dynamic JavaScript-rendered public pages"
+    )
     assert tools["browser_rendered"]["runtime_status"] == "optional_runtime"
     assert tools["browser_rendered"]["optional_runtime"]["extra"] == "browser"
     assert tools["cloakbrowser"]["probe_capable"] is True
     assert tools["cloakbrowser"]["implemented_for_pr3_probing"] is True
     assert tools["cloakbrowser"]["optional_runtime"]["extra"] == "cloakbrowser"
-    assert tools["cloakbrowser"]["requires_profile_safety"]["allow_stealth_browser"] is True
+    assert (
+        tools["cloakbrowser"]["requires_profile_safety"]["allow_stealth_browser"]
+        is True
+    )
     assert tools["browseract"]["runtime_status"] == "optional_runtime_disabled"
     assert tools["browseract"]["probe_capable"] is False
     assert tools["batch_python"]["runtime_status"] == "reserved"
 
 
-def test_inspect_browseract_json_unavailable_is_read_only_and_structured(tmp_path: Path):
+def test_inspect_browseract_json_unavailable_is_read_only_and_structured(
+    tmp_path: Path,
+):
     canary = "sk-secret-path-canary"
-    result = runner.invoke(app, ["inspect-browseract", "--executable", str(tmp_path / canary / "missing"), "--json"])
+    result = runner.invoke(
+        app,
+        [
+            "inspect-browseract",
+            "--executable",
+            str(tmp_path / canary / "missing"),
+            "--json",
+        ],
+    )
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["schema_version"] == "browseract-inspection.v1"
@@ -437,22 +574,28 @@ def test_inspect_browseract_json_accepts_fake_isolated_runtime(tmp_path: Path):
     bin_dir = tmp_path / "browseract-tool" / "bin"
     bin_dir.mkdir(parents=True)
     executable = bin_dir / "browser-act"
-    fixture = (Path(__file__).parent / "fixtures" / "fake_browseract_cli.py").read_text(encoding="utf-8")
-    executable.write_text(fixture.replace("__TOOL_PYTHON__", str(bin_dir / "python")), encoding="utf-8")
+    fixture = (Path(__file__).parent / "fixtures" / "fake_browseract_cli.py").read_text(
+        encoding="utf-8"
+    )
+    executable.write_text(
+        fixture.replace("__TOOL_PYTHON__", str(bin_dir / "python")), encoding="utf-8"
+    )
     executable.chmod(0o755)
     prefix = bin_dir.parent
     python = bin_dir / "python"
     python.write_text(
         "#!/bin/sh\n"
-        "if [ \"$1\" = \"-I\" ]; then\n"
-        f"  printf '%s\\n' '{{\"python_version\":\"3.12\",\"sys_prefix\":\"{prefix}\",\"package_version\":\"1.0.6\"}}'\n"
+        'if [ "$1" = "-I" ]; then\n'
+        f'  printf \'%s\\n\' \'{{"python_version":"3.12","sys_prefix":"{prefix}","package_version":"1.0.6"}}\'\n'
         "  exit 0\n"
         "fi\n"
-        f"exec {sys.executable} \"$@\"\n",
+        f'exec {sys.executable} "$@"\n',
         encoding="utf-8",
     )
     python.chmod(0o755)
-    result = runner.invoke(app, ["inspect-browseract", "--executable", str(executable), "--json"])
+    result = runner.invoke(
+        app, ["inspect-browseract", "--executable", str(executable), "--json"]
+    )
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["available"] is True
@@ -517,7 +660,10 @@ def test_probe_acquisition_json_uses_helper(monkeypatch):
                 "recommended_next_adapter": "",
                 "metadata": {},
             },
-            "available_tools": {"contract_version": "acquisition-tools.v1", "tools": []},
+            "available_tools": {
+                "contract_version": "acquisition-tools.v1",
+                "tools": [],
+            },
             "next_action": "use_adapter_output",
         }
 
@@ -548,9 +694,13 @@ def test_probe_acquisition_json_uses_helper(monkeypatch):
     assert payload["attempt"]["status_code"] == 200
 
 
-def test_probe_acquisition_allows_profile_path_without_site_key(tmp_path: Path, monkeypatch):
+def test_probe_acquisition_allows_profile_path_without_site_key(
+    tmp_path: Path, monkeypatch
+):
     profile_path = tmp_path / "profile.yaml"
-    profile = build_default_acquisition_profile("profile-site", allowed_domains=["example.com"])
+    profile = build_default_acquisition_profile(
+        "profile-site", allowed_domains=["example.com"]
+    )
     profile.quality_gates.min_words = 1
     profile.quality_gates.min_links = 1
     profile_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
@@ -579,7 +729,9 @@ def test_probe_acquisition_allows_profile_path_without_site_key(tmp_path: Path, 
 
 def test_probe_acquisition_rejects_profile_path_with_inline_overrides(tmp_path: Path):
     profile_path = tmp_path / "profile.yaml"
-    profile = build_default_acquisition_profile("profile-site", allowed_domains=["example.com"])
+    profile = build_default_acquisition_profile(
+        "profile-site", allowed_domains=["example.com"]
+    )
     profile_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
 
     result = runner.invoke(
@@ -603,7 +755,9 @@ def test_probe_acquisition_rejects_profile_path_with_inline_overrides(tmp_path: 
     assert "allow_stealth_browser" in result.output
 
 
-def test_probe_acquisition_rejects_cloakbrowser_without_explicit_profile_safety(monkeypatch):
+def test_probe_acquisition_rejects_cloakbrowser_without_explicit_profile_safety(
+    monkeypatch,
+):
     monkeypatch.setattr(
         acquisition_tools,
         "build_builtin_adapters",
@@ -630,7 +784,9 @@ def test_probe_acquisition_rejects_cloakbrowser_without_explicit_profile_safety(
     assert "safety.require_authorized_access=true" in result.output
 
 
-def test_probe_acquisition_allows_cloakbrowser_with_authorized_profile_path(tmp_path: Path, monkeypatch):
+def test_probe_acquisition_allows_cloakbrowser_with_authorized_profile_path(
+    tmp_path: Path, monkeypatch
+):
     profile_path = tmp_path / "cloak-profile.yaml"
     profile = build_default_acquisition_profile(
         "profile-site",
@@ -768,7 +924,9 @@ def test_probe_acquisition_closes_built_in_adapters_after_success(monkeypatch):
     assert unused_adapter.closed is True
 
 
-def test_probe_acquisition_closes_built_in_adapters_after_capture_exception(monkeypatch):
+def test_probe_acquisition_closes_built_in_adapters_after_capture_exception(
+    monkeypatch,
+):
     selected_adapter = RaisingCloseRecordingAdapter()
     monkeypatch.setattr(
         acquisition_tools,
@@ -812,7 +970,9 @@ def test_discover_command_reports_saved_paths(tmp_path: Path, monkeypatch):
         report_path.write_text("# Inventory\n", encoding="utf-8")
         return SimpleNamespace(yaml_path=yaml_path, report_path=report_path)
 
-    monkeypatch.setattr("web_listening.blocks.staged_workflow.discover_sections", fake_discover_sections)
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.discover_sections", fake_discover_sections
+    )
 
     result = runner.invoke(
         app,
@@ -847,9 +1007,13 @@ def test_classify_command_reports_saved_paths(tmp_path: Path, monkeypatch):
         report_path.parent.mkdir(parents=True, exist_ok=True)
         yaml_path.write_text("catalog: dev\n", encoding="utf-8")
         report_path.write_text("# Classification\n", encoding="utf-8")
-        return SimpleNamespace(inventory_path=inventory_path, yaml_path=yaml_path, report_path=report_path)
+        return SimpleNamespace(
+            inventory_path=inventory_path, yaml_path=yaml_path, report_path=report_path
+        )
 
-    monkeypatch.setattr("web_listening.blocks.staged_workflow.classify_sections", fake_classify_sections)
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.classify_sections", fake_classify_sections
+    )
 
     result = runner.invoke(
         app,
@@ -1008,7 +1172,9 @@ def test_create_monitor_task_rejects_invalid_site_url(tmp_path: Path, monkeypatc
     assert "site_url must be a valid http or https URL" in result.output
 
 
-def test_list_jobs_and_get_job_commands_render_persisted_job(tmp_path: Path, monkeypatch):
+def test_list_jobs_and_get_job_commands_render_persisted_job(
+    tmp_path: Path, monkeypatch
+):
     monkeypatch.setattr(settings, "db_path", tmp_path / "cli-jobs.db")
 
     storage = Storage(settings.db_path)
@@ -1023,7 +1189,10 @@ def test_list_jobs_and_get_job_commands_render_persisted_job(tmp_path: Path, mon
                 scope_id=7,
                 run_id=11,
                 produced_artifacts={"output_path": str(tmp_path / "report.md")},
-                artifact_summary={"artifact_count": 1, "artifact_keys": ["output_path"]},
+                artifact_summary={
+                    "artifact_count": 1,
+                    "artifact_keys": ["output_path"],
+                },
                 started_at=datetime.now(timezone.utc),
                 finished_at=datetime.now(timezone.utc),
             )
@@ -1049,10 +1218,16 @@ def test_list_jobs_and_get_job_commands_render_persisted_job(tmp_path: Path, mon
     json_payload = json.loads(json_result.output)
     assert json_payload["contract_version"] == "job_delivery.v1"
     assert json_payload["job"]["job_id"] == job.job_id
-    assert json_payload["artifact_contract"]["contract_version"] == "artifact_contract.v1"
+    assert (
+        json_payload["artifact_contract"]["contract_version"] == "artifact_contract.v1"
+    )
     assert json_payload["artifact_contract"]["primary_kind"] == "tracking_report"
-    assert json_payload["artifact_contract"]["primary_path"] == str(tmp_path / "report.md")
-    assert json_payload["artifact_contract"]["path_map"]["output_path"] == str(tmp_path / "report.md")
+    assert json_payload["artifact_contract"]["primary_path"] == str(
+        tmp_path / "report.md"
+    )
+    assert json_payload["artifact_contract"]["path_map"]["output_path"] == str(
+        tmp_path / "report.md"
+    )
 
 
 def test_export_tracking_report_writes_markdown_artifact(tmp_path: Path, monkeypatch):
@@ -1088,7 +1263,9 @@ selected_sections:
         + "\n",
         encoding="utf-8",
     )
-    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_plan = build_monitor_scope(
+        selection_path, classification_path=classification_path
+    )
     scope_path = tmp_path / "monitor_scope.yaml"
     scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
 
@@ -1143,10 +1320,39 @@ notes: []
                 files_changed=1,
             )
         )
-        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": run.id, "is_initialized": True}))
-        page = storage.upsert_tracked_page(scope_id=scope.id, canonical_url="https://example.com/research/page-a", depth=1, run_id=run.id)
-        snapshot = _add_legacy_snapshot(storage, PageSnapshot(scope_id=scope.id, page_id=page.id, run_id=run.id, content_hash="hash-a", final_url="https://example.com/research/page-a"))
-        storage.upsert_tracked_page(scope_id=scope.id, canonical_url="https://example.com/research/page-a", depth=1, run_id=run.id, latest_hash="hash-a", latest_snapshot_id=snapshot.id)
+        storage.update_crawl_scope(
+            CrawlScope(
+                **{
+                    **scope.model_dump(),
+                    "baseline_run_id": run.id,
+                    "is_initialized": True,
+                }
+            )
+        )
+        page = storage.upsert_tracked_page(
+            scope_id=scope.id,
+            canonical_url="https://example.com/research/page-a",
+            depth=1,
+            run_id=run.id,
+        )
+        snapshot = _add_legacy_snapshot(
+            storage,
+            PageSnapshot(
+                scope_id=scope.id,
+                page_id=page.id,
+                run_id=run.id,
+                content_hash="hash-a",
+                final_url="https://example.com/research/page-a",
+            ),
+        )
+        storage.upsert_tracked_page(
+            scope_id=scope.id,
+            canonical_url="https://example.com/research/page-a",
+            depth=1,
+            run_id=run.id,
+            latest_hash="hash-a",
+            latest_snapshot_id=snapshot.id,
+        )
         document = storage.add_document(
             Document(
                 site_id=site.id,
@@ -1160,8 +1366,15 @@ notes: []
                 doc_type="pdf",
             )
         )
-        tracked_file = storage.upsert_tracked_file(scope_id=scope.id, canonical_url="https://example.com/files/report.pdf", run_id=run.id, latest_document_id=document.id, latest_sha256=document.sha256)
-        _add_legacy_observation(storage,
+        tracked_file = storage.upsert_tracked_file(
+            scope_id=scope.id,
+            canonical_url="https://example.com/files/report.pdf",
+            run_id=run.id,
+            latest_document_id=document.id,
+            latest_sha256=document.sha256,
+        )
+        _add_legacy_observation(
+            storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,
@@ -1171,7 +1384,7 @@ notes: []
                 discovered_url=tracked_file.canonical_url,
                 download_url=tracked_file.canonical_url,
                 tracked_local_path="data/downloads/_tracked/example.com/research/page-a/report--abc12345.pdf",
-            )
+            ),
         )
     finally:
         storage.close()
@@ -1199,7 +1412,9 @@ notes: []
     assert "Research Report" in markdown
 
 
-def test_export_tracking_report_honors_explicit_output_path(tmp_path: Path, monkeypatch):
+def test_export_tracking_report_honors_explicit_output_path(
+    tmp_path: Path, monkeypatch
+):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(settings, "db_path", tmp_path / "explicit-report.db")
 
@@ -1232,7 +1447,9 @@ selected_sections:
         + "\n",
         encoding="utf-8",
     )
-    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_plan = build_monitor_scope(
+        selection_path, classification_path=classification_path
+    )
     scope_path = tmp_path / "monitor_scope.yaml"
     scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
 
@@ -1250,8 +1467,23 @@ selected_sections:
                 is_initialized=True,
             )
         )
-        run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed", pages_seen=1))
-        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": run.id, "is_initialized": True}))
+        run = storage.add_crawl_run(
+            CrawlRun(
+                scope_id=scope.id,
+                run_type="bootstrap",
+                status="completed",
+                pages_seen=1,
+            )
+        )
+        storage.update_crawl_scope(
+            CrawlScope(
+                **{
+                    **scope.model_dump(),
+                    "baseline_run_id": run.id,
+                    "is_initialized": True,
+                }
+            )
+        )
     finally:
         storage.close()
 
@@ -1292,7 +1524,9 @@ def test_report_scope_rejects_invalid_format(tmp_path: Path):
     assert "--format must be one of: md, yaml" in result.output
 
 
-def test_report_scope_command_supports_json_delivery_output(tmp_path: Path, monkeypatch):
+def test_report_scope_command_supports_json_delivery_output(
+    tmp_path: Path, monkeypatch
+):
     report_path = tmp_path / "reports" / "tracking_report_demo.md"
     scope_path = tmp_path / "monitor_scope.yaml"
     scope_path.write_text(
@@ -1342,7 +1576,9 @@ notes: []
             report=SimpleNamespace(run_id=34),
         )
 
-    monkeypatch.setattr("web_listening.blocks.staged_workflow.report_scope", fake_report_scope)
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.report_scope", fake_report_scope
+    )
 
     json_result = runner.invoke(
         app,
@@ -1364,14 +1600,20 @@ notes: []
     assert json_payload["artifact_contract"]["primary_path"] == str(report_path)
 
 
-def test_report_scope_command_passes_acquisition_paths_and_records_artifacts(tmp_path: Path, monkeypatch):
+def test_report_scope_command_passes_acquisition_paths_and_records_artifacts(
+    tmp_path: Path, monkeypatch
+):
     monkeypatch.setattr(settings, "db_path", tmp_path / "report-scope-acquisition.db")
     report_path = tmp_path / "reports" / "tracking_report_demo.md"
     scope_path = tmp_path / "monitor_scope.yaml"
     profile_path = tmp_path / "acquisition_profile_demo.yaml"
     capture_attempt_path = tmp_path / "capture_attempt_demo.json"
-    profile_path.write_text("schema_version: acquisition-profile.v1\n", encoding="utf-8")
-    capture_attempt_path.write_text('{"schema_version":"capture-attempt.v1"}\n', encoding="utf-8")
+    profile_path.write_text(
+        "schema_version: acquisition-profile.v1\n", encoding="utf-8"
+    )
+    capture_attempt_path.write_text(
+        '{"schema_version":"capture-attempt.v1"}\n', encoding="utf-8"
+    )
     scope_path.write_text(
         """
 scope_fingerprint: demo
@@ -1421,7 +1663,9 @@ notes: []
             report=SimpleNamespace(run_id=34),
         )
 
-    monkeypatch.setattr("web_listening.blocks.staged_workflow.report_scope", fake_report_scope)
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.report_scope", fake_report_scope
+    )
 
     result = runner.invoke(
         app,
@@ -1441,8 +1685,12 @@ notes: []
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["artifacts"]["produced"]["acquisition_profile_path"] == str(profile_path)
-    assert payload["artifacts"]["produced"]["capture_attempt_path"] == str(capture_attempt_path)
+    assert payload["artifacts"]["produced"]["acquisition_profile_path"] == str(
+        profile_path
+    )
+    assert payload["artifacts"]["produced"]["capture_attempt_path"] == str(
+        capture_attempt_path
+    )
 
 
 def test_bootstrap_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
@@ -1494,12 +1742,19 @@ notes: []
         report_path.write_text("# Bootstrap\n", encoding="utf-8")
         summary_path.write_text("# Summary\n", encoding="utf-8")
         return SimpleNamespace(
+            plan=SimpleNamespace(scope_id=7),
             report_path=report_path,
             summary_path=summary_path,
             results=[SimpleNamespace(status="completed", scope_id=7, run_id=11)],
         )
 
-    monkeypatch.setattr("web_listening.blocks.staged_workflow.bootstrap_scope", fake_bootstrap_scope)
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.prepare_scope_execution",
+        lambda **kwargs: SimpleNamespace(plan=SimpleNamespace(scope_id=7)),
+    )
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.bootstrap_scope", fake_bootstrap_scope
+    )
 
     result = runner.invoke(
         app,
@@ -1547,7 +1802,9 @@ notes: []
     assert json_payload["contract_version"] == "job_delivery.v1"
     assert json_payload["job"]["job_type"] == "scope.bootstrap"
     assert json_payload["artifact_contract"]["primary_path"] == str(report_path)
-    assert json_payload["artifact_contract"]["path_map"]["summary_path"] == str(summary_path)
+    assert json_payload["artifact_contract"]["path_map"]["summary_path"] == str(
+        summary_path
+    )
 
 
 @pytest.mark.parametrize("command", ["bootstrap-scope", "run-scope"])
@@ -1563,7 +1820,9 @@ def test_governed_scope_commands_expose_authority_options(command):
     ("command", "job_type"),
     [("bootstrap-scope", "scope.bootstrap"), ("run-scope", "scope.run")],
 )
-def test_governed_scope_json_parser_errors_are_stable_redacted_and_stdout_only(command, job_type):
+def test_governed_scope_json_parser_errors_are_stable_redacted_and_stdout_only(
+    command, job_type
+):
     canary = "/tmp/SECRET-PARSER-CANARY-scope.yaml"
     args = [command, "--scope-path", canary, "--json"]
 
@@ -1593,7 +1852,10 @@ def test_governed_scope_json_parser_errors_are_stable_redacted_and_stdout_only(c
     [("bootstrap-scope", "scope.bootstrap"), ("run-scope", "scope.run")],
 )
 def test_governed_scope_json_runtime_errors_are_stable_redacted_and_stdout_only(
-    command, job_type, tmp_path: Path, monkeypatch,
+    command,
+    job_type,
+    tmp_path: Path,
+    monkeypatch,
 ):
     canary = f"SECRET-RUNTIME-CANARY:{tmp_path / 'scope.yaml'}"
     scope_path = tmp_path / "scope.yaml"
@@ -1605,8 +1867,8 @@ def test_governed_scope_json_runtime_errors_are_stable_redacted_and_stdout_only(
         raise RuntimeError(canary)
 
     monkeypatch.setattr(
-        "web_listening.blocks.monitor_scope_planner.load_monitor_scope_plan",
-        fail_after_parsing,
+        "web_listening.blocks.staged_workflow.prepare_scope_execution",
+        lambda **kwargs: fail_after_parsing(kwargs["scope_path"]),
     )
     args = [
         command,
@@ -1647,7 +1909,8 @@ def test_governed_scope_json_runtime_errors_are_stable_redacted_and_stdout_only(
 
 
 def test_bootstrap_failed_result_is_generic_runtime_failure_and_is_not_persisted(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ):
     canary = f"SECRET-BOOTSTRAP-CANARY:{tmp_path / 'private-report.md'}"
     scope_path = tmp_path / "scope.yaml"
@@ -1655,17 +1918,23 @@ def test_bootstrap_failed_result_is_generic_runtime_failure_and_is_not_persisted
     scope_path.write_text("site_key: demo\n", encoding="utf-8")
     profile_path.write_text("profile_id: demo\n", encoding="utf-8")
     monkeypatch.setattr(
-        "web_listening.blocks.monitor_scope_planner.load_monitor_scope_plan",
-        lambda path: SimpleNamespace(scope_id=7),
+        "web_listening.blocks.staged_workflow.prepare_scope_execution",
+        lambda **kwargs: SimpleNamespace(plan=SimpleNamespace(scope_id=7)),
     )
     monkeypatch.setattr(
         "web_listening.blocks.staged_workflow.bootstrap_scope",
         lambda **kwargs: SimpleNamespace(
+            plan=SimpleNamespace(scope_id=7),
             report_path=tmp_path / "private-report.md",
             summary_path=None,
-            results=[SimpleNamespace(
-                status="failed", scope_id=7, run_id=11, notes=canary,
-            )],
+            results=[
+                SimpleNamespace(
+                    status="failed",
+                    scope_id=7,
+                    run_id=11,
+                    notes=canary,
+                )
+            ],
         ),
     )
     persisted = []
@@ -1674,8 +1943,12 @@ def test_bootstrap_failed_result_is_generic_runtime_failure_and_is_not_persisted
         lambda **kwargs: persisted.append(kwargs),
     )
     args = [
-        "bootstrap-scope", "--scope-path", str(scope_path),
-        "--acquisition-profile-path", str(profile_path), "--json",
+        "bootstrap-scope",
+        "--scope-path",
+        str(scope_path),
+        "--acquisition-profile-path",
+        str(profile_path),
+        "--json",
     ]
 
     first = runner.invoke(app, args)
@@ -1713,6 +1986,94 @@ def test_governed_scope_human_parser_errors_remain_human(command):
     assert "Usage:" in result.output
     assert not result.output.lstrip().startswith("{")
 
+
+@pytest.mark.parametrize(
+    ("command", "staged_name", "job_type"),
+    [
+        ("bootstrap-scope", "bootstrap_scope", "scope.bootstrap"),
+        ("run-scope", "run_scope", "scope.run"),
+    ],
+)
+def test_scope_cli_prepares_once_and_uses_sealed_artifact_plan(
+    command,
+    staged_name,
+    job_type,
+    tmp_path: Path,
+    monkeypatch,
+):
+    scope_path = tmp_path / "scope.yaml"
+    profile_path = tmp_path / "profile.yaml"
+    scope_path.write_text("original authority", encoding="utf-8")
+    profile_path.write_text("original profile", encoding="utf-8")
+    sealed_plan = SimpleNamespace(scope_id=7)
+    prepared = SimpleNamespace(plan=sealed_plan)
+    prepare_calls = []
+
+    def prepare_once(**kwargs):
+        prepare_calls.append(kwargs)
+        scope_path.write_text("changed authority", encoding="utf-8")
+        profile_path.write_text("changed profile", encoding="utf-8")
+        return prepared
+
+    def execute_once(**kwargs):
+        assert kwargs["prepared"] is prepared
+        if staged_name == "bootstrap_scope":
+            return SimpleNamespace(
+                plan=sealed_plan,
+                report_path=tmp_path / "bootstrap.md",
+                summary_path=None,
+                results=[SimpleNamespace(status="completed", scope_id=7, run_id=11)],
+            )
+        return SimpleNamespace(
+            plan=sealed_plan,
+            report_path=tmp_path / "run.md",
+            result=SimpleNamespace(scope_id=7, run_id=11, status="completed"),
+        )
+
+    monkeypatch.setattr(
+        "web_listening.blocks.monitor_scope_planner.load_monitor_scope_plan",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("preliminary scope load")),
+    )
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.prepare_scope_execution",
+        prepare_once,
+    )
+    monkeypatch.setattr(
+        f"web_listening.blocks.staged_workflow.{staged_name}",
+        execute_once,
+    )
+    persisted = []
+    monkeypatch.setattr(
+        "web_listening.blocks.job_orchestration.persist_job_result",
+        lambda **kwargs: (
+            persisted.append(kwargs)
+            or SimpleNamespace(
+                job_id="job-1",
+                job_type=job_type,
+                status="succeeded",
+                stage="completed",
+                scope_id=7,
+                run_id=11,
+                produced_artifacts={},
+                artifact_contract={"path_map": {}},
+            )
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            command,
+            "--scope-path",
+            str(scope_path),
+            "--acquisition-profile-path",
+            str(profile_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(prepare_calls) == 1
+    assert persisted[0]["scope_id"] == sealed_plan.scope_id
 
 
 def test_run_scope_command_reports_saved_paths(tmp_path: Path, monkeypatch):
@@ -1762,11 +2123,18 @@ notes: []
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("# Run\n", encoding="utf-8")
         return SimpleNamespace(
+            plan=SimpleNamespace(scope_id=5),
             report_path=report_path,
             result=SimpleNamespace(status="completed", scope_id=5, run_id=9),
         )
 
-    monkeypatch.setattr("web_listening.blocks.staged_workflow.run_scope", fake_run_scope)
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.prepare_scope_execution",
+        lambda **kwargs: SimpleNamespace(plan=SimpleNamespace(scope_id=5)),
+    )
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.run_scope", fake_run_scope
+    )
 
     result = runner.invoke(
         app,
@@ -1806,11 +2174,14 @@ notes: []
     assert json_payload["contract_version"] == "job_delivery.v1"
     assert json_payload["job"]["job_type"] == "scope.run"
     assert json_payload["artifact_contract"]["primary_path"] == str(report_path)
-    assert json_payload["artifact_contract"]["path_map"]["report_path"] == str(report_path)
+    assert json_payload["artifact_contract"]["path_map"]["report_path"] == str(
+        report_path
+    )
 
 
-
-def test_export_manifest_writes_json_yaml_and_markdown_artifacts(tmp_path: Path, monkeypatch):
+def test_export_manifest_writes_json_yaml_and_markdown_artifacts(
+    tmp_path: Path, monkeypatch
+):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(settings, "db_path", tmp_path / "manifest.db")
 
@@ -1843,7 +2214,9 @@ selected_sections:
         + "\n",
         encoding="utf-8",
     )
-    scope_plan = build_monitor_scope(selection_path, classification_path=classification_path)
+    scope_plan = build_monitor_scope(
+        selection_path, classification_path=classification_path
+    )
     scope_path = tmp_path / "monitor_scope.yaml"
     scope_path.write_text(render_scope_yaml_text(scope_plan), encoding="utf-8")
 
@@ -1861,9 +2234,30 @@ selected_sections:
                 is_initialized=True,
             )
         )
-        run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed", pages_seen=1, files_seen=1))
-        storage.update_crawl_scope(CrawlScope(**{**scope.model_dump(), "baseline_run_id": run.id, "is_initialized": True}))
-        page = storage.upsert_tracked_page(scope_id=scope.id, canonical_url="https://example.com/research/page-a", depth=1, run_id=run.id)
+        run = storage.add_crawl_run(
+            CrawlRun(
+                scope_id=scope.id,
+                run_type="bootstrap",
+                status="completed",
+                pages_seen=1,
+                files_seen=1,
+            )
+        )
+        storage.update_crawl_scope(
+            CrawlScope(
+                **{
+                    **scope.model_dump(),
+                    "baseline_run_id": run.id,
+                    "is_initialized": True,
+                }
+            )
+        )
+        page = storage.upsert_tracked_page(
+            scope_id=scope.id,
+            canonical_url="https://example.com/research/page-a",
+            depth=1,
+            run_id=run.id,
+        )
         document = storage.add_document(
             Document(
                 site_id=site.id,
@@ -1878,8 +2272,15 @@ selected_sections:
                 doc_type="pdf",
             )
         )
-        tracked_file = storage.upsert_tracked_file(scope_id=scope.id, canonical_url="https://example.com/files/report.pdf", run_id=run.id, latest_document_id=document.id, latest_sha256=document.sha256)
-        _add_legacy_observation(storage,
+        tracked_file = storage.upsert_tracked_file(
+            scope_id=scope.id,
+            canonical_url="https://example.com/files/report.pdf",
+            run_id=run.id,
+            latest_document_id=document.id,
+            latest_sha256=document.sha256,
+        )
+        _add_legacy_observation(
+            storage,
             FileObservation(
                 scope_id=scope.id,
                 run_id=run.id,
@@ -1889,7 +2290,7 @@ selected_sections:
                 discovered_url=tracked_file.canonical_url,
                 download_url=tracked_file.canonical_url,
                 tracked_local_path="data/downloads/_tracked/example.com/research/page-a/report--abc12345.pdf",
-            )
+            ),
         )
     finally:
         storage.close()
@@ -1907,7 +2308,9 @@ selected_sections:
 
     assert result.exit_code == 0
     assert "Saved scope manifest" in result.output
-    written_json = list((tmp_path / "manifests").glob("web_listening_manifest_demo_*.json"))
+    written_json = list(
+        (tmp_path / "manifests").glob("web_listening_manifest_demo_*.json")
+    )
     written_yaml = list((tmp_path / "plans").glob("document_manifest_demo_*.yaml"))
     written_md = list((tmp_path / "reports").glob("document_manifest_demo_*.md"))
     assert len(written_json) == 1
@@ -1918,7 +2321,9 @@ selected_sections:
     assert manifest_payload["artifact_root"] == ".."
     assert manifest_payload["run"]["output_paths"][0].startswith("manifests/")
     assert manifest_payload["run"]["output_paths"][1].startswith("plans/")
-    assert manifest_payload["downloaded_assets"][0]["tracked_path"].endswith("report--abc12345.pdf")
+    assert manifest_payload["downloaded_assets"][0]["tracked_path"].endswith(
+        "report--abc12345.pdf"
+    )
     assert "Research Report" in written_yaml[0].read_text(encoding="utf-8")
     assert "Scope Document Manifest" in written_md[0].read_text(encoding="utf-8")
 
@@ -1939,20 +2344,30 @@ selected_sections:
     assert json_payload["contract_version"] == "job_delivery.v1"
     assert json_payload["job"]["job_type"] == "scope.manifest"
     assert json_payload["artifact_contract"]["primary_kind"] == "web_listening_manifest"
-    assert json_payload["artifact_contract"]["path_map"]["manifest_json_path"].endswith(".json")
+    assert json_payload["artifact_contract"]["path_map"]["manifest_json_path"].endswith(
+        ".json"
+    )
     assert json_payload["artifact_contract"]["path_map"]["yaml_path"].endswith(".yaml")
 
 
-def test_export_manifest_command_passes_acquisition_paths_and_records_artifacts(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(settings, "db_path", tmp_path / "export-manifest-acquisition.db")
+def test_export_manifest_command_passes_acquisition_paths_and_records_artifacts(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(
+        settings, "db_path", tmp_path / "export-manifest-acquisition.db"
+    )
     scope_path = tmp_path / "monitor_scope.yaml"
     profile_path = tmp_path / "acquisition_profile_demo.yaml"
     capture_attempt_path = tmp_path / "capture_attempt_demo.json"
     yaml_path = tmp_path / "plans" / "document_manifest_demo.yaml"
     report_path = tmp_path / "reports" / "document_manifest_demo.md"
     json_path = tmp_path / "manifests" / "web_listening_manifest_demo.json"
-    profile_path.write_text("schema_version: acquisition-profile.v1\n", encoding="utf-8")
-    capture_attempt_path.write_text('{"schema_version":"capture-attempt.v1"}\n', encoding="utf-8")
+    profile_path.write_text(
+        "schema_version: acquisition-profile.v1\n", encoding="utf-8"
+    )
+    capture_attempt_path.write_text(
+        '{"schema_version":"capture-attempt.v1"}\n', encoding="utf-8"
+    )
     scope_path.write_text(
         """
 scope_fingerprint: demo
@@ -2008,7 +2423,9 @@ notes: []
             manifest_json_path=json_path,
         )
 
-    monkeypatch.setattr("web_listening.blocks.staged_workflow.export_manifest", fake_export_manifest)
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.export_manifest", fake_export_manifest
+    )
 
     result = runner.invoke(
         app,
@@ -2032,5 +2449,9 @@ notes: []
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["artifacts"]["produced"]["acquisition_profile_path"] == str(profile_path)
-    assert payload["artifacts"]["produced"]["capture_attempt_path"] == str(capture_attempt_path)
+    assert payload["artifacts"]["produced"]["acquisition_profile_path"] == str(
+        profile_path
+    )
+    assert payload["artifacts"]["produced"]["capture_attempt_path"] == str(
+        capture_attempt_path
+    )

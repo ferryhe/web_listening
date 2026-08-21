@@ -145,6 +145,13 @@ class AccessGatewayResponse:
 
 
 @dataclass(frozen=True)
+class AccessGatewayConsumerContext:
+    """Gateway-owned context for the final non-redirect response."""
+
+    final_url: str
+
+
+@dataclass(frozen=True)
 class AccessGatewayResult(Generic[T]):
     decision: AccessDecision
     response: AccessGatewayResponse | None
@@ -232,6 +239,18 @@ class AccessGateway:
         url: str,
         *,
         consume: Callable[[RawHttpResponse], T],
+    ) -> AccessGatewayResult[T]:
+        """Authorize a request while preserving the raw-only consumer API."""
+        return self.request_with_context(
+            url,
+            consume=lambda raw, _context: consume(raw),
+        )
+
+    def request_with_context(
+        self,
+        url: str,
+        *,
+        consume: Callable[[RawHttpResponse, AccessGatewayConsumerContext], T],
     ) -> AccessGatewayResult[T]:
         """Authorize and perform one manually redirected content request chain."""
         current_url, current_origin = self._normalize_and_gate(url)
@@ -350,7 +369,10 @@ class AccessGateway:
                     status=raw.status,
                     headers=dict(raw.headers),
                 )
-                value = consume(raw)
+                value = consume(
+                    raw,
+                    AccessGatewayConsumerContext(final_url=current_url),
+                )
             finally:
                 _close_response(raw)
             return AccessGatewayResult(
@@ -763,6 +785,7 @@ __all__ = [
     "AccessGateway",
     "AccessGatewayBudgetError",
     "AccessGatewayConfig",
+    "AccessGatewayConsumerContext",
     "AccessGatewayError",
     "AccessGatewayOriginError",
     "AccessGatewayPolicyError",

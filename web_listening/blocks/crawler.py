@@ -4,9 +4,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
-import httpx
-
-from web_listening.blocks.diff import compute_hash, extract_links, select_compare_artifact
+from web_listening.blocks.diff import (
+    compute_hash,
+    extract_links,
+    select_compare_artifact,
+)
+from web_listening.blocks.governed_read import (
+    GovernedReadGateway,
+    MockClientReadGateway,
+)
 from web_listening.blocks.normalizer import normalize_html
 from web_listening.config import settings
 from web_listening.models import Site, SiteSnapshot
@@ -33,7 +39,9 @@ class FetchResult:
 def normalize_fetch_mode(mode: str | None) -> str:
     resolved = (mode or "http").strip().lower()
     if resolved not in _ALLOWED_FETCH_MODES:
-        raise ValueError(f"Unsupported fetch_mode '{mode}'. Allowed: http, browser, auto.")
+        raise ValueError(
+            f"Unsupported fetch_mode '{mode}'. Allowed: http, browser, auto."
+        )
     if resolved == "auto":
         return "http"
     return resolved
@@ -57,7 +65,11 @@ def resolve_request_headers(fetch_config_json: Optional[dict] = None) -> dict:
     if isinstance(raw_headers, dict):
         headers.update({str(key): str(value) for key, value in raw_headers.items()})
     has_user_agent = any(str(key).lower() == "user-agent" for key in headers)
-    if not has_user_agent or str(config.get("user_agent", "")).strip() or str(config.get("user_agent_profile", "")).strip():
+    if (
+        not has_user_agent
+        or str(config.get("user_agent", "")).strip()
+        or str(config.get("user_agent_profile", "")).strip()
+    ):
         headers["User-Agent"] = resolve_user_agent(fetch_config_json)
     return headers
 
@@ -90,22 +102,53 @@ def _snapshot_from_page(site: Site, page: FetchResult, fetch_mode: str) -> SiteS
 
 
 class HttpCrawler:
-    def __init__(self, client: httpx.Client = None):
-        self.client = client or httpx.Client(
-            timeout=settings.request_timeout,
-            headers={"User-Agent": settings.user_agent},
-            follow_redirects=True,
+    def __init__(
+        self,
+        client=None,
+        *,
+        read_gateway: GovernedReadGateway | MockClientReadGateway | None = None,
+    ):
+        if client is not None and read_gateway is not None:
+            raise ValueError("provide either read_gateway or offline mock client")
+        self.read_gateway = read_gateway or (
+            MockClientReadGateway(
+                client,
+                user_agent=settings.user_agent,
+                max_body_bytes=64 * 1024 * 1024,
+            )
+            if client is not None
+            else None
         )
-        self._owns_client = client is None
 
-    def fetch_page(self, url: str, *, fetch_config_json: Optional[dict] = None) -> FetchResult:
+    def fetch_page(
+        self, url: str, *, fetch_config_json: Optional[dict] = None
+    ) -> FetchResult:
+        if self.read_gateway is None:
+            raise RuntimeError("crawler target reads require a governed AccessGateway")
         request_headers = resolve_request_headers(fetch_config_json)
-        resp = self.client.get(url, headers=request_headers)
-        resp.raise_for_status()
-        normalized = normalize_html(resp.text, base_url=str(resp.url))
+        unsupported_headers = {
+            key: value
+            for key, value in request_headers.items()
+            if key.casefold() != "user-agent"
+        }
+        if unsupported_headers:
+            raise ValueError(
+                "custom request headers are outside frozen gateway identity"
+            )
+        gateway_user_agent = self.read_gateway.user_agent
+        if request_headers.get("User-Agent", gateway_user_agent) != gateway_user_agent:
+            raise ValueError(
+                "request User-Agent does not match frozen gateway identity"
+            )
+        response = self.read_gateway.read(url)
+        text = response.body.decode("utf-8", errors="replace")
+        normalized = normalize_html(text, base_url=response.final_url)
         metadata = dict(normalized.metadata)
         metadata["driver"] = "http"
-        metadata["request_user_agent"] = request_headers.get("User-Agent", settings.user_agent)
+        metadata["request_user_agent"] = gateway_user_agent
+        metadata["access_decision_id"] = response.access_decision.decision_id
+        metadata["access_decision_sha256"] = response.access_decision.decision_sha256
+        metadata["access_reason_code"] = response.access_decision.reason_code
         return FetchResult(
             raw_html=normalized.raw_html,
             cleaned_html=normalized.cleaned_html,
@@ -113,8 +156,8 @@ class HttpCrawler:
             markdown=normalized.markdown,
             fit_markdown=normalized.fit_markdown,
             metadata_json=metadata,
-            final_url=str(resp.url),
-            status_code=resp.status_code,
+            final_url=response.final_url,
+            status_code=response.status_code,
         )
 
     def fetch(self, url: str) -> Tuple[str, str]:
@@ -123,13 +166,14 @@ class HttpCrawler:
 
     def snapshot(self, site: Site) -> SiteSnapshot:
         if site.id is None:
-            raise ValueError("site.id must not be None — persist the site with Storage.add_site() before snapshotting")
+            raise ValueError(
+                "site.id must not be None — persist the site with Storage.add_site() before snapshotting"
+            )
         page = self.fetch_page(site.url, fetch_config_json=site.fetch_config_json)
         return _snapshot_from_page(site, page, fetch_mode="http")
 
     def close(self) -> None:
-        if self._owns_client:
-            self.client.close()
+        return None
 
     def __enter__(self) -> "HttpCrawler":
         return self
@@ -139,52 +183,12 @@ class HttpCrawler:
 
 
 class BrowserCrawler:
-    def fetch_page(self, url: str, *, fetch_config_json: Optional[dict] = None) -> FetchResult:
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as exc:  # pragma: no cover - optional dependency
-            raise RuntimeError(
-                "Browser crawling requires Playwright. Install it with `pip install -e \".[browser]\"` "
-                "and run `playwright install chromium`."
-            ) from exc
-
-        config = fetch_config_json or {}
-        timeout_ms = int(config.get("timeout_ms", settings.request_timeout * 1000))
-        wait_until = config.get("wait_until", "load")
-        wait_for_selector = config.get("wait_for")
-        extra_wait_ms = int(config.get("extra_wait_ms", 0))
-        headless = bool(config.get("headless", True))
-
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=headless)
-            try:
-                page = browser.new_page(user_agent=resolve_user_agent(fetch_config_json))
-                response = page.goto(url, wait_until=wait_until, timeout=timeout_ms)
-                if wait_for_selector:
-                    page.wait_for_selector(wait_for_selector, timeout=timeout_ms)
-                if extra_wait_ms > 0:
-                    page.wait_for_timeout(extra_wait_ms)
-                html = page.content()
-                final_url = page.url
-                status_code = response.status if response else None
-            finally:
-                browser.close()
-
-        normalized = normalize_html(html, base_url=final_url or url)
-        metadata = dict(normalized.metadata)
-        metadata["driver"] = "browser"
-        metadata["request_user_agent"] = resolve_user_agent(fetch_config_json)
-        metadata["wait_until"] = wait_until
-        metadata["wait_for"] = wait_for_selector or ""
-        return FetchResult(
-            raw_html=normalized.raw_html,
-            cleaned_html=normalized.cleaned_html,
-            content_text=normalized.content_text,
-            markdown=normalized.markdown,
-            fit_markdown=normalized.fit_markdown,
-            metadata_json=metadata,
-            final_url=final_url or url,
-            status_code=status_code,
+    def fetch_page(
+        self, url: str, *, fetch_config_json: Optional[dict] = None
+    ) -> FetchResult:
+        del url, fetch_config_json
+        raise RuntimeError(
+            "direct browser target reads are disabled; use the governed HTTP AccessGateway"
         )
 
     def fetch(self, url: str) -> Tuple[str, str]:
@@ -193,7 +197,9 @@ class BrowserCrawler:
 
     def snapshot(self, site: Site) -> SiteSnapshot:
         if site.id is None:
-            raise ValueError("site.id must not be None — persist the site with Storage.add_site() before snapshotting")
+            raise ValueError(
+                "site.id must not be None — persist the site with Storage.add_site() before snapshotting"
+            )
         page = self.fetch_page(site.url, fetch_config_json=site.fetch_config_json)
         return _snapshot_from_page(site, page, fetch_mode="browser")
 
@@ -208,9 +214,15 @@ class BrowserCrawler:
 
 
 class Crawler:
-    def __init__(self, client: httpx.Client = None, fetch_mode: str = "http"):
+    def __init__(
+        self,
+        client=None,
+        fetch_mode: str = "http",
+        *,
+        read_gateway: GovernedReadGateway | None = None,
+    ):
         self.fetch_mode = normalize_fetch_mode(fetch_mode)
-        self.http_crawler = HttpCrawler(client=client)
+        self.http_crawler = HttpCrawler(client=client, read_gateway=read_gateway)
         self.browser_crawler: Optional[BrowserCrawler] = None
 
     def _get_driver(self, fetch_mode: str):
@@ -221,11 +233,25 @@ class Crawler:
             return self.browser_crawler
         return self.http_crawler
 
-    def fetch(self, url: str, *, fetch_mode: Optional[str] = None, fetch_config_json: Optional[dict] = None) -> Tuple[str, str]:
-        page = self.fetch_page(url, fetch_mode=fetch_mode, fetch_config_json=fetch_config_json)
+    def fetch(
+        self,
+        url: str,
+        *,
+        fetch_mode: Optional[str] = None,
+        fetch_config_json: Optional[dict] = None,
+    ) -> Tuple[str, str]:
+        page = self.fetch_page(
+            url, fetch_mode=fetch_mode, fetch_config_json=fetch_config_json
+        )
         return page.raw_html, page.content_text
 
-    def fetch_page(self, url: str, *, fetch_mode: Optional[str] = None, fetch_config_json: Optional[dict] = None) -> FetchResult:
+    def fetch_page(
+        self,
+        url: str,
+        *,
+        fetch_mode: Optional[str] = None,
+        fetch_config_json: Optional[dict] = None,
+    ) -> FetchResult:
         driver = self._get_driver(fetch_mode or self.fetch_mode)
         return driver.fetch_page(url, fetch_config_json=fetch_config_json)
 

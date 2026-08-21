@@ -8,8 +8,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from web_listening.executors.subprocess_runner import SubprocessAcquisitionExecutor, SubprocessLimits
-from web_listening.executors.browseract_wrapper import BrowserActCommandError, run_bounded_browseract_command
+from web_listening.contracts import CaptureRequest, CaptureResult
+from web_listening.executors.subprocess_runner import (
+    SubprocessAcquisitionExecutor,
+    SubprocessLimits,
+)
+from web_listening.executors.browseract_wrapper import (
+    BrowserActCommandError,
+    execute as reject_target_execution,
+    run_bounded_browseract_command,
+)
 
 
 BROWSERACT_VERSION = "1.0.6"
@@ -23,8 +31,20 @@ _RUNTIME_PROBE = (
     "'sys_prefix':sys.prefix,'package_version':importlib.metadata.version('browser-act-cli')}))"
 )
 _HELP_PROBES = (
-    (("--help",), ("--format {json,text}", "stealth-extract <url>", "browser open <id>",
-                    "wait stable", "get html", "get markdown", "state", "scroll <direction>", "session close")),
+    (
+        ("--help",),
+        (
+            "--format {json,text}",
+            "stealth-extract <url>",
+            "browser open <id>",
+            "wait stable",
+            "get html",
+            "get markdown",
+            "state",
+            "scroll <direction>",
+            "session close",
+        ),
+    ),
     (("stealth-extract", "--help"), ("--content-type", "--timeout", "--render-wait")),
     (("browser", "--help"), ("open",)),
     (("wait", "--help"), ("stable", "--timeout")),
@@ -38,18 +58,40 @@ _HELP_PROBES = (
 class BrowserActExecutor(SubprocessAcquisitionExecutor):
     """Trusted CaptureRequest gateway for one validated BrowserAct installation."""
 
-    def __init__(self, executable: str | Path, *, project_prefix: str | Path | None = None,
-                 limits: SubprocessLimits | None = None) -> None:
-        inspection = inspect_browseract(executable, project_prefix=project_prefix or sys.prefix)
+    def __init__(
+        self,
+        executable: str | Path,
+        *,
+        project_prefix: str | Path | None = None,
+        limits: SubprocessLimits | None = None,
+    ) -> None:
+        inspection = inspect_browseract(
+            executable, project_prefix=project_prefix or sys.prefix
+        )
         if not inspection["available"]:
             codes = ", ".join(item["code"] for item in inspection["errors"])
             raise RuntimeError(f"BrowserAct handshake rejected: {codes}")
         resolved = inspection["resolved_executable"]
-        super().__init__("browseract", (sys.executable, "-m", "web_listening.executors.browseract_wrapper", resolved), limits=limits)
+        super().__init__(
+            "browseract",
+            (
+                sys.executable,
+                "-m",
+                "web_listening.executors.browseract_wrapper",
+                resolved,
+            ),
+            limits=limits,
+        )
         self.inspection = inspection
 
+    def execute(self, request: CaptureRequest) -> CaptureResult:
+        """Reject target reads locally without spawning the wrapper process."""
+        return reject_target_execution(request, "")
 
-def discover_browseract(executable: str | Path | None = None, *, search_path: str | None = None) -> Path | None:
+
+def discover_browseract(
+    executable: str | Path | None = None, *, search_path: str | None = None
+) -> Path | None:
     """Resolve BrowserAct without consulting the ambient process PATH."""
     if executable is not None:
         candidate = Path(executable)
@@ -68,51 +110,101 @@ def discover_browseract(executable: str | Path | None = None, *, search_path: st
     return None
 
 
-def inspect_browseract(executable: str | Path | None = None, *, search_path: str | None = None,
-                       project_prefix: str | Path | None = None, timeout_seconds: float = 5.0) -> dict[str, Any]:
+def inspect_browseract(
+    executable: str | Path | None = None,
+    *,
+    search_path: str | None = None,
+    project_prefix: str | Path | None = None,
+    timeout_seconds: float = 5.0,
+) -> dict[str, Any]:
     requested = str(executable or "")
     try:
         resolved = discover_browseract(executable, search_path=search_path)
     except (OSError, ValueError):
-        return _unavailable(requested, "invalid_executable", "BrowserAct executable path is invalid")
+        return _unavailable(
+            requested, "invalid_executable", "BrowserAct executable path is invalid"
+        )
     if resolved is None:
-        return _unavailable(requested, "executable_not_found", "BrowserAct executable was not found")
+        return _unavailable(
+            requested, "executable_not_found", "BrowserAct executable was not found"
+        )
     try:
         interpreter = _read_shebang(resolved)
     except (OSError, ValueError):
-        return _unavailable(requested, "invalid_shebang", "BrowserAct executable has an invalid shebang", resolved)
+        return _unavailable(
+            requested,
+            "invalid_shebang",
+            "BrowserAct executable has an invalid shebang",
+            resolved,
+        )
     env = {"PATH": search_path or "", "LANG": "C", "LC_ALL": "C"}
     try:
         version_result = _run((str(resolved), "--version"), timeout_seconds, env)
-        runtime_result = _run((str(interpreter), "-I", "-c", _RUNTIME_PROBE), timeout_seconds, env)
+        runtime_result = _run(
+            (str(interpreter), "-I", "-c", _RUNTIME_PROBE), timeout_seconds, env
+        )
     except (OSError, subprocess.TimeoutExpired, BrowserActCommandError):
-        return _unavailable(requested, "handshake_failed", "BrowserAct identity probe failed", resolved)
-    if version_result.returncode or not _VERSION_RE.fullmatch(version_result.stdout.strip()):
-        return _unavailable(requested, "browseract_version_mismatch", f"BrowserAct {BROWSERACT_VERSION} is required", resolved)
+        return _unavailable(
+            requested, "handshake_failed", "BrowserAct identity probe failed", resolved
+        )
+    if version_result.returncode or not _VERSION_RE.fullmatch(
+        version_result.stdout.strip()
+    ):
+        return _unavailable(
+            requested,
+            "browseract_version_mismatch",
+            f"BrowserAct {BROWSERACT_VERSION} is required",
+            resolved,
+        )
     try:
-        runtime = json.loads(runtime_result.stdout, object_pairs_hook=_unique_json_object)
+        runtime = json.loads(
+            runtime_result.stdout, object_pairs_hook=_unique_json_object
+        )
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
         runtime = None
-    errors = _validate_runtime(runtime, resolved, interpreter, project_prefix, runtime_result.returncode)
+    errors = _validate_runtime(
+        runtime, resolved, interpreter, project_prefix, runtime_result.returncode
+    )
     if not errors:
         try:
             for argv, required in _HELP_PROBES:
                 probe = _run((str(resolved), *argv), timeout_seconds, env)
-                if probe.returncode or any(token not in probe.stdout for token in required):
-                    errors.append({"code": "missing_capabilities", "message": "required read-only BrowserAct command surface is missing"})
+                if probe.returncode or any(
+                    token not in probe.stdout for token in required
+                ):
+                    errors.append(
+                        {
+                            "code": "missing_capabilities",
+                            "message": "required read-only BrowserAct command surface is missing",
+                        }
+                    )
                     break
         except (OSError, subprocess.TimeoutExpired, BrowserActCommandError):
-            errors.append({"code": "capability_probe_failed", "message": "BrowserAct help probe failed"})
+            errors.append(
+                {
+                    "code": "capability_probe_failed",
+                    "message": "BrowserAct help probe failed",
+                }
+            )
     available = not errors
     return {
-        "schema_version": INSPECTION_CONTRACT, "available": available,
-        "requested_executable": "", "resolved_executable": str(resolved) if available else "",
-        "browseract_version": BROWSERACT_VERSION if _VERSION_RE.fullmatch(version_result.stdout.strip()) else "",
-        "python_version": runtime.get("python_version", "") if isinstance(runtime, dict) else "",
+        "schema_version": INSPECTION_CONTRACT,
+        "available": available,
+        "requested_executable": "",
+        "resolved_executable": str(resolved) if available else "",
+        "browseract_version": BROWSERACT_VERSION
+        if _VERSION_RE.fullmatch(version_result.stdout.strip())
+        else "",
+        "python_version": runtime.get("python_version", "")
+        if isinstance(runtime, dict)
+        else "",
         "python_executable": str(interpreter) if available else "",
-        "sys_prefix": runtime.get("sys_prefix", "") if available and isinstance(runtime, dict) else "",
+        "sys_prefix": runtime.get("sys_prefix", "")
+        if available and isinstance(runtime, dict)
+        else "",
         "capabilities": sorted(REQUIRED_CAPABILITIES) if not errors else [],
-        "read_only": available, "errors": errors,
+        "read_only": available,
+        "errors": errors,
     }
 
 
@@ -130,28 +222,65 @@ def _read_shebang(executable: Path) -> Path:
     return interpreter.absolute()
 
 
-def _validate_runtime(payload: object, executable: Path, interpreter: Path,
-                      project_prefix: str | Path | None, returncode: int) -> list[dict[str, str]]:
+def _validate_runtime(
+    payload: object,
+    executable: Path,
+    interpreter: Path,
+    project_prefix: str | Path | None,
+    returncode: int,
+) -> list[dict[str, str]]:
     errors: list[dict[str, str]] = []
     if returncode or not isinstance(payload, dict):
-        return [{"code": "invalid_runtime_probe", "message": "tool runtime identity is invalid"}]
+        return [
+            {
+                "code": "invalid_runtime_probe",
+                "message": "tool runtime identity is invalid",
+            }
+        ]
     prefix_value = payload.get("sys_prefix")
     prefix = Path(prefix_value) if isinstance(prefix_value, str) else Path()
     checks = (
-        (payload.get("python_version") == PYTHON_VERSION, "python_version_mismatch", "Python 3.12 is required"),
-        (payload.get("package_version") == BROWSERACT_VERSION, "package_version_mismatch", f"browser-act-cli {BROWSERACT_VERSION} is required"),
-        (isinstance(prefix_value, str) and prefix.is_absolute(), "invalid_sys_prefix", "tool sys.prefix must be absolute"),
+        (
+            payload.get("python_version") == PYTHON_VERSION,
+            "python_version_mismatch",
+            "Python 3.12 is required",
+        ),
+        (
+            payload.get("package_version") == BROWSERACT_VERSION,
+            "package_version_mismatch",
+            f"browser-act-cli {BROWSERACT_VERSION} is required",
+        ),
+        (
+            isinstance(prefix_value, str) and prefix.is_absolute(),
+            "invalid_sys_prefix",
+            "tool sys.prefix must be absolute",
+        ),
     )
     for condition, code, message in checks:
         if not condition:
             errors.append({"code": code, "message": message})
     if prefix.is_absolute():
         if not _lexically_within(interpreter, prefix):
-            errors.append({"code": "interpreter_outside_prefix", "message": "shebang interpreter must be under tool sys.prefix"})
+            errors.append(
+                {
+                    "code": "interpreter_outside_prefix",
+                    "message": "shebang interpreter must be under tool sys.prefix",
+                }
+            )
         if not _lexically_within(executable, prefix):
-            errors.append({"code": "executable_outside_prefix", "message": "BrowserAct executable must be under tool sys.prefix"})
+            errors.append(
+                {
+                    "code": "executable_outside_prefix",
+                    "message": "BrowserAct executable must be under tool sys.prefix",
+                }
+            )
         if project_prefix and _same_lexical_path(prefix, Path(project_prefix)):
-            errors.append({"code": "project_environment_reused", "message": "BrowserAct must use an isolated environment"})
+            errors.append(
+                {
+                    "code": "project_environment_reused",
+                    "message": "BrowserAct must use an isolated environment",
+                }
+            )
     return errors
 
 
@@ -168,11 +297,22 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _unavailable(requested: str, code: str, message: str, resolved: Path | None = None) -> dict[str, Any]:
-    return {"schema_version": INSPECTION_CONTRACT, "available": False, "requested_executable": "",
-            "resolved_executable": "", "browseract_version": "", "python_version": "",
-            "python_executable": "", "sys_prefix": "", "capabilities": [], "read_only": False,
-            "errors": [{"code": code, "message": message}]}
+def _unavailable(
+    requested: str, code: str, message: str, resolved: Path | None = None
+) -> dict[str, Any]:
+    return {
+        "schema_version": INSPECTION_CONTRACT,
+        "available": False,
+        "requested_executable": "",
+        "resolved_executable": "",
+        "browseract_version": "",
+        "python_version": "",
+        "python_executable": "",
+        "sys_prefix": "",
+        "capabilities": [],
+        "read_only": False,
+        "errors": [{"code": code, "message": message}],
+    }
 
 
 def _is_executable(path: Path) -> bool:
@@ -180,7 +320,9 @@ def _is_executable(path: Path) -> bool:
 
 
 def _same_lexical_path(left: Path, right: Path) -> bool:
-    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(
+        os.path.abspath(right)
+    )
 
 
 def _lexically_within(child: Path, parent: Path) -> bool:
@@ -191,4 +333,12 @@ def _lexically_within(child: Path, parent: Path) -> bool:
         return False
 
 
-__all__ = ["BROWSERACT_VERSION", "BrowserActExecutor", "INSPECTION_CONTRACT", "PYTHON_VERSION", "REQUIRED_CAPABILITIES", "discover_browseract", "inspect_browseract"]
+__all__ = [
+    "BROWSERACT_VERSION",
+    "BrowserActExecutor",
+    "INSPECTION_CONTRACT",
+    "PYTHON_VERSION",
+    "REQUIRED_CAPABILITIES",
+    "discover_browseract",
+    "inspect_browseract",
+]

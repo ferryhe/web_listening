@@ -7,10 +7,13 @@ from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlsplit
 
-from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, load_monitor_scope_plan
+from web_listening.blocks.monitor_scope_planner import (
+    MonitorScopePlan,
+    load_monitor_scope_plan,
+)
 from web_listening.blocks.scope_lookup import find_scope_for_plan
 from web_listening.blocks.storage import Storage
-from web_listening.models import CrawlRun, CrawlScope, Site
+from web_listening.models import CrawlRun, CrawlScope
 
 
 @dataclass(slots=True)
@@ -95,10 +98,14 @@ def _covers(prefix: str, candidate: str) -> bool:
         return False
     if normalized_prefix == "/":
         return True
-    return normalized_candidate == normalized_prefix or normalized_candidate.startswith(normalized_prefix + "/")
+    return normalized_candidate == normalized_prefix or normalized_candidate.startswith(
+        normalized_prefix + "/"
+    )
 
 
-def _count_for_prefix(prefix: str, page_urls: Iterable[str], file_source_urls: Iterable[str]) -> tuple[int, int]:
+def _count_for_prefix(
+    prefix: str, page_urls: Iterable[str], file_source_urls: Iterable[str]
+) -> tuple[int, int]:
     page_count = 0
     file_count = 0
     for url in page_urls:
@@ -110,14 +117,20 @@ def _count_for_prefix(prefix: str, page_urls: Iterable[str], file_source_urls: I
     return page_count, file_count
 
 
-def _compute_truncation(scope: CrawlScope, run: CrawlRun, page_count: int, file_count: int) -> tuple[bool, list[str]]:
+def _compute_truncation(
+    scope: CrawlScope, run: CrawlRun, page_count: int, file_count: int
+) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     pages_seen = max(run.pages_seen or 0, page_count)
     files_seen = max(run.files_seen or 0, file_count)
     if scope.max_pages > 0 and pages_seen >= scope.max_pages:
-        reasons.append(f"Reached page budget (`{pages_seen}` seen / max `{scope.max_pages}`).")
+        reasons.append(
+            f"Reached page budget (`{pages_seen}` seen / max `{scope.max_pages}`)."
+        )
     if scope.max_files > 0 and files_seen >= scope.max_files:
-        reasons.append(f"Reached file budget (`{files_seen}` seen / max `{scope.max_files}`).")
+        reasons.append(
+            f"Reached file budget (`{files_seen}` seen / max `{scope.max_files}`)."
+        )
     return bool(reasons), reasons
 
 
@@ -135,7 +148,11 @@ def _compute_selected_low_coverage(
     return _dedupe(low_coverage)
 
 
-def _compute_unselected_candidates(selected_roots: list[str], selected_focus_prefixes: list[str], observed_level2: Iterable[str]) -> list[str]:
+def _compute_unselected_candidates(
+    selected_roots: list[str],
+    selected_focus_prefixes: list[str],
+    observed_level2: Iterable[str],
+) -> list[str]:
     candidates: list[str] = []
     for path in observed_level2:
         if any(_covers(prefix, path) for prefix in selected_focus_prefixes):
@@ -156,14 +173,21 @@ def _compute_followups(
     followups: list[str] = []
     if truncated_by_budget:
         followups.append(
-            "Review crawl budget before trusting this baseline: " + "; ".join(truncation_reasons)
+            "Review crawl budget before trusting this baseline: "
+            + "; ".join(truncation_reasons)
         )
     for prefix in selected_but_low_coverage_prefixes:
-        followups.append(f"Recheck selected prefix `{prefix}` because the bootstrap run captured no pages or files there.")
+        followups.append(
+            f"Recheck selected prefix `{prefix}` because the bootstrap run captured no pages or files there."
+        )
     for prefix in discovered_but_unselected_candidates:
-        followups.append(f"Review discovered branch `{prefix}` as a possible focus-prefix follow-up.")
+        followups.append(
+            f"Review discovered branch `{prefix}` as a possible focus-prefix follow-up."
+        )
     if not followups:
-        followups.append("No immediate follow-up required; captured baseline evidence looks consistent with the selected scope.")
+        followups.append(
+            "No immediate follow-up required; captured baseline evidence looks consistent with the selected scope."
+        )
     return followups
 
 
@@ -184,8 +208,15 @@ def _baseline_confidence(
     return "high"
 
 
-def _render_directory_counts(paths: list[str], page_counts: Counter[str], file_counts: Counter[str]) -> list[DirectorySummary]:
-    rows = [DirectorySummary(path=path, pages=page_counts.get(path, 0), files=file_counts.get(path, 0)) for path in paths]
+def _render_directory_counts(
+    paths: list[str], page_counts: Counter[str], file_counts: Counter[str]
+) -> list[DirectorySummary]:
+    rows = [
+        DirectorySummary(
+            path=path, pages=page_counts.get(path, 0), files=file_counts.get(path, 0)
+        )
+        for path in paths
+    ]
     return rows
 
 
@@ -198,19 +229,25 @@ def _narrative_for_summary(
 ) -> list[str]:
     narrative: list[str] = []
     if level1_rows:
-        top_pages = max(level1_rows, key=lambda item: (item.pages, item.files, item.path))
+        top_pages = max(
+            level1_rows, key=lambda item: (item.pages, item.files, item.path)
+        )
         if top_pages.pages > 0:
             narrative.append(
                 f"`{display_name}` 这次基线主要页面密度集中在 `{top_pages.path}`，共抓到 `{top_pages.pages}` 个页面。"
             )
-        top_files_l1 = max(level1_rows, key=lambda item: (item.files, item.pages, item.path))
+        top_files_l1 = max(
+            level1_rows, key=lambda item: (item.files, item.pages, item.path)
+        )
         if top_files_l1.files > 0:
             narrative.append(
                 f"按来源页一级目录看，文件最集中的是 `{top_files_l1.path}`，共发现 `{top_files_l1.files}` 个文件。"
             )
     heavy_l2 = [item for item in level2_rows if item.files > 0]
     if heavy_l2:
-        top_files_l2 = max(heavy_l2, key=lambda item: (item.files, item.pages, item.path))
+        top_files_l2 = max(
+            heavy_l2, key=lambda item: (item.files, item.pages, item.path)
+        )
         narrative.append(
             f"按来源页二级目录看，文件最重的分支是 `{top_files_l2.path}`，共有 `{top_files_l2.files}` 个文件。"
         )
@@ -225,8 +262,10 @@ def summarize_monitor_scope_bootstrap(
     *,
     storage: Storage,
     run_id: int | None = None,
+    plan: MonitorScopePlan | None = None,
 ) -> ScopeBootstrapSummary:
-    plan = load_monitor_scope_plan(scope_path)
+    if plan is None:
+        plan = load_monitor_scope_plan(scope_path)
     site, scope = find_scope_for_plan(storage, plan)
     resolved_run_id = run_id or scope.baseline_run_id
     if resolved_run_id is None:
@@ -238,7 +277,11 @@ def summarize_monitor_scope_bootstrap(
 
     tracked_pages = {page.id: page for page in storage.list_tracked_pages(scope.id)}
     snapshots = storage.list_page_snapshots_for_run(scope.id, resolved_run_id)
-    page_urls = [tracked_pages[snapshot.page_id].canonical_url for snapshot in snapshots if snapshot.page_id in tracked_pages]
+    page_urls = [
+        tracked_pages[snapshot.page_id].canonical_url
+        for snapshot in snapshots
+        if snapshot.page_id in tracked_pages
+    ]
     page_level1 = Counter()
     page_level2 = Counter()
     for url in page_urls:
@@ -261,7 +304,10 @@ def summarize_monitor_scope_bootstrap(
         file_level1[level1] += 1
         file_level2[level2] += 1
         source_pages[page.canonical_url] += 1
-        if observation.tracked_local_path and page.canonical_url not in source_page_paths:
+        if (
+            observation.tracked_local_path
+            and page.canonical_url not in source_page_paths
+        ):
             source_page_paths[page.canonical_url] = observation.tracked_local_path
 
     selected_roots = _dedupe(plan.allowed_page_prefixes)
@@ -271,7 +317,10 @@ def summarize_monitor_scope_bootstrap(
         path
         for path, count in sorted(
             {**page_level2, **file_level2}.items(),
-            key=lambda item: (-max(page_level2.get(item[0], 0), file_level2.get(item[0], 0)), item[0]),
+            key=lambda item: (
+                -max(page_level2.get(item[0], 0), file_level2.get(item[0], 0)),
+                item[0],
+            ),
         )
         if page_level2.get(path, 0) > 0 or file_level2.get(path, 0) > 0
     ]
@@ -279,7 +328,9 @@ def summarize_monitor_scope_bootstrap(
 
     level1_rows = _render_directory_counts(level1_paths, page_level1, file_level1)
     level2_rows = _render_directory_counts(level2_paths, page_level2, file_level2)
-    truncated_by_budget, truncation_reasons = _compute_truncation(scope, run, len(page_urls), len(file_observations))
+    truncated_by_budget, truncation_reasons = _compute_truncation(
+        scope, run, len(page_urls), len(file_observations)
+    )
     selected_but_low_coverage_prefixes = _compute_selected_low_coverage(
         selected_roots,
         focus_l2_paths,
@@ -431,7 +482,9 @@ def render_markdown(summary: ScopeBootstrapSummary) -> str:
             ]
         )
         for row in summary.top_source_pages:
-            lines.append(f"| {row.page_url} | {row.file_count} | {row.sample_tracked_local_path or '-'} |")
+            lines.append(
+                f"| {row.page_url} | {row.file_count} | {row.sample_tracked_local_path or '-'} |"
+            )
 
     lines.extend(
         [

@@ -16,6 +16,13 @@ from rich.panel import Panel
 from rich.table import Table
 from typer.core import TyperGroup
 
+from web_listening.blocks.governed_read import (
+    AccessRejectedError,
+    GOVERNED_READ_RUNTIME_ERRORS,
+    access_rejection_payload,
+    governed_read_failure_payload,
+)
+
 try:
     from typer._click.exceptions import Exit as TyperExit
     from typer._click.exceptions import UsageError as TyperUsageError
@@ -70,26 +77,45 @@ def _parser_failure(command: str, message: str) -> dict[str, object]:
         return {
             "contract_version": schema,
             "job": {
-                "job_id": None, "job_type": payload_key, "status": "failed",
-                "stage": "parser", "stage_message": "invalid command arguments", "progress": 0,
-                "scope_id": None, "run_id": None, "accepted_at": None,
-                "started_at": None, "finished_at": None,
+                "job_id": None,
+                "job_type": payload_key,
+                "status": "failed",
+                "stage": "parser",
+                "stage_message": "invalid command arguments",
+                "progress": 0,
+                "scope_id": None,
+                "run_id": None,
+                "accepted_at": None,
+                "started_at": None,
+                "finished_at": None,
             },
             "error": {
-                "message": "invalid command arguments", "code": "parser.invalid",
-                "detail": {}, "is_retryable": False,
+                "message": "invalid command arguments",
+                "code": "parser.invalid",
+                "detail": {},
+                "is_retryable": False,
             },
             "artifacts": {"produced": {}, "summary": {}},
             "artifact_contract": {
-                "contract_version": "artifact_contract.v1", "primary_key": "",
-                "primary_kind": "", "primary_path": "", "path_keys": [], "path_map": {},
+                "contract_version": "artifact_contract.v1",
+                "primary_key": "",
+                "primary_kind": "",
+                "primary_path": "",
+                "path_keys": [],
+                "path_map": {},
             },
             "next_action": "inspect_job_error",
         }
     if command == "preview-execution-plan":
         return {
-            "schema_version": schema, "ok": False, "plan": None,
-            "error": {"code": "parser.invalid", "field": ".", "message": "invalid command arguments"},
+            "schema_version": schema,
+            "ok": False,
+            "plan": None,
+            "error": {
+                "code": "parser.invalid",
+                "field": ".",
+                "message": "invalid command arguments",
+            },
         }
     failure = {
         "path": ".",
@@ -114,19 +140,32 @@ def _runtime_failure(command: str) -> dict[str, object]:
     return {
         "contract_version": schema,
         "job": {
-            "job_id": None, "job_type": job_type, "status": "failed",
-            "stage": "runtime", "stage_message": "command execution failed", "progress": 0,
-            "scope_id": None, "run_id": None, "accepted_at": None,
-            "started_at": None, "finished_at": None,
+            "job_id": None,
+            "job_type": job_type,
+            "status": "failed",
+            "stage": "runtime",
+            "stage_message": "command execution failed",
+            "progress": 0,
+            "scope_id": None,
+            "run_id": None,
+            "accepted_at": None,
+            "started_at": None,
+            "finished_at": None,
         },
         "error": {
-            "message": "command execution failed", "code": "runtime.failed",
-            "detail": {}, "is_retryable": False,
+            "message": "command execution failed",
+            "code": "runtime.failed",
+            "detail": {},
+            "is_retryable": False,
         },
         "artifacts": {"produced": {}, "summary": {}},
         "artifact_contract": {
-            "contract_version": "artifact_contract.v1", "primary_key": "",
-            "primary_kind": "", "primary_path": "", "path_keys": [], "path_map": {},
+            "contract_version": "artifact_contract.v1",
+            "primary_key": "",
+            "primary_kind": "",
+            "primary_path": "",
+            "path_keys": [],
+            "path_map": {},
         },
         "next_action": "inspect_job_error",
     }
@@ -182,6 +221,16 @@ class _SiteSkillJsonGroup(TyperGroup):
             if standalone_mode:
                 raise SystemExit(2) from None
             return 2
+        except AccessRejectedError as exc:
+            _stable_json(access_rejection_payload(exc))
+            if standalone_mode:
+                raise SystemExit(1) from None
+            return 1
+        except GOVERNED_READ_RUNTIME_ERRORS as exc:
+            _stable_json(governed_read_failure_payload(exc))
+            if standalone_mode:
+                raise SystemExit(1) from None
+            return 1
         except Exception:
             if command not in {"bootstrap-scope", "run-scope"}:
                 raise
@@ -195,7 +244,9 @@ class _SiteSkillJsonGroup(TyperGroup):
         return result
 
 
-app = typer.Typer(help="Web Listening - monitor websites for changes", cls=_SiteSkillJsonGroup)
+app = typer.Typer(
+    help="Web Listening - monitor websites for changes", cls=_SiteSkillJsonGroup
+)
 console = Console(width=200, soft_wrap=True)
 
 
@@ -226,19 +277,21 @@ def _validate_http_url(value: str, *, field_name: str) -> str:
 def _get_storage():
     from web_listening.blocks.storage import Storage
     from web_listening.config import settings
+
     return Storage(settings.db_path)
 
 
 class _DeliveryPayloadJob(Protocol):
-    def to_delivery_payload(self) -> dict[str, object]:
-        ...
+    def to_delivery_payload(self) -> dict[str, object]: ...
 
 
 def _print_job_result(*, human_text: object) -> None:
     console.print(human_text)
 
 
-def _emit_job(job: _DeliveryPayloadJob, *, json_output: bool, human_text: object) -> None:
+def _emit_job(
+    job: _DeliveryPayloadJob, *, json_output: bool, human_text: object
+) -> None:
     if json_output:
         typer.echo(json.dumps(job.to_delivery_payload(), ensure_ascii=False, indent=2))
     else:
@@ -342,10 +395,16 @@ def validate_acquisition_contract_command(
 
 @app.command("diagnose-site")
 def diagnose_site_command(
-    requested_url: str = typer.Option(..., "--url", help="Website URL whose normalized origin will be diagnosed."),
-    site_key: str = typer.Option(..., "--site-key", help="Stable site identifier for the planning evidence."),
+    requested_url: str = typer.Option(
+        ..., "--url", help="Website URL whose normalized origin will be diagnosed."
+    ),
+    site_key: str = typer.Option(
+        ..., "--site-key", help="Stable site identifier for the planning evidence."
+    ),
     allowed_domains: list[str] = typer.Option(
-        ..., "--allowed-domain", help="Operator-supplied allowed host/domain; repeat for more than one."
+        ...,
+        "--allowed-domain",
+        help="Operator-supplied allowed host/domain; repeat for more than one.",
     ),
     allowed_document_origins: list[str] = typer.Option(
         ...,
@@ -353,24 +412,43 @@ def diagnose_site_command(
         help="Exact approved HTTP(S) origin including any non-default port; repeat for more than one.",
     ),
     user_agent: str = typer.Option(
-        "web-listening-bot/1.1", "--user-agent", help="Actual User-Agent used for every diagnostic request."
+        "web-listening-bot/1.1",
+        "--user-agent",
+        help="Actual User-Agent used for every diagnostic request.",
     ),
     product_token: str = typer.Option(
-        "web-listening-bot", "--product-token", help="RFC 9309 product token contained in the User-Agent."
+        "web-listening-bot",
+        "--product-token",
+        help="RFC 9309 product token contained in the User-Agent.",
     ),
     identity_id: str = typer.Option(
-        "web-listening-default", "--identity-id", help="Stable identifier for the exact diagnostic identity."
+        "web-listening-default",
+        "--identity-id",
+        help="Stable identifier for the exact diagnostic identity.",
     ),
     freshness_hours: float = typer.Option(
-        24.0, "--freshness-hours", min=0.01, max=24.0, help="Evidence lifetime; may only tighten the 24-hour default."
+        24.0,
+        "--freshness-hours",
+        min=0.01,
+        max=24.0,
+        help="Evidence lifetime; may only tighten the 24-hour default.",
     ),
-    output: str = typer.Option("", "--output", help="New artifact path; an existing different artifact is never overwritten."),
-    json_output: bool = typer.Option(False, "--json", help="Also emit canonical site-diagnostic.v1 JSON to stdout."),
+    output: str = typer.Option(
+        "",
+        "--output",
+        help="New artifact path; an existing different artifact is never overwritten.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Also emit canonical site-diagnostic.v1 JSON to stdout."
+    ),
 ):
     """Probe robots.txt first and produce bounded sitemap planning evidence."""
     from datetime import timedelta
 
-    from web_listening.blocks.site_diagnostic import diagnose_site, write_site_diagnostic
+    from web_listening.blocks.site_diagnostic import (
+        diagnose_site,
+        write_site_diagnostic,
+    )
     from web_listening.config import settings
     from web_listening.contracts.site_diagnostic import canonical_json
 
@@ -386,9 +464,17 @@ def diagnose_site_command(
             freshness=timedelta(hours=freshness_hours),
         )
         safe_site_key = _safe_filename_component(site_key, fallback="site")
-        safe_diagnostic_id = _safe_filename_component(artifact.diagnostic_id, fallback="diagnostic")
-        output_path = Path(output) if output else (
-            settings.data_dir / "plans" / f"site_diagnostic_{safe_site_key}_{safe_diagnostic_id}.json"
+        safe_diagnostic_id = _safe_filename_component(
+            artifact.diagnostic_id, fallback="diagnostic"
+        )
+        output_path = (
+            Path(output)
+            if output
+            else (
+                settings.data_dir
+                / "plans"
+                / f"site_diagnostic_{safe_site_key}_{safe_diagnostic_id}.json"
+            )
         )
         write_site_diagnostic(artifact, output_path)
     except ValueError as exc:
@@ -396,19 +482,25 @@ def diagnose_site_command(
     if json_output:
         typer.echo(canonical_json(artifact.model_dump(mode="json")))
     else:
-        console.print(Panel(
-            f"[green]Saved site diagnostic[/green]\n"
-            f"Path: {output_path}\n"
-            f"Status: {artifact.diagnostic_status}\n"
-            f"Recommendation: {artifact.recommendation}\n"
-            f"Digest: {artifact.artifact_sha256}"
-        ))
+        console.print(
+            Panel(
+                f"[green]Saved site diagnostic[/green]\n"
+                f"Path: {output_path}\n"
+                f"Status: {artifact.diagnostic_status}\n"
+                f"Recommendation: {artifact.recommendation}\n"
+                f"Digest: {artifact.artifact_sha256}"
+            )
+        )
 
 
 @app.command("list-site-skills")
 def list_site_skills_command(
-    root: Optional[Path] = typer.Option(None, "--root", help="Optional Site Skill registry root."),
-    json_output: bool = typer.Option(False, "--json", help="Emit stable machine-readable JSON."),
+    root: Optional[Path] = typer.Option(
+        None, "--root", help="Optional Site Skill registry root."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit stable machine-readable JSON."
+    ),
 ):
     """List valid and invalid filesystem Site Skill candidates."""
     from web_listening.site_skill_registry import list_site_skills
@@ -422,7 +514,13 @@ def list_site_skills_command(
         for column in ("Site key", "Version", "Package SHA-256", "Valid", "Path"):
             table.add_column(column)
         for skill in skills:
-            table.add_row(str(skill["site_key"] or "-"), str(skill["version"] or "-"), str(skill["package_sha256"]), "yes" if skill["valid"] else "no", str(skill["path"]))
+            table.add_row(
+                str(skill["site_key"] or "-"),
+                str(skill["version"] or "-"),
+                str(skill["package_sha256"]),
+                "yes" if skill["valid"] else "no",
+                str(skill["path"]),
+            )
         console.print(table)
     if any(
         item["code"].startswith("registry.")
@@ -432,7 +530,9 @@ def list_site_skills_command(
         raise typer.Exit(1)
 
 
-def _resolve_or_fail(site_key: str, version: str, package_sha256: str, root: Optional[Path]) -> dict[str, object]:
+def _resolve_or_fail(
+    site_key: str, version: str, package_sha256: str, root: Optional[Path]
+) -> dict[str, object]:
     from web_listening.site_skill_registry import list_site_skills, resolve_site_skill
 
     candidates = list_site_skills(root)
@@ -505,7 +605,9 @@ def _resolve_for_output(
 def inspect_site_skill_command(
     site_key: Optional[str] = typer.Option(None, "--site-key"),
     version: Optional[str] = typer.Option(None, "--version"),
-    package_sha256: Optional[str] = typer.Option(None, "--package-digest", "--package-sha256"),
+    package_sha256: Optional[str] = typer.Option(
+        None, "--package-digest", "--package-sha256"
+    ),
     root: Optional[Path] = typer.Option(None, "--root"),
     json_output: bool = typer.Option(False, "--json"),
 ):
@@ -517,13 +619,19 @@ def inspect_site_skill_command(
         skill = _selector_failure(root, message)
     else:
         skill = _resolve_for_output(
-            site_key or "", version or "", package_sha256 or "", root, json_output=json_output
+            site_key or "",
+            version or "",
+            package_sha256 or "",
+            root,
+            json_output=json_output,
         )
     payload = {"schema_version": "site-skill-inspect.v1", "skill": skill}
     if json_output:
         _stable_json(payload)
     else:
-        console.print(Panel(json.dumps(skill, ensure_ascii=False, indent=2, sort_keys=True)))
+        console.print(
+            Panel(json.dumps(skill, ensure_ascii=False, indent=2, sort_keys=True))
+        )
     if not skill["valid"]:
         raise typer.Exit(1)
 
@@ -533,7 +641,9 @@ def validate_site_skill_command(
     package_path: Optional[Path] = typer.Option(None, "--package-path", exists=False),
     site_key: Optional[str] = typer.Option(None, "--site-key"),
     version: Optional[str] = typer.Option(None, "--version"),
-    package_sha256: Optional[str] = typer.Option(None, "--package-digest", "--package-sha256"),
+    package_sha256: Optional[str] = typer.Option(
+        None, "--package-digest", "--package-sha256"
+    ),
     root: Optional[Path] = typer.Option(None, "--root"),
     json_output: bool = typer.Option(False, "--json"),
 ):
@@ -549,7 +659,9 @@ def validate_site_skill_command(
         _stable_json({"schema_version": "site-skill-validation.v1", "skill": skill})
         raise typer.Exit(1)
     if package_path is None and not all(value is not None for value in selectors):
-        message = "provide --package-path or all of --site-key, --version, --package-digest"
+        message = (
+            "provide --package-path or all of --site-key, --version, --package-digest"
+        )
         if not json_output:
             raise typer.BadParameter(message)
         skill = _selector_failure(root, message)
@@ -570,7 +682,9 @@ def validate_site_skill_command(
     if json_output:
         _stable_json(payload)
     else:
-        console.print(Panel(("VALID" if skill["valid"] else "INVALID") + f"\n{skill['path']}"))
+        console.print(
+            Panel(("VALID" if skill["valid"] else "INVALID") + f"\n{skill['path']}")
+        )
     if not skill["valid"]:
         raise typer.Exit(1)
 
@@ -580,7 +694,9 @@ def add_site(
     url: str = typer.Argument(..., help="URL to monitor"),
     name: str = typer.Option("", "--name", "-n", help="Friendly name"),
     tags: str = typer.Option("", "--tags", "-t", help="Comma-separated tags"),
-    fetch_mode: str = typer.Option("http", "--fetch-mode", help="Fetch mode: http, browser, auto"),
+    fetch_mode: str = typer.Option(
+        "http", "--fetch-mode", help="Fetch mode: http, browser, auto"
+    ),
     fetch_config: str = typer.Option("", "--fetch-config", help="Fetch config as JSON"),
 ):
     """Add a website to monitor."""
@@ -591,7 +707,9 @@ def add_site(
         try:
             fetch_config_json = json.loads(fetch_config)
         except json.JSONDecodeError as exc:
-            raise typer.BadParameter(f"Invalid JSON for --fetch-config: {exc.msg}") from exc
+            raise typer.BadParameter(
+                f"Invalid JSON for --fetch-config: {exc.msg}"
+            ) from exc
     else:
         fetch_config_json = {}
     storage = _get_storage()
@@ -614,7 +732,9 @@ def add_site(
 
 
 @app.command("list-sites")
-def list_sites(all_sites: bool = typer.Option(False, "--all", help="Include inactive sites")):
+def list_sites(
+    all_sites: bool = typer.Option(False, "--all", help="Include inactive sites"),
+):
     """List all monitored sites."""
     storage = _get_storage()
     sites = storage.list_sites(active_only=not all_sites)
@@ -644,11 +764,21 @@ def list_sites(all_sites: bool = typer.Option(False, "--all", help="Include inac
 
 @app.command("check")
 def check(
-    site_id: Optional[int] = typer.Option(None, "--site-id", help="Check specific site"),
+    site_id: Optional[int] = typer.Option(
+        None, "--site-id", help="Check specific site"
+    ),
 ):
-    """Check sites for changes."""
+    """Legacy target checking is disabled; use governed run-scope."""
+    raise typer.BadParameter(
+        "legacy check is disabled; use governed run-scope with complete authority"
+    )
     from web_listening.blocks.crawler import Crawler
-    from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links, select_compare_text
+    from web_listening.blocks.diff import (
+        compute_diff,
+        find_document_links,
+        find_new_links,
+        select_compare_text,
+    )
     from web_listening.models import Change
 
     storage = _get_storage()
@@ -673,7 +803,7 @@ def check(
                     # First snapshot
                     storage.add_snapshot(new_snap)
                     storage.update_site_checked(site.id)
-                    console.print(f"  [green]First snapshot captured[/green]")
+                    console.print("  [green]First snapshot captured[/green]")
                     continue
 
                 # Check content change
@@ -690,46 +820,54 @@ def check(
                     ),
                 )
                 if has_changed:
-                    change = storage.add_change(Change(
-                        site_id=site.id,
-                        detected_at=datetime.now(timezone.utc),
-                        change_type="new_content",
-                        summary=f"Content changed on {site.name}",
-                        diff_snippet=diff_snippet,
-                    ))
+                    change = storage.add_change(
+                        Change(
+                            site_id=site.id,
+                            detected_at=datetime.now(timezone.utc),
+                            change_type="new_content",
+                            summary=f"Content changed on {site.name}",
+                            diff_snippet=diff_snippet,
+                        )
+                    )
                     changes_detected.append(change)
 
                 # Check new links
                 new_links = find_new_links(old_snap.links, new_snap.links)
                 if new_links:
-                    change = storage.add_change(Change(
-                        site_id=site.id,
-                        detected_at=datetime.now(timezone.utc),
-                        change_type="new_links",
-                        summary=f"{len(new_links)} new links found on {site.name}",
-                        diff_snippet="\n".join(new_links[:10]),
-                    ))
+                    change = storage.add_change(
+                        Change(
+                            site_id=site.id,
+                            detected_at=datetime.now(timezone.utc),
+                            change_type="new_links",
+                            summary=f"{len(new_links)} new links found on {site.name}",
+                            diff_snippet="\n".join(new_links[:10]),
+                        )
+                    )
                     changes_detected.append(change)
 
                 # Check new document links
                 doc_links = find_document_links(new_links)
                 if doc_links:
-                    change = storage.add_change(Change(
-                        site_id=site.id,
-                        detected_at=datetime.now(timezone.utc),
-                        change_type="new_document",
-                        summary=f"{len(doc_links)} new document links on {site.name}",
-                        diff_snippet="\n".join(doc_links[:10]),
-                    ))
+                    change = storage.add_change(
+                        Change(
+                            site_id=site.id,
+                            detected_at=datetime.now(timezone.utc),
+                            change_type="new_document",
+                            summary=f"{len(doc_links)} new document links on {site.name}",
+                            diff_snippet="\n".join(doc_links[:10]),
+                        )
+                    )
                     changes_detected.append(change)
 
                 storage.add_snapshot(new_snap)
                 storage.update_site_checked(site.id)
 
                 if changes_detected:
-                    console.print(f"  [yellow]{len(changes_detected)} change(s) detected[/yellow]")
+                    console.print(
+                        f"  [yellow]{len(changes_detected)} change(s) detected[/yellow]"
+                    )
                 else:
-                    console.print(f"  [green]No changes[/green]")
+                    console.print("  [green]No changes[/green]")
 
             except Exception as e:
                 console.print(f"  [red]Error: {e}[/red]")
@@ -740,7 +878,9 @@ def check(
 @app.command("list-changes")
 def list_changes(
     site_id: Optional[int] = typer.Option(None, "--site-id"),
-    since: Optional[str] = typer.Option(None, "--since", help="ISO date, e.g. 2024-01-01"),
+    since: Optional[str] = typer.Option(
+        None, "--since", help="ISO date, e.g. 2024-01-01"
+    ),
 ):
     """Show recorded changes."""
     from dateutil import parser as dtparser
@@ -774,7 +914,10 @@ def download_docs(
     institution: str = typer.Option(..., "--institution"),
     url: Optional[str] = typer.Option(None, "--url", help="Specific document URL"),
 ):
-    """Download documents from a site."""
+    """Legacy direct download is disabled; use governed scoped execution."""
+    raise typer.BadParameter(
+        "legacy download is disabled; use governed scoped execution"
+    )
     from web_listening.blocks.document import DocumentProcessor
 
     storage = _get_storage()
@@ -791,6 +934,7 @@ def download_docs(
         snap = storage.get_latest_snapshot(site_id)
         if snap:
             from web_listening.blocks.diff import find_document_links
+
             urls_to_download = find_document_links(snap.links)
 
     if not urls_to_download:
@@ -802,9 +946,13 @@ def download_docs(
         for doc_url in urls_to_download:
             console.print(f"Downloading: {doc_url}")
             try:
-                doc = proc.process(doc_url, site_id=site_id, institution=institution, page_url=site.url)
+                doc = proc.process(
+                    doc_url, site_id=site_id, institution=institution, page_url=site.url
+                )
                 saved = storage.add_document(doc)
-                console.print(f"  [green]Saved as id={saved.id}[/green] -> {saved.local_path}")
+                console.print(
+                    f"  [green]Saved as id={saved.id}[/green] -> {saved.local_path}"
+                )
             except Exception as e:
                 console.print(f"  [red]Error: {e}[/red]")
 
@@ -840,7 +988,9 @@ def list_docs(institution: Optional[str] = typer.Option(None, "--institution")):
 
 @app.command("analyze")
 def analyze(
-    since: Optional[str] = typer.Option(None, "--since", help="ISO date for period start"),
+    since: Optional[str] = typer.Option(
+        None, "--since", help="ISO date for period start"
+    ),
 ):
     """Run AI analysis on recent changes."""
     from web_listening.blocks.analyzer import Analyzer
@@ -848,12 +998,17 @@ def analyze(
 
     storage = _get_storage()
     period_end = datetime.now(timezone.utc)
-    period_start = dtparser.parse(since) if since else datetime(
-        period_end.year, period_end.month, period_end.day, tzinfo=timezone.utc
+    period_start = (
+        dtparser.parse(since)
+        if since
+        else datetime(
+            period_end.year, period_end.month, period_end.day, tzinfo=timezone.utc
+        )
     )
     # default to last 7 days
     if not since:
         from datetime import timedelta
+
         period_start = period_end - timedelta(days=7)
 
     changes = storage.list_changes(since=period_start)
@@ -862,18 +1017,21 @@ def analyze(
     saved = storage.add_analysis(report)
     storage.close()
 
-    console.print(Panel(
-        f"[bold]Analysis Report[/bold] (id={saved.id})\n"
-        f"Period: {period_start.date()} -> {period_end.date()}\n"
-        f"Changes: {saved.change_count}\n\n"
-        + saved.summary_md,
-        title="Analysis",
-    ))
+    console.print(
+        Panel(
+            f"[bold]Analysis Report[/bold] (id={saved.id})\n"
+            f"Period: {period_start.date()} -> {period_end.date()}\n"
+            f"Changes: {saved.change_count}\n\n" + saved.summary_md,
+            title="Analysis",
+        )
+    )
 
 
 @app.command("list-acquisition-tools")
 def list_acquisition_tools(
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON catalog."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON catalog."
+    ),
 ):
     """List acquisition tool contracts and probe capabilities."""
     from web_listening.blocks.acquisition_tools import acquisition_tools_catalog
@@ -902,16 +1060,35 @@ def list_acquisition_tools(
 
 @app.command("build-acquisition-profile")
 def build_acquisition_profile_command(
-    site_key: str = typer.Option(..., "--site-key", help="Stable site key for the acquisition profile."),
-    allowed_domain: list[str] | None = typer.Option(None, "--allowed-domain", help="Allowed domain; repeat for multiple domains."),
-    allow_stealth_browser: bool = typer.Option(False, "--allow-stealth-browser", help="Permit future authorized stealth-browser use."),
-    require_authorized_access: bool = typer.Option(False, "--require-authorized-access", help="Require explicit authorization for protected access."),
+    site_key: str = typer.Option(
+        ..., "--site-key", help="Stable site key for the acquisition profile."
+    ),
+    allowed_domain: list[str] | None = typer.Option(
+        None, "--allowed-domain", help="Allowed domain; repeat for multiple domains."
+    ),
+    allow_stealth_browser: bool = typer.Option(
+        False,
+        "--allow-stealth-browser",
+        help="Permit future authorized stealth-browser use.",
+    ),
+    require_authorized_access: bool = typer.Option(
+        False,
+        "--require-authorized-access",
+        help="Require explicit authorization for protected access.",
+    ),
     output: str = typer.Option("", "--output", help="Optional YAML output path."),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON payload."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON payload."
+    ),
 ):
     """Build a default acquisition profile control artifact."""
-    from web_listening.blocks.acquisition_profile import AcquisitionProfile, render_acquisition_profile_yaml
-    from web_listening.blocks.acquisition_tools import build_default_acquisition_profile_payload
+    from web_listening.blocks.acquisition_profile import (
+        AcquisitionProfile,
+        render_acquisition_profile_yaml,
+    )
+    from web_listening.blocks.acquisition_tools import (
+        build_default_acquisition_profile_payload,
+    )
 
     output_path = Path(output) if output else None
     payload = build_default_acquisition_profile_payload(
@@ -924,7 +1101,9 @@ def build_acquisition_profile_command(
     profile = AcquisitionProfile(**payload["profile"])
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(render_acquisition_profile_yaml(profile), encoding="utf-8")
+        output_path.write_text(
+            render_acquisition_profile_yaml(profile), encoding="utf-8"
+        )
 
     if json_output:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -933,15 +1112,29 @@ def build_acquisition_profile_command(
     if output_path is not None:
         console.print(Panel(f"[green]Saved acquisition profile:[/green] {output_path}"))
     else:
-        console.print(Panel(f"Built acquisition profile for {profile.site_key}\nNo output path provided."))
+        console.print(
+            Panel(
+                f"Built acquisition profile for {profile.site_key}\nNo output path provided."
+            )
+        )
 
 
 @app.command("inspect-browseract")
 def inspect_browseract_command(
-    executable: str = typer.Option("", "--executable", help="Explicit absolute BrowserAct executable."),
-    search_path: str = typer.Option("", "--path", help="Controlled caller-supplied executable search PATH."),
-    project_prefix: str = typer.Option("", "--project-prefix", help="Project environment prefix that the tool must not reuse."),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable inspection JSON."),
+    executable: str = typer.Option(
+        "", "--executable", help="Explicit absolute BrowserAct executable."
+    ),
+    search_path: str = typer.Option(
+        "", "--path", help="Controlled caller-supplied executable search PATH."
+    ),
+    project_prefix: str = typer.Option(
+        "",
+        "--project-prefix",
+        help="Project environment prefix that the tool must not reuse.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable inspection JSON."
+    ),
 ):
     """Inspect an optional BrowserAct CLI without browser interaction or writes."""
     from web_listening.executors.browseract import inspect_browseract
@@ -955,21 +1148,45 @@ def inspect_browseract_command(
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     status = "available" if payload["available"] else "unavailable"
-    console.print(Panel(f"BrowserAct: {status}\nExecutable: {payload['resolved_executable']}"))
+    console.print(
+        Panel(f"BrowserAct: {status}\nExecutable: {payload['resolved_executable']}")
+    )
 
 
 @app.command("probe-acquisition")
 def probe_acquisition_command(
-    url: str = typer.Option(..., "--url", help="One http/https URL to probe."),
-    site_key: str = typer.Option("", "--site-key", help="Stable site key for a generated probe profile."),
-    profile_path: str = typer.Option("", "--profile-path", help="Optional acquisition profile YAML path."),
+    url: str = typer.Option(
+        ...,
+        "--url",
+        help="Candidate URL; direct target reads require governed scope authority.",
+    ),
+    site_key: str = typer.Option(
+        "", "--site-key", help="Stable site key for a generated probe profile."
+    ),
+    profile_path: str = typer.Option(
+        "", "--profile-path", help="Optional acquisition profile YAML path."
+    ),
     adapter: str = typer.Option("web_http", "--adapter", help="Probe adapter id."),
-    allowed_domain: list[str] | None = typer.Option(None, "--allowed-domain", help="Allowed domain for generated probe profile; repeat for multiple domains."),
-    allow_stealth_browser: bool = typer.Option(False, "--allow-stealth-browser", help="Permit authorized stealth-browser probing for generated probe profile."),
-    require_authorized_access: bool = typer.Option(False, "--require-authorized-access", help="Confirm explicit authorization is required for generated probe profile."),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON probe payload."),
+    allowed_domain: list[str] | None = typer.Option(
+        None,
+        "--allowed-domain",
+        help="Allowed domain for generated probe profile; repeat for multiple domains.",
+    ),
+    allow_stealth_browser: bool = typer.Option(
+        False,
+        "--allow-stealth-browser",
+        help="Permit authorized stealth-browser probing for generated probe profile.",
+    ),
+    require_authorized_access: bool = typer.Option(
+        False,
+        "--require-authorized-access",
+        help="Confirm explicit authorization is required for generated probe profile.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON probe payload."
+    ),
 ):
-    """Probe one URL with a selected acquisition adapter without changing staged workflow execution."""
+    """Inspect candidate adapter evidence; direct target reads are disabled."""
     from web_listening.blocks.acquisition_tools import (
         AcquisitionToolError,
         probe_acquisition_url,
@@ -1005,14 +1222,35 @@ def probe_acquisition_command(
 
 @app.command("preview-execution-plan")
 def preview_execution_plan_command(
-    scope_path: Path = typer.Option(..., "--scope-path", exists=True, file_okay=True, dir_okay=False, readable=True),
-    profile_path: Optional[Path] = typer.Option(None, "--profile-path", exists=True, file_okay=True, dir_okay=False, readable=True),
-    site_skill_root: Optional[Path] = typer.Option(None, "--site-skill-root", exists=True, file_okay=False, dir_okay=True, readable=True),
-    json_output: bool = typer.Option(False, "--json", help="Emit stable machine-readable JSON."),
+    scope_path: Path = typer.Option(
+        ..., "--scope-path", exists=True, file_okay=True, dir_okay=False, readable=True
+    ),
+    profile_path: Optional[Path] = typer.Option(
+        None,
+        "--profile-path",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    site_skill_root: Optional[Path] = typer.Option(
+        None,
+        "--site-skill-root",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit stable machine-readable JSON."
+    ),
 ):
     """Compile a read-only acquisition execution preview without probing runtimes."""
     from web_listening.blocks.acquisition_execution_plan import (
-        AcquisitionExecutionPlanError, compile_acquisition_execution_plan, failure_envelope, preview_envelope,
+        AcquisitionExecutionPlanError,
+        compile_acquisition_execution_plan,
+        failure_envelope,
+        preview_envelope,
     )
     from web_listening.blocks.acquisition_profile import load_acquisition_profile
     from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
@@ -1021,17 +1259,35 @@ def preview_execution_plan_command(
 
     try:
         scope = load_monitor_scope_plan(scope_path, strict_limits=True)
-        governed = any(str(scope.based_on.get(key, "")).strip() for key in (
-            "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
-            "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",
-        ))
-        profile = load_acquisition_profile(profile_path, strict=True) if profile_path else None
+        governed = any(
+            str(scope.based_on.get(key, "")).strip()
+            for key in (
+                "acquisition_profile_id",
+                "site_skill_version",
+                "site_skill_package_sha256",
+                "site_skill_recipe_id",
+                "site_skill_script_sha256",
+                "executor_version",
+            )
+        )
+        profile = (
+            load_acquisition_profile(profile_path, strict=True)
+            if profile_path
+            else None
+        )
         skill = None
         if governed:
-            skill = resolve_site_skill_contract(site_key=scope.site_key,
+            skill = resolve_site_skill_contract(
+                site_key=scope.site_key,
                 version=str(scope.based_on.get("site_skill_version", "")),
-                package_sha256=str(scope.based_on.get("site_skill_package_sha256", "")), root=site_skill_root)
-        payload = preview_envelope(compile_acquisition_execution_plan(scope, profile, skill, default_preview_registry()))
+                package_sha256=str(scope.based_on.get("site_skill_package_sha256", "")),
+                root=site_skill_root,
+            )
+        payload = preview_envelope(
+            compile_acquisition_execution_plan(
+                scope, profile, skill, default_preview_registry()
+            )
+        )
     except AcquisitionExecutionPlanError as exc:
         payload = failure_envelope(exc)
         if json_output:
@@ -1040,7 +1296,9 @@ def preview_execution_plan_command(
             raise typer.BadParameter(str(exc)) from exc
         raise typer.Exit(2)
     except (OSError, ValueError, LookupError) as exc:
-        error = AcquisitionExecutionPlanError("input.invalid", f"preview input is invalid: {type(exc).__name__}")
+        error = AcquisitionExecutionPlanError(
+            "input.invalid", f"preview input is invalid: {type(exc).__name__}"
+        )
         if json_output:
             _stable_json(failure_envelope(error))
         else:
@@ -1065,22 +1323,39 @@ def serve(
 
 @app.command("discover")
 def discover(
-    catalog: str = typer.Option("dev", "--catalog", help="Target catalog: dev, smoke, or all."),
-    site_key: list[str] = typer.Option(None, "--site-key", help="Limit discovery to one or more site keys."),
+    catalog: str = typer.Option(
+        "dev", "--catalog", help="Target catalog: dev, smoke, or all."
+    ),
+    site_key: list[str] = typer.Option(
+        None, "--site-key", help="Limit discovery to one or more site keys."
+    ),
     max_depth: int = typer.Option(3, "--max-depth", help="Shallow discovery depth."),
-    section_depth: int = typer.Option(3, "--section-depth", help="Section aggregation depth."),
-    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional page safety cap."),
-    detect_documents: bool = typer.Option(False, "--detect-documents", help="Also count document links during discovery."),
-    level3_sample_limit: int = typer.Option(2, "--level3-sample-limit", help="Level-3 sampling limit per level-2 branch."),
-    yaml_path: str = typer.Option("", "--yaml-path", help="Optional section inventory YAML output path."),
-    report_path: str = typer.Option("", "--report-path", help="Optional section inventory Markdown report path."),
+    section_depth: int = typer.Option(
+        3, "--section-depth", help="Section aggregation depth."
+    ),
+    max_pages: Optional[int] = typer.Option(
+        None, "--max-pages", help="Optional page safety cap."
+    ),
+    detect_documents: bool = typer.Option(
+        False, "--detect-documents", help="Also count document links during discovery."
+    ),
+    level3_sample_limit: int = typer.Option(
+        2, "--level3-sample-limit", help="Level-3 sampling limit per level-2 branch."
+    ),
+    yaml_path: str = typer.Option(
+        "", "--yaml-path", help="Optional section inventory YAML output path."
+    ),
+    report_path: str = typer.Option(
+        "", "--report-path", help="Optional section inventory Markdown report path."
+    ),
 ):
     """Discover staged workflow site sections and write inventory artifacts."""
     from web_listening.blocks.staged_workflow import discover_sections
 
     artifacts = discover_sections(
         catalog=catalog,
-        site_keys={value.strip().lower() for value in site_key or [] if value.strip()} or None,
+        site_keys={value.strip().lower() for value in site_key or [] if value.strip()}
+        or None,
         discovery_depth=max_depth,
         section_depth=section_depth,
         max_pages=max_pages,
@@ -1098,12 +1373,26 @@ def discover(
 
 @app.command("classify")
 def classify(
-    catalog: str = typer.Option("dev", "--catalog", help="Target catalog: dev, smoke, or all."),
-    inventory_path: str = typer.Option("", "--inventory-path", help="Optional section inventory YAML path."),
-    site_key: list[str] = typer.Option(None, "--site-key", help="Limit classification to one or more site keys."),
-    use_ai: bool = typer.Option(False, "--use-ai", help="Use AI-assisted classification when configured."),
-    yaml_path: str = typer.Option("", "--yaml-path", help="Optional section classification YAML output path."),
-    report_path: str = typer.Option("", "--report-path", help="Optional section classification Markdown report path."),
+    catalog: str = typer.Option(
+        "dev", "--catalog", help="Target catalog: dev, smoke, or all."
+    ),
+    inventory_path: str = typer.Option(
+        "", "--inventory-path", help="Optional section inventory YAML path."
+    ),
+    site_key: list[str] = typer.Option(
+        None, "--site-key", help="Limit classification to one or more site keys."
+    ),
+    use_ai: bool = typer.Option(
+        False, "--use-ai", help="Use AI-assisted classification when configured."
+    ),
+    yaml_path: str = typer.Option(
+        "", "--yaml-path", help="Optional section classification YAML output path."
+    ),
+    report_path: str = typer.Option(
+        "",
+        "--report-path",
+        help="Optional section classification Markdown report path.",
+    ),
 ):
     """Classify discovered sections and write classification artifacts."""
     from web_listening.blocks.staged_workflow import classify_sections
@@ -1111,7 +1400,8 @@ def classify(
     artifacts = classify_sections(
         catalog=catalog,
         inventory_path=inventory_path or None,
-        site_keys={value.strip().lower() for value in site_key or [] if value.strip()} or None,
+        site_keys={value.strip().lower() for value in site_key or [] if value.strip()}
+        or None,
         use_ai=use_ai,
         yaml_path=yaml_path or None,
         report_path=report_path or None,
@@ -1126,7 +1416,9 @@ def classify(
 
 @app.command("select")
 def select(
-    selection_path: str = typer.Option(..., "--selection-path", help="Path to a reviewed section selection artifact."),
+    selection_path: str = typer.Option(
+        ..., "--selection-path", help="Path to a reviewed section selection artifact."
+    ),
 ):
     """Inspect a reviewed selection artifact and expose the chosen path clearly."""
     from web_listening.blocks.staged_workflow import inspect_selection
@@ -1143,14 +1435,34 @@ def select(
 
 @app.command("plan-scope")
 def plan_scope(
-    selection_path: str = typer.Option(..., "--selection-path", help="Path to section_selection.yaml."),
-    classification_path: str = typer.Option("", "--classification-path", help="Optional override for section classification YAML."),
-    file_scope_mode: str = typer.Option("site_root", "--file-scope-mode", help="File scope mode: site_root or selected_pages."),
-    max_depth: Optional[int] = typer.Option(None, "--max-depth", help="Optional max_depth override."),
-    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
-    max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
-    yaml_path: str = typer.Option("", "--yaml-path", help="Optional monitor scope YAML output path."),
-    report_path: str = typer.Option("", "--report-path", help="Optional monitor scope Markdown report path."),
+    selection_path: str = typer.Option(
+        ..., "--selection-path", help="Path to section_selection.yaml."
+    ),
+    classification_path: str = typer.Option(
+        "",
+        "--classification-path",
+        help="Optional override for section classification YAML.",
+    ),
+    file_scope_mode: str = typer.Option(
+        "site_root",
+        "--file-scope-mode",
+        help="File scope mode: site_root or selected_pages.",
+    ),
+    max_depth: Optional[int] = typer.Option(
+        None, "--max-depth", help="Optional max_depth override."
+    ),
+    max_pages: Optional[int] = typer.Option(
+        None, "--max-pages", help="Optional max_pages override."
+    ),
+    max_files: Optional[int] = typer.Option(
+        None, "--max-files", help="Optional max_files override."
+    ),
+    yaml_path: str = typer.Option(
+        "", "--yaml-path", help="Optional monitor scope YAML output path."
+    ),
+    report_path: str = typer.Option(
+        "", "--report-path", help="Optional monitor scope Markdown report path."
+    ),
 ):
     """Compile a reviewed selection into a monitor scope artifact."""
     from web_listening.blocks.staged_workflow import plan_scope as staged_plan_scope
@@ -1175,39 +1487,81 @@ def plan_scope(
 
 @app.command("bootstrap-scope")
 def bootstrap_scope(
-    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
-    download_files: bool = typer.Option(False, "--download-files", help="Download accepted files during bootstrap."),
-    refresh_existing: bool = typer.Option(False, "--refresh-existing", help="Refresh already initialized scopes."),
-    max_depth: Optional[int] = typer.Option(None, "--max-depth", help="Optional max_depth override."),
-    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
-    max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
-    report_path: str = typer.Option("", "--report-path", help="Optional bootstrap Markdown report path."),
-    summary_path: str = typer.Option("", "--summary-path", help="Optional bootstrap summary Markdown path."),
-    include_summary: bool = typer.Option(False, "--include-summary", help="Also export bootstrap scope summary markdown."),
-    acquisition_profile_path: Path = typer.Option(..., "--acquisition-profile-path", exists=True, file_okay=True, dir_okay=False, readable=True, help="Required governed acquisition profile YAML."),
-    site_skill_root: Optional[Path] = typer.Option(None, "--site-skill-root", exists=True, file_okay=False, dir_okay=True, readable=True, help="Explicit Site Skill registry root."),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
+    scope_path: str = typer.Option(
+        ..., "--scope-path", help="Path to monitor_scope.yaml."
+    ),
+    download_files: bool = typer.Option(
+        False, "--download-files", help="Download accepted files during bootstrap."
+    ),
+    refresh_existing: bool = typer.Option(
+        False, "--refresh-existing", help="Refresh already initialized scopes."
+    ),
+    max_depth: Optional[int] = typer.Option(
+        None, "--max-depth", help="Optional max_depth override."
+    ),
+    max_pages: Optional[int] = typer.Option(
+        None, "--max-pages", help="Optional max_pages override."
+    ),
+    max_files: Optional[int] = typer.Option(
+        None, "--max-files", help="Optional max_files override."
+    ),
+    report_path: str = typer.Option(
+        "", "--report-path", help="Optional bootstrap Markdown report path."
+    ),
+    summary_path: str = typer.Option(
+        "", "--summary-path", help="Optional bootstrap summary Markdown path."
+    ),
+    include_summary: bool = typer.Option(
+        False, "--include-summary", help="Also export bootstrap scope summary markdown."
+    ),
+    acquisition_profile_path: Path = typer.Option(
+        ...,
+        "--acquisition-profile-path",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Required governed acquisition profile YAML.",
+    ),
+    site_skill_root: Optional[Path] = typer.Option(
+        None,
+        "--site-skill-root",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Explicit Site Skill registry root.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON delivery payload."
+    ),
 ):
     """Bootstrap a stored monitor scope into the tracking database."""
     from web_listening.blocks.job_orchestration import persist_job_result
-    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
-    from web_listening.blocks.staged_workflow import bootstrap_scope as staged_bootstrap_scope
+    from web_listening.blocks.staged_workflow import (
+        bootstrap_scope as staged_bootstrap_scope,
+    )
+    from web_listening.blocks.staged_workflow import prepare_scope_execution
 
-    plan = load_monitor_scope_plan(scope_path)
     started = datetime.now(timezone.utc)
-    artifacts = staged_bootstrap_scope(
+    prepared = prepare_scope_execution(
+        operation="bootstrap",
         scope_path=scope_path,
-        download_files=download_files,
-        refresh_existing=refresh_existing,
+        acquisition_profile_path=acquisition_profile_path,
         max_depth=max_depth,
         max_pages=max_pages,
         max_files=max_files,
+        site_skill_root=site_skill_root,
+    )
+    artifacts = staged_bootstrap_scope(
+        download_files=download_files,
+        refresh_existing=refresh_existing,
         report_path=report_path or None,
         summary_path=summary_path or None,
         include_summary=include_summary,
-        acquisition_profile_path=acquisition_profile_path,
-        site_skill_root=site_skill_root,
+        prepared=prepared,
     )
+    plan = artifacts.plan
     if any(result.status == "failed" for result in artifacts.results):
         raise RuntimeError("bootstrap scope execution failed")
     first = artifacts.results[0] if artifacts.results else None
@@ -1218,13 +1572,19 @@ def bootstrap_scope(
         produced_artifacts={
             "scope_path": str(scope_path),
             "report_path": str(artifacts.report_path),
-            **({"summary_path": str(artifacts.summary_path)} if artifacts.summary_path else {}),
+            **(
+                {"summary_path": str(artifacts.summary_path)}
+                if artifacts.summary_path
+                else {}
+            ),
         },
         accepted_at=started,
         started_at=started,
         finished_at=datetime.now(timezone.utc),
     )
-    extra_summary = f"\nSummary: {artifacts.summary_path}" if artifacts.summary_path else ""
+    extra_summary = (
+        f"\nSummary: {artifacts.summary_path}" if artifacts.summary_path else ""
+    )
     _emit_job(
         job,
         json_output=json_output,
@@ -1240,33 +1600,69 @@ def bootstrap_scope(
 
 @app.command("run-scope")
 def run_scope(
-    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
-    download_files: bool = typer.Option(False, "--download-files", help="Download accepted files during incremental run."),
-    max_depth: Optional[int] = typer.Option(None, "--max-depth", help="Optional max_depth override."),
-    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Optional max_pages override."),
-    max_files: Optional[int] = typer.Option(None, "--max-files", help="Optional max_files override."),
-    report_path: str = typer.Option("", "--report-path", help="Optional incremental run report path."),
-    acquisition_profile_path: Path = typer.Option(..., "--acquisition-profile-path", exists=True, file_okay=True, dir_okay=False, readable=True, help="Required governed acquisition profile YAML."),
-    site_skill_root: Optional[Path] = typer.Option(None, "--site-skill-root", exists=True, file_okay=False, dir_okay=True, readable=True, help="Explicit Site Skill registry root."),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
+    scope_path: str = typer.Option(
+        ..., "--scope-path", help="Path to monitor_scope.yaml."
+    ),
+    download_files: bool = typer.Option(
+        False,
+        "--download-files",
+        help="Download accepted files during incremental run.",
+    ),
+    max_depth: Optional[int] = typer.Option(
+        None, "--max-depth", help="Optional max_depth override."
+    ),
+    max_pages: Optional[int] = typer.Option(
+        None, "--max-pages", help="Optional max_pages override."
+    ),
+    max_files: Optional[int] = typer.Option(
+        None, "--max-files", help="Optional max_files override."
+    ),
+    report_path: str = typer.Option(
+        "", "--report-path", help="Optional incremental run report path."
+    ),
+    acquisition_profile_path: Path = typer.Option(
+        ...,
+        "--acquisition-profile-path",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Required governed acquisition profile YAML.",
+    ),
+    site_skill_root: Optional[Path] = typer.Option(
+        None,
+        "--site-skill-root",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Explicit Site Skill registry root.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON delivery payload."
+    ),
 ):
     """Run an initialized monitor scope incrementally."""
     from web_listening.blocks.job_orchestration import persist_job_result
-    from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
+    from web_listening.blocks.staged_workflow import prepare_scope_execution
     from web_listening.blocks.staged_workflow import run_scope as staged_run_scope
 
-    plan = load_monitor_scope_plan(scope_path)
     started = datetime.now(timezone.utc)
-    artifacts = staged_run_scope(
+    prepared = prepare_scope_execution(
+        operation="run",
         scope_path=scope_path,
-        download_files=download_files,
+        acquisition_profile_path=acquisition_profile_path,
         max_depth=max_depth,
         max_pages=max_pages,
         max_files=max_files,
-        report_path=report_path or None,
-        acquisition_profile_path=acquisition_profile_path,
         site_skill_root=site_skill_root,
     )
+    artifacts = staged_run_scope(
+        download_files=download_files,
+        report_path=report_path or None,
+        prepared=prepared,
+    )
+    plan = artifacts.plan
     job = persist_job_result(
         job_type="scope.run",
         scope_id=artifacts.result.scope_id or plan.scope_id,
@@ -1294,14 +1690,32 @@ def run_scope(
 
 @app.command("report-scope")
 def report_scope(
-    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
-    task_path: str = typer.Option("", "--task-path", help="Optional monitor_task.yaml path."),
-    run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run."),
+    scope_path: str = typer.Option(
+        ..., "--scope-path", help="Path to monitor_scope.yaml."
+    ),
+    task_path: str = typer.Option(
+        "", "--task-path", help="Optional monitor_task.yaml path."
+    ),
+    run_id: Optional[int] = typer.Option(
+        None, "--run-id", help="Specific run id, defaults to baseline run."
+    ),
     output: str = typer.Option("", "--output", help="Optional explicit output path."),
-    output_format: str = typer.Option("md", "--format", help="Output format: md or yaml."),
-    acquisition_profile_path: str = typer.Option("", "--acquisition-profile-path", help="Optional acquisition profile YAML evidence path."),
-    capture_attempt_path: str = typer.Option("", "--capture-attempt-path", help="Optional capture attempt or probe evidence path."),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
+    output_format: str = typer.Option(
+        "md", "--format", help="Output format: md or yaml."
+    ),
+    acquisition_profile_path: str = typer.Option(
+        "",
+        "--acquisition-profile-path",
+        help="Optional acquisition profile YAML evidence path.",
+    ),
+    capture_attempt_path: str = typer.Option(
+        "",
+        "--capture-attempt-path",
+        help="Optional capture attempt or probe evidence path.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON delivery payload."
+    ),
 ):
     """Export a tracking report for one monitor scope."""
     from web_listening.blocks.job_orchestration import persist_job_result
@@ -1324,8 +1738,16 @@ def report_scope(
         capture_attempt_path=capture_attempt_path or None,
     )
     acquisition_artifacts = {
-        **({"acquisition_profile_path": str(acquisition_profile_path)} if acquisition_profile_path else {}),
-        **({"capture_attempt_path": str(capture_attempt_path)} if capture_attempt_path else {}),
+        **(
+            {"acquisition_profile_path": str(acquisition_profile_path)}
+            if acquisition_profile_path
+            else {}
+        ),
+        **(
+            {"capture_attempt_path": str(capture_attempt_path)}
+            if capture_attempt_path
+            else {}
+        ),
     }
     job = persist_job_result(
         job_type="scope.report",
@@ -1358,19 +1780,43 @@ def report_scope(
 
 @app.command("export-manifest")
 def export_manifest(
-    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml."),
-    run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run."),
-    yaml_path: str = typer.Option("", "--yaml-path", help="Optional manifest YAML output path."),
-    report_path: str = typer.Option("", "--report-path", help="Optional manifest Markdown report path."),
-    manifest_json_path: str = typer.Option("", "--manifest-json-path", help="Optional web-listening-manifest.v1 JSON output path."),
-    acquisition_profile_path: str = typer.Option("", "--acquisition-profile-path", help="Optional acquisition profile YAML evidence path."),
-    capture_attempt_path: str = typer.Option("", "--capture-attempt-path", help="Optional capture attempt or probe evidence path."),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
+    scope_path: str = typer.Option(
+        ..., "--scope-path", help="Path to monitor_scope.yaml."
+    ),
+    run_id: Optional[int] = typer.Option(
+        None, "--run-id", help="Specific run id, defaults to baseline run."
+    ),
+    yaml_path: str = typer.Option(
+        "", "--yaml-path", help="Optional manifest YAML output path."
+    ),
+    report_path: str = typer.Option(
+        "", "--report-path", help="Optional manifest Markdown report path."
+    ),
+    manifest_json_path: str = typer.Option(
+        "",
+        "--manifest-json-path",
+        help="Optional web-listening-manifest.v1 JSON output path.",
+    ),
+    acquisition_profile_path: str = typer.Option(
+        "",
+        "--acquisition-profile-path",
+        help="Optional acquisition profile YAML evidence path.",
+    ),
+    capture_attempt_path: str = typer.Option(
+        "",
+        "--capture-attempt-path",
+        help="Optional capture attempt or probe evidence path.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON delivery payload."
+    ),
 ):
     """Export scope document manifest artifacts."""
     from web_listening.blocks.job_orchestration import persist_job_result
     from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
-    from web_listening.blocks.staged_workflow import export_manifest as staged_export_manifest
+    from web_listening.blocks.staged_workflow import (
+        export_manifest as staged_export_manifest,
+    )
 
     plan = load_monitor_scope_plan(scope_path)
     started = datetime.now(timezone.utc)
@@ -1384,8 +1830,16 @@ def export_manifest(
         capture_attempt_path=capture_attempt_path or None,
     )
     acquisition_artifacts = {
-        **({"acquisition_profile_path": str(acquisition_profile_path)} if acquisition_profile_path else {}),
-        **({"capture_attempt_path": str(capture_attempt_path)} if capture_attempt_path else {}),
+        **(
+            {"acquisition_profile_path": str(acquisition_profile_path)}
+            if acquisition_profile_path
+            else {}
+        ),
+        **(
+            {"capture_attempt_path": str(capture_attempt_path)}
+            if capture_attempt_path
+            else {}
+        ),
     }
     job = persist_job_result(
         job_type="scope.manifest",
@@ -1417,14 +1871,20 @@ def export_manifest(
 
 @app.command("list-jobs")
 def list_jobs(
-    scope_id: Optional[int] = typer.Option(None, "--scope-id", help="Limit to one stored crawl scope."),
+    scope_id: Optional[int] = typer.Option(
+        None, "--scope-id", help="Limit to one stored crawl scope."
+    ),
     job_type: str = typer.Option("", "--job-type", help="Limit to one job type."),
-    limit: int = typer.Option(20, "--limit", min=1, max=200, help="Maximum jobs to display."),
+    limit: int = typer.Option(
+        20, "--limit", min=1, max=200, help="Maximum jobs to display."
+    ),
 ):
     """List persisted staged-workflow jobs."""
     storage = _get_storage()
     try:
-        jobs = storage.list_jobs(scope_id=scope_id, job_type=job_type or None, limit=limit)
+        jobs = storage.list_jobs(
+            scope_id=scope_id, job_type=job_type or None, limit=limit
+        )
     finally:
         storage.close()
 
@@ -1455,7 +1915,9 @@ def list_jobs(
 @app.command("get-job")
 def get_job(
     job_id: int = typer.Argument(..., help="Persisted job id."),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON delivery payload."
+    ),
 ):
     """Show one persisted staged-workflow job and its artifact contract."""
     storage = _get_storage()
@@ -1471,8 +1933,12 @@ def get_job(
         typer.echo(json.dumps(job.to_delivery_payload(), ensure_ascii=False, indent=2))
         return
 
-    artifact_lines = [f"- {key}: {value}" for key, value in sorted(job.produced_artifacts.items())] or ["- <none>"]
-    summary_lines = [f"- {key}: {value}" for key, value in sorted(job.artifact_summary.items())] or ["- <none>"]
+    artifact_lines = [
+        f"- {key}: {value}" for key, value in sorted(job.produced_artifacts.items())
+    ] or ["- <none>"]
+    summary_lines = [
+        f"- {key}: {value}" for key, value in sorted(job.artifact_summary.items())
+    ] or ["- <none>"]
     console.print(
         Panel(
             "\n".join(
@@ -1503,22 +1969,52 @@ def get_job(
 def create_monitor_task(
     task_name: str = typer.Option(..., "--task-name", help="Stable task name"),
     site_url: str = typer.Option(..., "--site-url", help="Target site URL"),
-    task_description: str = typer.Option(..., "--task-description", help="Human-readable task description"),
+    task_description: str = typer.Option(
+        ..., "--task-description", help="Human-readable task description"
+    ),
     goal: str = typer.Option(..., "--goal", help="Primary monitoring goal"),
-    focus_topics: str = typer.Option("", "--focus-topics", help="Comma-separated focus topics"),
-    must_track_prefixes: str = typer.Option("", "--must-track-prefixes", help="Comma-separated path prefixes that should be tracked"),
-    exclude_prefixes: str = typer.Option("", "--exclude-prefixes", help="Comma-separated excluded prefixes"),
-    prefer_file_types: str = typer.Option("", "--prefer-file-types", help="Comma-separated preferred file types"),
-    must_download_patterns: str = typer.Option("", "--must-download-patterns", help="Comma-separated required download patterns"),
-    handoff_requirements: str = typer.Option("", "--handoff-requirements", help="Comma-separated downstream handoff requirements"),
+    focus_topics: str = typer.Option(
+        "", "--focus-topics", help="Comma-separated focus topics"
+    ),
+    must_track_prefixes: str = typer.Option(
+        "",
+        "--must-track-prefixes",
+        help="Comma-separated path prefixes that should be tracked",
+    ),
+    exclude_prefixes: str = typer.Option(
+        "", "--exclude-prefixes", help="Comma-separated excluded prefixes"
+    ),
+    prefer_file_types: str = typer.Option(
+        "", "--prefer-file-types", help="Comma-separated preferred file types"
+    ),
+    must_download_patterns: str = typer.Option(
+        "",
+        "--must-download-patterns",
+        help="Comma-separated required download patterns",
+    ),
+    handoff_requirements: str = typer.Option(
+        "",
+        "--handoff-requirements",
+        help="Comma-separated downstream handoff requirements",
+    ),
     notes: str = typer.Option("", "--notes", help="Comma-separated task notes"),
-    report_style: str = typer.Option("briefing", "--report-style", help="Report style name"),
-    output: str = typer.Option("", "--output", help="Optional explicit output YAML path"),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON delivery payload."),
+    report_style: str = typer.Option(
+        "briefing", "--report-style", help="Report style name"
+    ),
+    output: str = typer.Option(
+        "", "--output", help="Optional explicit output YAML path"
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON delivery payload."
+    ),
 ):
     """Create a first-class monitor task artifact for agent/human workflows."""
     from web_listening.blocks.job_orchestration import persist_job_result
-    from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
+    from web_listening.blocks.monitor_task import (
+        build_default_task_path,
+        build_monitor_task,
+        render_yaml_text,
+    )
     from web_listening.config import settings
 
     started = datetime.now(timezone.utc)
@@ -1537,7 +2033,11 @@ def create_monitor_task(
         notes=_csv_list(notes),
         report_style=report_style,
     )
-    output_path = Path(output) if output else build_default_task_path(task_name, data_dir=settings.data_dir)
+    output_path = (
+        Path(output)
+        if output
+        else build_default_task_path(task_name, data_dir=settings.data_dir)
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(render_yaml_text(task), encoding="utf-8")
     job = persist_job_result(
@@ -1551,16 +2051,32 @@ def create_monitor_task(
         started_at=started,
         finished_at=datetime.now(timezone.utc),
     )
-    _emit_job(job, json_output=json_output, human_text=Panel(f"[green]Saved monitor task:[/green] {output_path}\nJob ID: {job.job_id}"))
+    _emit_job(
+        job,
+        json_output=json_output,
+        human_text=Panel(
+            f"[green]Saved monitor task:[/green] {output_path}\nJob ID: {job.job_id}"
+        ),
+    )
 
 
 @app.command("export-tracking-report")
 def export_tracking_report(
-    scope_path: str = typer.Option(..., "--scope-path", help="Path to monitor_scope.yaml"),
-    task_path: str = typer.Option("", "--task-path", help="Optional path to monitor_task.yaml"),
-    run_id: Optional[int] = typer.Option(None, "--run-id", help="Specific run id, defaults to baseline run"),
-    output: str = typer.Option("", "--output", help="Optional explicit output report path"),
-    output_format: str = typer.Option("md", "--format", help="Output format: md or yaml"),
+    scope_path: str = typer.Option(
+        ..., "--scope-path", help="Path to monitor_scope.yaml"
+    ),
+    task_path: str = typer.Option(
+        "", "--task-path", help="Optional path to monitor_task.yaml"
+    ),
+    run_id: Optional[int] = typer.Option(
+        None, "--run-id", help="Specific run id, defaults to baseline run"
+    ),
+    output: str = typer.Option(
+        "", "--output", help="Optional explicit output report path"
+    ),
+    output_format: str = typer.Option(
+        "md", "--format", help="Output format: md or yaml"
+    ),
 ):
     """Export a unified tracking report from a scope run and optional task artifact."""
     from web_listening.blocks.tracking_report import (
@@ -1589,10 +2105,16 @@ def export_tracking_report(
     output_path = (
         Path(output)
         if output
-        else build_default_report_path(report.site_key, format=normalized_format, data_dir=settings.data_dir)
+        else build_default_report_path(
+            report.site_key, format=normalized_format, data_dir=settings.data_dir
+        )
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = render_tracking_yaml(report) if normalized_format == "yaml" else render_tracking_markdown(report)
+    payload = (
+        render_tracking_yaml(report)
+        if normalized_format == "yaml"
+        else render_tracking_markdown(report)
+    )
     output_path.write_text(payload, encoding="utf-8")
     console.print(Panel(f"[green]Saved tracking report:[/green] {output_path}"))
 

@@ -1,6 +1,6 @@
 # web_listening
 
-`web_listening` 1.4 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
+`web_listening` 2.0 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
 
 The supported 1.0 scope is complete and stable. Future changes follow the semantic-version policy below. The canonical product flow is:
 
@@ -17,6 +17,33 @@ Version 1.2 adds strict, offline `access-policy.v1` and `access-decision.v1` con
 Version 1.3 publishes the producer-confirmed `acquisition-manifest.v1` contract bundle and its strict offline validator. It freezes a future producer/consumer handoff without implementing acquisition runtime, immutable storage, retention, or manifest production.
 
 Version 1.4 adds the shared governed access gateway core that enforces the frozen access contracts around pinned HTTP transport, robots caching, manual redirects, and atomic per-origin pacing/budgets. It is a pure caller-independent core; current crawler, search, sitemap, file, CLI, API, and MCP paths are not migrated by this release.
+
+Version 2.0 migrates the supported target-content execution surface to that gateway. A reviewed scope, acquisition profile, resolved Site Skill, and non-empty compiled execution plan are now the only formal execution authority. One sealed preparation loads that authority, applies only non-enlarging runtime limits, compiles once, and admits the exact seed before any Storage, job, run, site, scope, report, temporary-file, or content mutation. The unchanged exact seed URL—not its canonical dedupe form—is carried with that admitted response into the first tree acquisition, so it is rebound to persisted IDs without a second target request or budget unit. All current-execution database and content-file changes remain in one transaction and creation journal until the traversal completes; a propagated robots rejection/error, gateway transport/origin/redirect/policy/budget failure, or bounded-body failure at the seed, a later page, or a later file rolls them back while preserving preexisting rows, bytes, reports, downloads, and job state. File rollback first atomically renames each lexical name into an exclusive same-parent transaction quarantine while its inode is pinned, then deletes only an identity match or restores a mismatch without clobbering; a restore collision preserves both the replacement and quarantined candidate and surfaces a rollback failure. Directory cleanup has separate explicit provenance: preexisting empty parents and ancestors are never pruned, while only no-follow directories first created by the current execution are held by exact live identity and processed deepest-first after file rollback. Each empty lexical directory is atomically no-clobber renamed under its pinned parent to an exclusive transaction-private quarantine name before identity verification and removal; a mismatch is restored without clobbering, and a restore or quarantine-name collision preserves every victim and surfaces cleanup failure. Missing or partial authority, request-identity overrides, attempts to enlarge reviewed limits, legacy tree execution, and direct browser/subprocess target reads fail before Storage or target mutation. This incompatible authority change is the Major release required by the semantic-version rubric below.
+
+## Supported interfaces and target-read paths
+
+This inventory is authoritative for 2.0. “Supported read” means production target content may be consumed; planning evidence and offline fixtures are not target reads.
+
+| Path | 2.0 status | Execution rule |
+|---|---|---|
+| Canonical `discover` section inventory | Supported planning read through a per-target gateway | Each reviewed catalog target is digest-bound to its own planning `AccessGateway`; robots rejection/error and every gateway or bounded-body failure propagate before inventory directories, YAML, or report creation, and successful planning reads grant no later execution authority. |
+| Crawler HTML, XML, feed, and sitemap content | Supported through scoped `web_http` execution | Every URL, including a discovered candidate and every redirect hop, enters `AccessGateway`; redirects are never followed automatically. |
+| PDF, attachment, and other document bytes | Supported through scoped `web_http` execution | One bounded gateway read supplies the exact bytes and SHA-256; rejection occurs before temporary files, blob writes, or document rows. |
+| Search, fallback, and rescue candidates | Discovery/planning only until re-admitted | Candidate discovery does not grant read authority. A selected URL must re-enter a complete compiled scoped plan and the gateway before content is read. |
+| Tree bootstrap and incremental crawling | Supported only from the governed staged scope flow | The supplied sealed authority, gateway, and accepted exact-URL seed are mandatory. Initial admission occurs before constructing `Storage`; the accepted response is consumed once at its unchanged URL, while a seed or later page/file rejection/error rolls back the entire current execution and its deferred API job. Rollback never removes a preexisting artifact directory; exact current-execution directory ownership is journaled separately. Canonical URLs are dedupe keys only. Direct bootstrap without an admitted seed rejects, and the legacy incremental wrapper is disabled in favor of `PreparedScopeExecution`. |
+| Browser, Playwright, CloakBrowser, and BrowserAct target navigation | Disabled | These adapters cannot navigate target URLs in 2.0. BrowserAct executor and wrapper calls fail locally before a target wrapper, stealth, or browser-open process can spawn; only the separate version/runtime/help inspection probes may execute. The adapters are not supported content readers. |
+| Legacy `Crawler`/`DocumentProcessor` direct-client construction | Disabled in production | A gateway is required. The `httpx.MockTransport` compatibility seam is offline-test-only and itself wraps `AccessGateway`; it is not a production transport option. |
+| `diagnose-site` robots/sitemap reads | Explicitly isolated planning producer | It uses its separate bounded, pinned, robots-first diagnostic transport, never fetches page candidates, mutates no execution scope, and grants no acquisition authority. |
+
+The supported execution interfaces are deliberately aligned:
+
+| Interface | Formal target-read entrypoint | Required authority | Reject/error result |
+|---|---|---|---|
+| CLI | `bootstrap-scope`, `run-scope` | Explicit scope path and acquisition-profile path; scope bindings resolve the Site Skill and compiled plan | Robots-policy reject/error uses exact frozen `access-rejection-error.v1`; later gateway/body failure uses separate stable `governed-read-error.v1`; JSON mode exits nonzero. |
+| REST API | `POST /api/v1/monitor-scopes/{scope_id}/bootstrap` and `/run` | Request body supplies `scope_path` and `acquisition_profile_path`; the one sealed authority is admitted before job/Storage mutation and handed unchanged into execution | HTTP 403/502 with the applicable exact robots envelope, or HTTP 502 with the separate governed-read error; neither creates a job row. |
+| MCP | `web_listening_bootstrap_scope`, `web_listening_run_scope` | Explicit `scope_path` and required `acquisition_profile_path` | The same exact robots envelope/reason code or separate governed-read error payload as CLI/API. |
+
+The site-level `check`/`download-docs`, one-off acquisition probe/fallback/rescue, legacy tree wrappers, and their REST/MCP compatibility surfaces do not form a second target-read authority. In 2.0 they may inspect stored/planning evidence or report that governed authority is required, but they cannot bypass the scoped gateway. CLI remains canonical for `discover -> classify -> select -> plan-scope`; REST does not add planning authority.
 
 ## Robots and sitemap diagnosis
 
@@ -36,7 +63,7 @@ web-listening diagnose-site \
 
 The production transport is browser-free, proxy-free, credential-free, and fail-closed. Every robots, retry, redirect, and sitemap request repeats exact-origin gating and all-address public DNS validation, connects only to the validated address set, preserves the normalized `Host` and HTTPS SNI/certificate hostname, and verifies the actual public peer before sending HTTP request bytes. Canonical public IPv4/IPv6 literals are supported as allowed hosts (IPv6 URL and `Host` authorities remain bracketed); private, loopback, link-local, reserved, multicast, and unspecified literals are rejected before the first HTTP byte. Redirects cannot expand authority or downgrade HTTPS. Governed non-2xx status outcomes—including authority, empty, redirect, retryable, and terminal classes—are decided before body reads. Only 2xx response bodies are streamed under wire and decoded limits with bounded single-member gzip handling; unsafe XML constructs and non-sitemap roots are rejected.
 
-The resulting `site-diagnostic.v1` is planning evidence, not permission, operator review, or an execution profile. Each origin policy includes the selected ordered `Allow`/`Disallow` rules, source line numbers, robots digest, and identity digest; `policy_id` and `policy_sha256` are recomputed from that visible evidence so later consumers can verify and replay the exact matching policy. Accepted page seeds carry their source sitemap queue ordinal, parent document digest, and source entry ordinal. Rejected scheduled sitemap documents likewise retain a normalized URL or raw rejected value, reason, queue ordinal, parent digest, and source entry ordinal; rejected scheduling consumes a bounded request slot without opening the network. Request-slot ordinals and non-secret counted-occurrence lineage let readers recompute the HTTP request, sitemap-document, and URL occurrence usage rather than trusting aggregate counters. Each accepted redirect attempt records its canonical, approved `redirect_target_url`; the next attempt and any redirect-policy rejection are bound to that exact target rather than merely its origin. The contract validates FIFO sitemap evidence, robots-to-root and index-to-child digest lineage, and requires a sitemap-seeded recommendation to contain matching accepted evidence. The artifact's canonical SHA-256 excludes only `artifact_sha256`; readers must verify that digest and freshness. Writes are atomic and idempotent, and refuse to replace a different existing artifact. PR1 will add the separate, digest-bound operator review and diagnosis consumer; 1.1 does not modify `discover`, REST, MCP, scope/profile/Site Skill authority, or the reserved sitemap acquisition adapter.
+The resulting `site-diagnostic.v1` is planning evidence, not permission, operator review, or an execution profile. Each origin policy includes the selected ordered `Allow`/`Disallow` rules, source line numbers, robots digest, and identity digest; `policy_id` and `policy_sha256` are recomputed from that visible evidence so consumers can verify and replay the exact matching policy. Accepted page seeds carry their source sitemap queue ordinal, parent document digest, and source entry ordinal. Rejected scheduled sitemap documents likewise retain a normalized URL or raw rejected value, reason, queue ordinal, parent digest, and source entry ordinal; rejected scheduling consumes a bounded request slot without opening the network. Request-slot ordinals and non-secret counted-occurrence lineage let readers recompute the HTTP request, sitemap-document, and URL occurrence usage rather than trusting aggregate counters. Each accepted redirect attempt records its canonical, approved `redirect_target_url`; the next attempt and any redirect-policy rejection are bound to that exact target rather than merely its origin. The contract validates FIFO sitemap evidence, robots-to-root and index-to-child digest lineage, and requires a sitemap-seeded recommendation to contain matching accepted evidence. The artifact's canonical SHA-256 excludes only `artifact_sha256`; readers must verify that digest and freshness. Writes are atomic and idempotent, and refuse to replace a different existing artifact. Diagnosis remains separate from `discover`, REST, MCP, and scope/profile/Site Skill execution authority.
 
 When `--output` is omitted, the CLI derives a safe filename component from `site_key` and includes the generated `diagnostic_id`, so separate same-day diagnoses do not collide. An explicit `--output` remains no-overwrite and may be repeated only for the byte-identical artifact.
 
@@ -66,13 +93,13 @@ The robots matrix is fixed as follows. Every reject or error fails closed; retry
 
 Only `allow` decisions may reserve the target request. They require both a final `request_slot_reservation` and a matching `origin_reservation`; reject and error decisions require both fields to be JSON `null`. The origin reservation freezes reservation/pacing times, pacing interval, budget window, limit, prior usage, one reserved unit, and its per-origin budget ordinal. Its active budget window is half-open: `budget_window_started_at <= reserved_at < window_end`, and `not_before` must also remain inside that window. Pacing lineage is tracked by canonical origin independently of budget-window identity: every later same-origin reservation preserves the pacing interval and schedules `not_before` no earlier than the prior same-origin request start plus that interval. Exact budget windows preserve their limit and monotonically advance prior usage. Same-origin windows with different shapes must not overlap; only a genuinely later non-overlapping window may begin an independently proven budget lineage. Different origins still require independent complete proofs.
 
-Reservation arithmetic has fixed portable maxima: timestamps are no later than `9998-12-31T23:59:59.999999Z`, request/hop/budget ordinals are at most `1,000,000`, pacing is at most `86,400,000` milliseconds, a budget window is at most `86,400` seconds, and the budget limit and prior usage are each at most `1,000,000`. Arithmetic outside those bounds is a governed validation error and the offline CLI emits the shared canonical error envelope. Version 1.2 froze these fields without runtime enforcement; version 1.4 consumes them in the shared gateway core without changing their semantics. Reject and error decisions carry the same strict `access-rejection-error.v1` envelope intended for later CLI/API/MCP consumers, and that envelope is also a standalone loadable access contract. Its evidence independently requires typed non-sensitive IDs derived from their policy digests, a cache key recomputed from canonical origin + identity digest + fixed policy version, zero-to-24-hour ordered freshness, an all-null or all-present origin-policy ID/digest/robots-digest trio, and the exact reason/outcome/retryability/robots-observation/evidence-nullability matrix. `contract.invalid` alone requires null evidence.
+Reservation arithmetic has fixed portable maxima: timestamps are no later than `9998-12-31T23:59:59.999999Z`, request/hop/budget ordinals are at most `1,000,000`, pacing is at most `86,400,000` milliseconds, a budget window is at most `86,400` seconds, and the budget limit and prior usage are each at most `1,000,000`. Arithmetic outside those bounds is a governed validation error and the offline CLI emits the shared canonical error envelope. Version 1.2 froze these fields, version 1.4 added the shared gateway core, and version 2.0 applies them to supported target reads without changing their semantics. Reject and error decisions carry the same strict `access-rejection-error.v1` envelope consumed by CLI/API/MCP, and that envelope is also a standalone loadable access contract. Its evidence independently requires typed non-sensitive IDs derived from their policy digests, a cache key recomputed from canonical origin + identity digest + fixed policy version, zero-to-24-hour ordered freshness, an all-null or all-present origin-policy ID/digest/robots-digest trio, and the exact reason/outcome/retryability/robots-observation/evidence-nullability matrix. `contract.invalid` alone requires null evidence.
 
 ### Shared governed access gateway core
 
-`web_listening.blocks.access_gateway.AccessGateway` is the reusable core for later read-path migration. Its configuration binds one transparent identity, a non-empty set of exact allowed origins, the diagnostic evidence digest, policy TTL, redirect-hop cap, pacing interval, and hard budget window/limit. The default transport is the existing browser-free, proxy-free `SafePinnedTransport`; clients cannot auto-follow redirects. Every content request—including each consumed redirect source—therefore performs fresh all-address public DNS validation, connects only to the pinned set, preserves HTTPS SNI and the normalized `Host`, and verifies the actual peer before HTTP bytes.
+`web_listening.blocks.access_gateway.AccessGateway` is the runtime core for every supported 2.0 target-content read. Its configuration binds one transparent identity, a non-empty set of exact allowed origins, the compiled-authority digest, policy TTL, redirect-hop cap, pacing interval, and hard budget window/limit. The default transport is the existing browser-free, proxy-free `SafePinnedTransport`; clients cannot auto-follow redirects. Every content request—including each consumed redirect source—therefore performs fresh all-address public DNS validation, connects only to the pinned set, preserves HTTPS SNI and the normalized `Host`, and verifies the actual public peer before HTTP bytes.
 
-Robots policies are cached under exactly the frozen SHA-256 of canonical origin + transparent identity digest + `access-policy.v1`. Cache entries obey their contract expiry, support exact-origin or complete explicit invalidation, and use per-key concurrent single-flight; an invalidation racing an in-flight fetch prevents the stale result from repopulating the cache. Valid 200, 404, 401, 403, timeout, DNS/network, and parse outcomes are built only through the frozen access-policy and access-decision constructors. Redirect targets repeat canonical URL, exact-origin, HTTPS downgrade, cached robots-policy, reservation, and pinned-transport checks before their request; the explicit hop cap counts consumed redirect responses exactly.
+Robots policies are cached under exactly the frozen SHA-256 of canonical origin + transparent identity digest + `access-policy.v1`. Cache entries obey their contract expiry, support exact-origin or complete explicit invalidation, and use per-key concurrent single-flight; an invalidation racing an in-flight fetch prevents the stale result from repopulating the cache. Valid 200, 404, 401, 403, timeout, DNS/network, and parse outcomes are built only through the frozen access-policy and access-decision constructors. Redirect targets repeat canonical URL, exact-origin, HTTPS downgrade, cached robots-policy, reservation, and pinned-transport checks before their request; the explicit hop cap counts consumed redirect responses exactly. The gateway carries the canonical final-hop URL into the bounded body consumer, so suffix-based compression checks apply to the admitted final response rather than the original pre-redirect URL.
 
 An allow atomically reserves one irreversible budget unit and its per-origin pacing slot before opening the target content request. Same-origin request starts are serialized through the reservation/start boundary, while different origins use independent locks and budgets. Once reserved, a unit remains consumed after cancellation, timeout, transport failure, redirect rejection, or consumer error so retries cannot amplify the hard budget; every path still releases the origin lock and closes any returned response. The core itself creates no files or temporary artifacts and invokes the caller's response consumer only after an allow decision. Robots reject/error decisions return strict `access-decision.v1` with no target request. Origin, SSRF/peer, downgrade, redirect-cap, and hard-budget failures remain typed fail-closed gateway errors because version 1.2 defines no valid decision reason code for them; the gateway does not misuse `contract.invalid` or invent parallel semantics.
 
@@ -121,7 +148,7 @@ Formal `bootstrap-scope` and `run-scope` execution requires an acquisition profi
 5. `site_skill_script_sha256`
 6. `executor_version`
 
-The package resolves and validates the exact Site Skill, compiles a non-empty `acquisition-execution-plan.v1`, verifies executor capability and runtime policy, and constructs the gateway **before opening Storage or mutating state**. The compiled plan—not picker metadata, a probe result, `fetch_mode`, or `fetch_config_json`—is formal executor authority. Partial governed bindings fail closed. Legacy fetch fields retain compatibility and lineage meaning only.
+The package resolves and validates the exact Site Skill, applies requested runtime limits without allowing them to enlarge the reviewed scope, compiles one non-empty `acquisition-execution-plan.v1`, verifies executor capability and runtime policy, and constructs the gateway **before opening Storage or mutating state**. The gateway body ceiling and transport timeout come strictly from the sealed `web_http` step's `stdout_bytes` and `timeout_seconds`; missing, invalid, or inconsistent step limits fail closed before a target consumer or write. That same sealed preparation owns the compiled plan, gateway, exact target, and admitted seed from initial admission through execution; scope/profile files are not reloaded and authority is not recompiled after bookkeeping begins. CLI bootstrap/run prepare once and use `artifacts.plan` after execution rather than performing a preliminary scope load. The compiled plan—not picker metadata, a probe result, `fetch_mode`, or `fetch_config_json`—is formal executor authority. Partial governed bindings fail closed. Legacy fetch fields retain compatibility and lineage meaning only.
 
 Packaged Site Skills are discovered and validated statically: registry inspection does not import scripts, execute code, access the network, or resolve DNS. Package versions and SHA-256 digests make the selected authority reproducible.
 
@@ -249,7 +276,7 @@ Use `web-listening COMMAND --help` for complete options. The lower-level `tools/
 - `list-site-skills`, `inspect-site-skill`, `validate-site-skill` — statically inspect governed Site Skill packages.
 - `list-acquisition-tools` — return the stable acquisition picker catalog.
 - `build-acquisition-profile` — create a reviewed profile input.
-- `probe-acquisition` — collect one adapter probe as evidence; it does not grant formal run authority.
+- `probe-acquisition` — inspect a candidate adapter/profile as planning evidence; target-content probing is disabled without formal scoped gateway authority.
 - `preview-execution-plan` — compile and inspect formal authority without executing it.
 - `inspect-browseract` — perform the isolated, read-only BrowserAct identity/capability handshake.
 
@@ -260,8 +287,8 @@ Use `web-listening COMMAND --help` for complete options. The lower-level `tools/
 ### Site-level compatibility and service
 
 - `add-site`, `list-sites` — manage monitored sites.
-- `check`, `list-changes` — run/check site-level monitoring and inspect changes.
-- `download-docs`, `list-docs` — acquire and inspect documents.
+- `check`, `list-changes` — inspect compatibility monitoring and stored changes; `check` is not a 2.0 target-read authority.
+- `download-docs`, `list-docs` — inspect stored documents; direct acquisition is disabled without formal scoped gateway authority.
 - `analyze` — generate analysis from stored evidence.
 - `serve` — run the FastAPI service.
 
@@ -280,7 +307,7 @@ Install the `mcp` extra and run `web-listening-mcp` for stdio transport. The ser
 9. `web_listening_get_job`
 10. `web_listening_read_artifact`
 
-MCP tool responses use the stable `web-listening-tool-result.v1` envelope where applicable. Acquisition fallback and recommendation surfaces remain bounded by profile quality and safety rules; they do not supersede governed scope authority.
+MCP tool responses use the stable `web-listening-tool-result.v1` envelope where applicable. `web_listening_bootstrap_scope` and `web_listening_run_scope` require `acquisition_profile_path`; a robots-policy rejection/error instead returns the exact frozen `access-rejection-error.v1` envelope, while a non-robots gateway or bounded-body execution failure returns the independent `governed-read-error.v1` payload without inventing a frozen access-decision reason code. Acquisition fallback and recommendation surfaces can discover or rank candidates, but cannot read target content or supersede governed scope authority.
 
 ## REST API
 
@@ -289,7 +316,7 @@ Run `web-listening serve`; routes are under `/api/v1`. Current API groups are:
 - **Acquisition**: tool catalog, default profile building, one-off probes, and execution-plan preview.
 - **Sites**: create/list/get/deactivate sites, latest snapshots, rescue checks, and queued checks.
 - **Jobs and delivery**: monitor-task creation, job status/payload retrieval, and a job-delivery webhook registration stub.
-- **Scoped execution and artifacts**: bootstrap/run/report jobs plus latest report and manifest retrieval for stored scopes.
+- **Scoped execution and artifacts**: bootstrap/run require explicit scope/profile paths and validate complete authority before job persistence; report jobs plus latest report and manifest retrieval operate on stored evidence.
 - **Evidence and analysis**: changes, documents, document-content updates/downloads, analysis creation, and analysis listing.
 
 The CLI remains canonical for `discover`, `classify`, `select`, and `plan-scope`; do not infer full planning REST parity from the scoped execution routes.
@@ -298,7 +325,7 @@ The CLI remains canonical for `discover`, `classify`, `select`, and `plan-scope`
 
 Stable machine contracts in the current surface include:
 
-- `access-policy.v1` and `access-decision.v1` (additive in 1.2; no runtime migration)
+- `access-policy.v1` and `access-decision.v1` (frozen in 1.2 and enforced by all supported 2.0 target reads)
 - `access-decision-proof.v1` (finite per-consumed-redirect authorization embedded by `access-decision.v1`)
 - `access-rejection-error.v1` (shared strict reject/error envelope)
 - `site-diagnostic.v1` (additive in 1.1; producer-only planning evidence)
@@ -364,19 +391,17 @@ Safety rules:
 
 - Keep scopes bounded with explicit/effective `max_depth`, `max_pages`, and `max_files`; never expand a whole site blindly.
 - Profile domains must be a non-empty subset of the governed Site Skill domains.
-- Stealth or authorization-requiring executors need explicit profile approvals and runtime availability checks.
-- CloakBrowser is optional and only for explicitly authorized probing or governed execution; it may download a browser binary on first launch.
-- BrowserAct is disabled by default, excluded from automatic fallback, isolated from the project environment, and limited to its validated read-only contract.
+- Browser, Playwright, CloakBrowser, and BrowserAct target navigation is disabled in 2.0; optional-runtime inspection does not grant read authority.
 - Treat acquisition picker/probe results as planning evidence, never as permission to bypass the reviewed scope, profile, Site Skill, or compiled plan.
 - A bootstrap creates the baseline; a later run performs change detection.
 
 ## Version and Runtime Compatibility
 
-Compatibility inventory last reviewed on **2026-08-20**.
+Compatibility inventory last reviewed on **2026-08-21**.
 
 | Component | Compatibility policy / observation |
 |---|---|
-| `web-listening` | `1.4.0` |
+| `web-listening` | `2.0.0` |
 | Python | Declared `>=3.12,<3.13`; verified with 3.12.3 |
 | FastAPI | Project environment verified at 0.139.2 |
 | MCP | Declared `>=1.28.1,<2.0.0`; verified at 1.28.1; 2.x is not qualified |
@@ -388,7 +413,7 @@ External-host and latest-version observations are inventory signals, **not compa
 
 The `dev` and `mcp` extras both declare `mcp>=1.28.1,<2.0.0`. The stdio server uses the qualified MCP 1.x `FastMCP` API; MCP 2.x must not be installed until it is separately qualified.
 
-BrowserAct has an exact isolated contract: it must run from a separate Python 3.12 tool environment, must not be added to project dependencies, and must pass `web-listening inspect-browseract --json` as version 1.0.6 with the expected read-only capabilities. Playwright and CloakBrowser remain optional extras governed by their declared minimums and runtime safety rules.
+BrowserAct has an exact isolated inspection contract: it must run from a separate Python 3.12 tool environment, must not be added to project dependencies, and must pass `web-listening inspect-browseract --json` as version 1.0.6 with the expected advertised capabilities. Inspection executes only bounded version/runtime/help probes; the production executor and wrapper reject every target request before spawning BrowserAct. It, Playwright, and CloakBrowser are not supported 2.0 target-content readers.
 
 ### Semantic-version decision rubric
 
@@ -398,11 +423,13 @@ BrowserAct has an exact isolated contract: it must run from a separate Python 3.
 
 Dependency qualification can trigger any level: use patch only when the supported contract is unchanged, minor for additive newly supported runtime capability, and major when consumers or persisted artifacts must migrate.
 
-Issue #49 is an additive contract and offline-CLI capability, so it advances the project from 1.1.0 to **1.2.0**. It deliberately leaves existing execution authority unchanged. A later complete migration that makes current crawler/search/sitemap/download/API/MCP entrypoints obey the new access gateway changes authority semantics and therefore **requires 2.0.0** under this rubric; it must not be presented as a minor release.
+Issue #49 was an additive contract and offline-CLI capability, advancing the project from 1.1.0 to **1.2.0** while deliberately leaving execution authority unchanged. It established that the complete runtime migration changes authority semantics and therefore requires **2.0.0** under this rubric.
 
 Issue #48 is another additive contract and offline-CLI capability, so it advances the project from 1.2.0 to **1.3.0**. It publishes canonical producer bytes only; the later runtime/storage producer work remains separately gated under Issues #52–#54.
 
-Issue #50 adds a shared caller-independent gateway core without migrating any supported read path or changing existing execution authority, so it advances the project from 1.3.0 to **1.4.0**. The later Issue #51 migration remains a Major-version change under the rule above.
+Issue #50 added a shared caller-independent gateway core without migrating supported read paths or changing execution authority, advancing the project from 1.3.0 to **1.4.0** and reserving the runtime migration for a Major release.
+
+Issue #51 migrates supported crawler, sitemap/feed, document/attachment, candidate re-entry, scoped CLI/API/MCP, and legacy execution boundaries to the unified gateway or explicitly disables them. It changes execution authority and removes supported direct-read behavior, so the project advances from 1.4.0 to **2.0.0**. No acquisition-manifest storage, AI InfoSearch database, or default/admin override is included.
 
 ### Weekly review policy
 

@@ -8,6 +8,13 @@ import stat
 from typing import Any, Iterator, List, Optional, TextIO
 from urllib.parse import urlparse
 
+from web_listening.blocks.governed_read import (
+    AccessRejectedError,
+    GOVERNED_READ_RUNTIME_ERRORS,
+    access_rejection_payload,
+    governed_read_failure_payload,
+)
+
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
@@ -20,7 +27,11 @@ from web_listening.blocks.acquisition_tools import (
     probe_acquisition_url,
 )
 from web_listening.blocks.job_orchestration import execute_job, persist_job_result
-from web_listening.blocks.monitor_task import build_default_task_path, build_monitor_task, render_yaml_text
+from web_listening.blocks.monitor_task import (
+    build_default_task_path,
+    build_monitor_task,
+    render_yaml_text,
+)
 from web_listening.blocks.rescue import run_site_rescue
 from web_listening.blocks.job_artifacts import (
     load_job_delivery_payload_or_raise,
@@ -28,10 +39,21 @@ from web_listening.blocks.job_artifacts import (
     load_latest_scope_manifest_artifact_or_create,
     load_latest_scope_report_artifact_or_raise,
 )
-from web_listening.blocks.scope_lookup import load_site_context_or_none, require_site_or_raise, resolve_scope_path_or_raise
+from web_listening.blocks.scope_lookup import (
+    load_site_context_or_none,
+    require_site_or_raise,
+    resolve_scope_path_or_raise,
+)
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
-from web_listening.models import AnalysisReport, Change, Document, Job, Site, SiteSnapshot
+from web_listening.models import (
+    AnalysisReport,
+    Change,
+    Document,
+    Job,
+    Site,
+    SiteSnapshot,
+)
 
 router = APIRouter()
 
@@ -58,7 +80,9 @@ def _ensure_path_within_data_root(path: Path) -> Path:
     try:
         resolved.relative_to(data_root)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=f"Path `{path}` must stay under `{data_root}`") from exc
+        raise HTTPException(
+            status_code=422, detail=f"Path `{path}` must stay under `{data_root}`"
+        ) from exc
     return resolved
 
 
@@ -67,7 +91,9 @@ def _safe_output_path(raw_path: str | None, *, default_path: Path) -> Path:
         path = default_path
     else:
         candidate = Path(raw_path)
-        path = candidate if candidate.is_absolute() else _resolve_data_root() / candidate
+        path = (
+            candidate if candidate.is_absolute() else _resolve_data_root() / candidate
+        )
     if ".." in path.parts:
         raise HTTPException(status_code=422, detail="Path traversal is not allowed")
     return _ensure_path_within_data_root(path)
@@ -98,7 +124,9 @@ def _open_preview_input(raw_path: str) -> Iterator[TextIO]:
         try:
             relative = candidate.relative_to(data_root)
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Path must stay under the data root") from exc
+            raise HTTPException(
+                status_code=422, detail="Path must stay under the data root"
+            ) from exc
     else:
         relative = candidate
     if not relative.parts:
@@ -109,12 +137,18 @@ def _open_preview_input(raw_path: str) -> Iterator[TextIO]:
         directory_fd = os.open(data_root, read_flags | os.O_DIRECTORY)
         stack.callback(os.close, directory_fd)
         for component in relative.parts[:-1]:
-            directory_fd = os.open(component, read_flags | os.O_DIRECTORY, dir_fd=directory_fd)
+            directory_fd = os.open(
+                component, read_flags | os.O_DIRECTORY, dir_fd=directory_fd
+            )
             stack.callback(os.close, directory_fd)
-        file_fd = os.open(relative.parts[-1], read_flags | os.O_NONBLOCK, dir_fd=directory_fd)
+        file_fd = os.open(
+            relative.parts[-1], read_flags | os.O_NONBLOCK, dir_fd=directory_fd
+        )
         try:
             if not stat.S_ISREG(os.fstat(file_fd).st_mode):
-                raise HTTPException(status_code=422, detail="Path must be a regular file")
+                raise HTTPException(
+                    status_code=422, detail="Path must be a regular file"
+                )
             with os.fdopen(file_fd, encoding="utf-8", closefd=False) as stream:
                 yield stream
         finally:
@@ -128,11 +162,43 @@ def get_storage() -> Storage:
 def _resolve_scope_path(scope_id: int) -> Path:
     storage = get_storage()
     try:
-        return resolve_scope_path_or_raise(storage, scope_id, data_dir=settings.data_dir)
+        return resolve_scope_path_or_raise(
+            storage, scope_id, data_dir=settings.data_dir
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         storage.close()
+
+
+def _prepare_scope_execution_authority(
+    scope_id: int,
+    *,
+    operation: str,
+    scope_path: str,
+    acquisition_profile_path: str,
+    max_depth: int | None = None,
+    max_pages: int | None = None,
+    max_files: int | None = None,
+):
+    """Seal and admit complete execution authority before job mutation."""
+    from web_listening.blocks.staged_workflow import prepare_scope_execution
+
+    resolved_scope_path = _safe_input_path(scope_path)
+    resolved_profile_path = _safe_input_path(acquisition_profile_path)
+    assert resolved_scope_path is not None and resolved_profile_path is not None
+    try:
+        return prepare_scope_execution(
+            operation=operation,
+            scope_path=resolved_scope_path,
+            acquisition_profile_path=resolved_profile_path,
+            max_depth=max_depth,
+            max_pages=max_pages,
+            max_files=max_files,
+            expected_scope_id=scope_id,
+        )
+    except (FileNotFoundError, LookupError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _read_text_if_present(path_value: str) -> str:
@@ -141,11 +207,14 @@ def _read_text_if_present(path_value: str) -> str:
         raise HTTPException(status_code=404, detail=f"Artifact `{path}` not found")
     max_bytes = 512 * 1024
     if path.stat().st_size > max_bytes:
-        raise HTTPException(status_code=413, detail=f"Artifact `{path}` is too large to inline")
+        raise HTTPException(
+            status_code=413, detail=f"Artifact `{path}` is too large to inline"
+        )
     return path.read_text(encoding="utf-8")
 
 
 # ── Request bodies ──────────────────────────────────────────────────────────
+
 
 class AddSiteRequest(BaseModel):
     url: str
@@ -262,6 +331,8 @@ class CreateMonitorTaskRequest(BaseModel):
 
 
 class BootstrapScopeRequest(BaseModel):
+    scope_path: StrictStr
+    acquisition_profile_path: StrictStr
     download_files: bool = False
     refresh_existing: bool = False
     max_depth: Optional[int] = None
@@ -273,6 +344,8 @@ class BootstrapScopeRequest(BaseModel):
 
 
 class RunScopeRequest(BaseModel):
+    scope_path: StrictStr
+    acquisition_profile_path: StrictStr
     download_files: bool = False
     max_depth: Optional[int] = None
     max_pages: Optional[int] = None
@@ -335,6 +408,7 @@ def _serialize_report_payload(report: object) -> Optional[dict[str, object]]:
 
 # ── Acquisition ─────────────────────────────────────────────────────────────
 
+
 @router.get("/acquisition/tools")
 def get_acquisition_tools():
     return acquisition_tools_catalog()
@@ -355,7 +429,9 @@ def build_default_acquisition_profile_endpoint(body: AcquisitionDefaultProfileRe
 
 @router.post("/acquisition/probe")
 def probe_acquisition_endpoint(body: AcquisitionProbeRequest):
-    resolved_profile_path = str(_safe_input_path(body.profile_path)) if body.profile_path else None
+    resolved_profile_path = (
+        str(_safe_input_path(body.profile_path)) if body.profile_path else None
+    )
     try:
         return probe_acquisition_url(
             url=body.url,
@@ -376,18 +452,29 @@ def probe_acquisition_endpoint(body: AcquisitionProbeRequest):
     "/acquisition/execution-plans/preview",
     response_model=AcquisitionExecutionPreviewResponse,
     responses={422: {"model": AcquisitionExecutionPreviewResponse}},
-    openapi_extra={"requestBody": {"required": True, "content": {"application/json": {
-        "schema": AcquisitionExecutionPreviewRequest.model_json_schema()
-    }}}},
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": AcquisitionExecutionPreviewRequest.model_json_schema()
+                }
+            },
+        }
+    },
 )
 async def preview_acquisition_execution_plan_endpoint(request: Request):
     from web_listening.blocks.acquisition_execution_plan import (
-        AcquisitionExecutionPlanError, compile_acquisition_execution_plan, failure_envelope, preview_envelope,
+        AcquisitionExecutionPlanError,
+        compile_acquisition_execution_plan,
+        failure_envelope,
+        preview_envelope,
     )
     from web_listening.blocks.acquisition_profile import load_acquisition_profile
     from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
     from web_listening.executors.registry import default_preview_registry
     from web_listening.site_skill_registry import resolve_site_skill_contract
+
     try:
         raw_body = await request.json()
         body = AcquisitionExecutionPreviewRequest.model_validate(raw_body)
@@ -398,22 +485,42 @@ async def preview_acquisition_execution_plan_endpoint(request: Request):
                 profile = load_acquisition_profile(profile_stream, strict=True)
         else:
             profile = None
-        governed = any(str(scope.based_on.get(key, "")).strip() for key in (
-            "acquisition_profile_id", "site_skill_version", "site_skill_package_sha256",
-            "site_skill_recipe_id", "site_skill_script_sha256", "executor_version",
-        ))
-        skill = resolve_site_skill_contract(site_key=scope.site_key,
-            version=str(scope.based_on.get("site_skill_version", "")),
-            package_sha256=str(scope.based_on.get("site_skill_package_sha256", ""))) if governed else None
-        return preview_envelope(compile_acquisition_execution_plan(scope, profile, skill, default_preview_registry()))
+        governed = any(
+            str(scope.based_on.get(key, "")).strip()
+            for key in (
+                "acquisition_profile_id",
+                "site_skill_version",
+                "site_skill_package_sha256",
+                "site_skill_recipe_id",
+                "site_skill_script_sha256",
+                "executor_version",
+            )
+        )
+        skill = (
+            resolve_site_skill_contract(
+                site_key=scope.site_key,
+                version=str(scope.based_on.get("site_skill_version", "")),
+                package_sha256=str(scope.based_on.get("site_skill_package_sha256", "")),
+            )
+            if governed
+            else None
+        )
+        return preview_envelope(
+            compile_acquisition_execution_plan(
+                scope, profile, skill, default_preview_registry()
+            )
+        )
     except AcquisitionExecutionPlanError as exc:
         return JSONResponse(status_code=422, content=failure_envelope(exc))
     except (HTTPException, ValidationError, OSError, ValueError, LookupError):
-        error = AcquisitionExecutionPlanError("input.invalid", "preview input is invalid")
+        error = AcquisitionExecutionPlanError(
+            "input.invalid", "preview input is invalid"
+        )
         return JSONResponse(status_code=422, content=failure_envelope(error))
 
 
 # ── Sites ───────────────────────────────────────────────────────────────────
+
 
 @router.get("/sites", response_model=List[Site])
 def list_sites():
@@ -471,6 +578,10 @@ def get_latest_snapshot(site_id: int):
 
 @router.post("/sites/{site_id}/rescue-check", response_model=RescueCheckResponse)
 def rescue_check_site(site_id: int, body: RescueCheckRequest):
+    raise HTTPException(
+        status_code=409,
+        detail="legacy rescue target reads are disabled; use governed scoped execution",
+    )
     if body.sitemap_url is not None:
         _validate_url(body.sitemap_url)
     if body.rss_url is not None:
@@ -521,7 +632,9 @@ def rescue_check_site(site_id: int, body: RescueCheckRequest):
         resolved_strategy=result.resolved_strategy,
         resolved=result.resolved,
         attempts=attempts,
-        winning_snapshot=winning_attempt.snapshot if winning_attempt is not None else None,
+        winning_snapshot=winning_attempt.snapshot
+        if winning_attempt is not None
+        else None,
     )
 
 
@@ -559,7 +672,9 @@ def create_monitor_task(body: CreateMonitorTaskRequest):
     )
     output_path = _safe_output_path(
         body.output_path,
-        default_path=build_default_task_path(task.task_name, data_dir=settings.data_dir),
+        default_path=build_default_task_path(
+            task.task_name, data_dir=settings.data_dir
+        ),
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(render_yaml_text(task), encoding="utf-8")
@@ -587,12 +702,20 @@ def get_job(job_id: int):
 @router.get("/jobs/{job_id}/payload", response_model=JobDeliveryPayload)
 def get_job_payload(job_id: int):
     try:
-        return JobDeliveryPayload(**load_job_delivery_payload_or_raise(db_path=settings.db_path, job_id=job_id))
+        return JobDeliveryPayload(
+            **load_job_delivery_payload_or_raise(
+                db_path=settings.db_path, job_id=job_id
+            )
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.post("/webhooks/job-deliveries", response_model=JobWebhookRegistrationResponse, status_code=201)
+@router.post(
+    "/webhooks/job-deliveries",
+    response_model=JobWebhookRegistrationResponse,
+    status_code=201,
+)
 def register_job_webhook(body: JobWebhookRegistrationRequest):
     _validate_url(body.target_url)
     sample_job = Job(
@@ -603,7 +726,12 @@ def register_job_webhook(body: JobWebhookRegistrationRequest):
         stage_message="Sample completion payload.",
         progress=100,
         produced_artifacts={"report_path": "data/reports/sample.md"},
-        artifact_summary={"artifact_count": 1, "artifact_keys": ["report_path"], "path_keys": ["report_path"], "has_artifacts": True},
+        artifact_summary={
+            "artifact_count": 1,
+            "artifact_keys": ["report_path"],
+            "path_keys": ["report_path"],
+            "has_artifacts": True,
+        },
     )
     return JobWebhookRegistrationResponse(
         registration_id="job-webhook-stub",
@@ -615,104 +743,164 @@ def register_job_webhook(body: JobWebhookRegistrationRequest):
     )
 
 
-@router.post("/monitor-scopes/{scope_id}/bootstrap", response_model=Job, status_code=201)
+@router.post(
+    "/monitor-scopes/{scope_id}/bootstrap", response_model=Job, status_code=201
+)
 def bootstrap_monitor_scope(scope_id: int, body: BootstrapScopeRequest):
-    from web_listening.blocks.staged_workflow import bootstrap_scope as staged_bootstrap_scope
+    from web_listening.blocks.staged_workflow import (
+        bootstrap_scope as staged_bootstrap_scope,
+    )
 
-    def _runner(progress):
-        progress.update(
-            stage="loading_scope",
-            stage_message="Resolving scope plan for bootstrap.",
-            progress=10,
-        )
-        scope_path = _resolve_scope_path(scope_id)
-        progress.update(
-            status="running",
-            stage="executing_workflow",
-            stage_message="Running bootstrap workflow.",
-            progress=45,
-        )
-        artifacts = staged_bootstrap_scope(
-            scope_path=scope_path,
-            download_files=body.download_files,
-            refresh_existing=body.refresh_existing,
+    prepared = None
+    try:
+        prepared = _prepare_scope_execution_authority(
+            scope_id,
+            operation="bootstrap",
+            scope_path=body.scope_path,
+            acquisition_profile_path=body.acquisition_profile_path,
             max_depth=body.max_depth,
             max_pages=body.max_pages,
             max_files=body.max_files,
-            report_path=body.report_path,
-            summary_path=body.summary_path,
-            include_summary=body.include_summary,
         )
-        progress.update(
-            stage="writing_artifacts",
-            stage_message="Persisting bootstrap artifacts.",
-            progress=90,
-        )
-        first = artifacts.results[0] if artifacts.results else None
-        produced_artifacts = {
-            "scope_path": str(scope_path),
-            "report_path": str(artifacts.report_path),
-            **({"summary_path": str(artifacts.summary_path)} if artifacts.summary_path else {}),
-        }
-        return {
-            "scope_id": first.scope_id if first else scope_id,
-            "run_id": first.run_id if first else None,
-            "produced_artifacts": produced_artifacts,
-        }
 
-    try:
-        return execute_job(job_type="scope.bootstrap", scope_id=scope_id, runner=_runner)
+        def _runner(progress):
+            progress.update(
+                stage="loading_scope",
+                stage_message="Using sealed scope authority for bootstrap.",
+                progress=10,
+            )
+            progress.update(
+                status="running",
+                stage="executing_workflow",
+                stage_message="Running bootstrap workflow.",
+                progress=45,
+            )
+            artifacts = staged_bootstrap_scope(
+                prepared=prepared,
+                download_files=body.download_files,
+                refresh_existing=body.refresh_existing,
+                report_path=body.report_path,
+                summary_path=body.summary_path,
+                include_summary=body.include_summary,
+            )
+            progress.update(
+                stage="writing_artifacts",
+                stage_message="Persisting bootstrap artifacts.",
+                progress=90,
+            )
+            first = artifacts.results[0] if artifacts.results else None
+            produced_artifacts = {
+                "scope_path": str(prepared.scope_path),
+                "report_path": str(artifacts.report_path),
+                **(
+                    {"summary_path": str(artifacts.summary_path)}
+                    if artifacts.summary_path
+                    else {}
+                ),
+            }
+            return {
+                "scope_id": first.scope_id if first else scope_id,
+                "run_id": first.run_id if first else None,
+                "produced_artifacts": produced_artifacts,
+            }
+
+        return execute_job(
+            job_type="scope.bootstrap",
+            scope_id=scope_id,
+            runner=_runner,
+            defer_persistence=True,
+        )
+    except AccessRejectedError as exc:
+        status_code = 403 if exc.envelope.outcome == "reject" else 502
+        return JSONResponse(
+            status_code=status_code,
+            content=access_rejection_payload(exc),
+        )
+    except GOVERNED_READ_RUNTIME_ERRORS as exc:
+        return JSONResponse(
+            status_code=502,
+            content=governed_read_failure_payload(exc),
+        )
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        if prepared is not None:
+            prepared.close()
 
 
 @router.post("/monitor-scopes/{scope_id}/run", response_model=Job, status_code=201)
 def run_monitor_scope(scope_id: int, body: RunScopeRequest):
     from web_listening.blocks.staged_workflow import run_scope as staged_run_scope
 
-    def _runner(progress):
-        progress.update(
-            stage="loading_scope",
-            stage_message="Resolving scope plan for incremental run.",
-            progress=10,
-        )
-        scope_path = _resolve_scope_path(scope_id)
-        progress.update(
-            status="running",
-            stage="executing_workflow",
-            stage_message="Running incremental workflow.",
-            progress=50,
-        )
-        artifacts = staged_run_scope(
-            scope_path=scope_path,
-            download_files=body.download_files,
+    prepared = None
+    try:
+        prepared = _prepare_scope_execution_authority(
+            scope_id,
+            operation="run",
+            scope_path=body.scope_path,
+            acquisition_profile_path=body.acquisition_profile_path,
             max_depth=body.max_depth,
             max_pages=body.max_pages,
             max_files=body.max_files,
-            report_path=body.report_path,
         )
-        progress.update(
-            stage="writing_artifacts",
-            stage_message="Persisting run artifacts.",
-            progress=90,
-        )
-        return {
-            "scope_id": artifacts.result.scope_id or scope_id,
-            "run_id": artifacts.result.run_id,
-            "produced_artifacts": {
-                "scope_path": str(scope_path),
-                "report_path": str(artifacts.report_path),
-            },
-        }
 
-    try:
-        return execute_job(job_type="scope.run", scope_id=scope_id, runner=_runner)
+        def _runner(progress):
+            progress.update(
+                stage="loading_scope",
+                stage_message="Using sealed scope authority for incremental run.",
+                progress=10,
+            )
+            progress.update(
+                status="running",
+                stage="executing_workflow",
+                stage_message="Running incremental workflow.",
+                progress=50,
+            )
+            artifacts = staged_run_scope(
+                prepared=prepared,
+                download_files=body.download_files,
+                report_path=body.report_path,
+            )
+            progress.update(
+                stage="writing_artifacts",
+                stage_message="Persisting run artifacts.",
+                progress=90,
+            )
+            return {
+                "scope_id": artifacts.result.scope_id or scope_id,
+                "run_id": artifacts.result.run_id,
+                "produced_artifacts": {
+                    "scope_path": str(prepared.scope_path),
+                    "report_path": str(artifacts.report_path),
+                },
+            }
+
+        return execute_job(
+            job_type="scope.run",
+            scope_id=scope_id,
+            runner=_runner,
+            defer_persistence=True,
+        )
+    except AccessRejectedError as exc:
+        status_code = 403 if exc.envelope.outcome == "reject" else 502
+        return JSONResponse(
+            status_code=status_code,
+            content=access_rejection_payload(exc),
+        )
+    except GOVERNED_READ_RUNTIME_ERRORS as exc:
+        return JSONResponse(
+            status_code=502,
+            content=governed_read_failure_payload(exc),
+        )
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        if prepared is not None:
+            prepared.close()
 
 
 @router.post("/monitor-scopes/{scope_id}/report", response_model=Job, status_code=201)
@@ -721,7 +909,9 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
 
     normalized_format = (body.output_format or "md").strip().lower()
     if normalized_format not in {"md", "yaml"}:
-        raise HTTPException(status_code=422, detail="output_format must be one of: md, yaml")
+        raise HTTPException(
+            status_code=422, detail="output_format must be one of: md, yaml"
+        )
 
     def _runner(progress):
         progress.update(
@@ -730,11 +920,28 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
             progress=10,
         )
         scope_path = _resolve_scope_path(scope_id)
-        resolved_task_path = str(_safe_input_path(body.task_path)) if body.task_path else None
-        resolved_acquisition_profile_path = str(_safe_input_path(body.acquisition_profile_path)) if body.acquisition_profile_path else None
-        resolved_capture_attempt_path = str(_safe_input_path(body.capture_attempt_path)) if body.capture_attempt_path else None
+        resolved_task_path = (
+            str(_safe_input_path(body.task_path)) if body.task_path else None
+        )
+        resolved_acquisition_profile_path = (
+            str(_safe_input_path(body.acquisition_profile_path))
+            if body.acquisition_profile_path
+            else None
+        )
+        resolved_capture_attempt_path = (
+            str(_safe_input_path(body.capture_attempt_path))
+            if body.capture_attempt_path
+            else None
+        )
         resolved_output_path = (
-            str(_safe_output_path(body.output_path, default_path=settings.data_dir / "reports" / f"tracking_report_scope_{scope_id}.{normalized_format}"))
+            str(
+                _safe_output_path(
+                    body.output_path,
+                    default_path=settings.data_dir
+                    / "reports"
+                    / f"tracking_report_scope_{scope_id}.{normalized_format}",
+                )
+            )
             if body.output_path
             else None
         )
@@ -770,8 +977,16 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
                 "task_path": resolved_task_path or "",
                 "output_path": str(artifacts.output_path),
                 "output_format": artifacts.output_format,
-                **({"acquisition_profile_path": resolved_acquisition_profile_path} if resolved_acquisition_profile_path else {}),
-                **({"capture_attempt_path": resolved_capture_attempt_path} if resolved_capture_attempt_path else {}),
+                **(
+                    {"acquisition_profile_path": resolved_acquisition_profile_path}
+                    if resolved_acquisition_profile_path
+                    else {}
+                ),
+                **(
+                    {"capture_attempt_path": resolved_capture_attempt_path}
+                    if resolved_capture_attempt_path
+                    else {}
+                ),
                 "report_payload": serialized_report_payload,
             },
         }
@@ -786,10 +1001,14 @@ def report_monitor_scope(scope_id: int, body: ReportScopeRequest):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.get("/monitor-scopes/{scope_id}/reports/latest", response_model=ArtifactEnvelope)
+@router.get(
+    "/monitor-scopes/{scope_id}/reports/latest", response_model=ArtifactEnvelope
+)
 def get_latest_scope_report(scope_id: int):
     try:
-        envelope = load_latest_scope_report_artifact_or_raise(db_path=settings.db_path, scope_id=scope_id)
+        envelope = load_latest_scope_report_artifact_or_raise(
+            db_path=settings.db_path, scope_id=scope_id
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ArtifactEnvelope(
@@ -800,9 +1019,13 @@ def get_latest_scope_report(scope_id: int):
     )
 
 
-@router.get("/monitor-scopes/{scope_id}/manifest/latest", response_model=ArtifactEnvelope)
+@router.get(
+    "/monitor-scopes/{scope_id}/manifest/latest", response_model=ArtifactEnvelope
+)
 def get_latest_scope_manifest(scope_id: int):
-    from web_listening.blocks.staged_workflow import export_manifest as staged_export_manifest
+    from web_listening.blocks.staged_workflow import (
+        export_manifest as staged_export_manifest,
+    )
 
     try:
         envelope = load_latest_scope_manifest_artifact_or_create(
@@ -823,6 +1046,10 @@ def get_latest_scope_manifest(scope_id: int):
 
 @router.post("/sites/{site_id}/check")
 def check_site(site_id: int, background_tasks: BackgroundTasks):
+    raise HTTPException(
+        status_code=409,
+        detail="legacy check target reads are disabled; use governed scoped execution",
+    )
     storage = get_storage()
     try:
         require_site_or_raise(storage, site_id)
@@ -837,7 +1064,12 @@ def check_site(site_id: int, background_tasks: BackgroundTasks):
 
 def _do_check(site_id: int):
     from web_listening.blocks.crawler import Crawler
-    from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links, select_compare_text
+    from web_listening.blocks.diff import (
+        compute_diff,
+        find_document_links,
+        find_new_links,
+        select_compare_text,
+    )
     from web_listening.models import Change
 
     storage = get_storage()
@@ -866,44 +1098,54 @@ def _do_check(site_id: int):
                     ),
                 )
                 if has_changed:
-                    storage.add_change(Change(
-                        site_id=site.id,
-                        detected_at=datetime.now(timezone.utc),
-                        change_type="new_content",
-                        summary=f"Content changed on {site.name}",
-                        diff_snippet=diff_snippet,
-                    ))
+                    storage.add_change(
+                        Change(
+                            site_id=site.id,
+                            detected_at=datetime.now(timezone.utc),
+                            change_type="new_content",
+                            summary=f"Content changed on {site.name}",
+                            diff_snippet=diff_snippet,
+                        )
+                    )
 
                 new_links = find_new_links(old_snap.links, new_snap.links)
                 if new_links:
-                    storage.add_change(Change(
-                        site_id=site.id,
-                        detected_at=datetime.now(timezone.utc),
-                        change_type="new_links",
-                        summary=f"{len(new_links)} new links found",
-                        diff_snippet="\n".join(new_links[:10]),
-                    ))
+                    storage.add_change(
+                        Change(
+                            site_id=site.id,
+                            detected_at=datetime.now(timezone.utc),
+                            change_type="new_links",
+                            summary=f"{len(new_links)} new links found",
+                            diff_snippet="\n".join(new_links[:10]),
+                        )
+                    )
 
                 doc_links = find_document_links(new_links)
                 if doc_links:
-                    storage.add_change(Change(
-                        site_id=site.id,
-                        detected_at=datetime.now(timezone.utc),
-                        change_type="new_document",
-                        summary=f"{len(doc_links)} new document links",
-                        diff_snippet="\n".join(doc_links[:10]),
-                    ))
+                    storage.add_change(
+                        Change(
+                            site_id=site.id,
+                            detected_at=datetime.now(timezone.utc),
+                            change_type="new_document",
+                            summary=f"{len(doc_links)} new document links",
+                            diff_snippet="\n".join(doc_links[:10]),
+                        )
+                    )
 
             storage.add_snapshot(new_snap)
             storage.update_site_checked(site.id)
     except Exception as exc:
         import logging
-        logging.getLogger(__name__).error("Error during background check for site %s: %s", site_id, exc)
+
+        logging.getLogger(__name__).error(
+            "Error during background check for site %s: %s", site_id, exc
+        )
     finally:
         storage.close()
 
 
 # ── Changes ─────────────────────────────────────────────────────────────────
+
 
 @router.get("/changes", response_model=List[Change])
 def list_changes(site_id: Optional[int] = None, since: Optional[str] = None):
@@ -918,6 +1160,7 @@ def list_changes(site_id: Optional[int] = None, since: Optional[str] = None):
 
 
 # ── Documents ────────────────────────────────────────────────────────────────
+
 
 @router.get("/documents", response_model=List[Document])
 def list_documents(institution: Optional[str] = None, site_id: Optional[int] = None):
@@ -945,7 +1188,13 @@ def update_document_content(document_id: int, body: UpdateDocumentContentRequest
 
 
 @router.post("/sites/{site_id}/download-docs")
-def download_docs_for_site(site_id: int, body: DownloadDocsRequest, background_tasks: BackgroundTasks):
+def download_docs_for_site(
+    site_id: int, body: DownloadDocsRequest, background_tasks: BackgroundTasks
+):
+    raise HTTPException(
+        status_code=409,
+        detail="legacy download target reads are disabled; use governed scoped execution",
+    )
     if body.url is not None:
         _validate_url(body.url)
     storage = get_storage()
@@ -983,16 +1232,25 @@ def _do_download(site_id: int, institution: str, url: Optional[str]):
         with DocumentProcessor(storage=storage) as proc:
             for doc_url in urls_to_download:
                 try:
-                    doc = proc.process(doc_url, site_id=site_id, institution=institution, page_url=site.url)
+                    doc = proc.process(
+                        doc_url,
+                        site_id=site_id,
+                        institution=institution,
+                        page_url=site.url,
+                    )
                     storage.add_document(doc)
                 except Exception as exc:
                     import logging
-                    logging.getLogger(__name__).error("Failed to download %s: %s", doc_url, exc)
+
+                    logging.getLogger(__name__).error(
+                        "Failed to download %s: %s", doc_url, exc
+                    )
     finally:
         storage.close()
 
 
 # ── Analysis ─────────────────────────────────────────────────────────────────
+
 
 @router.post("/analyze", response_model=AnalysisReport)
 def run_analysis(body: AnalyzeRequest):
@@ -1002,7 +1260,11 @@ def run_analysis(body: AnalyzeRequest):
     storage = get_storage()
     try:
         period_end = datetime.now(timezone.utc)
-        period_start = dtparser.parse(body.since_date) if body.since_date else period_end - timedelta(days=7)
+        period_start = (
+            dtparser.parse(body.since_date)
+            if body.since_date
+            else period_end - timedelta(days=7)
+        )
 
         changes = storage.list_changes(since=period_start)
         analyzer = Analyzer()

@@ -18,6 +18,7 @@ def make_mock_transport(html: str, status_code: int = 200):
             content=html.encode(),
             headers={"content-type": "text/html"},
         )
+
     return httpx.MockTransport(handler)
 
 
@@ -153,7 +154,7 @@ def test_resolve_request_headers_prefers_dedicated_user_agent_over_header():
     assert "Mozilla/5.0" in headers["User-Agent"]
 
 
-def test_crawler_fetch_page_uses_custom_user_agent():
+def test_crawler_rejects_custom_user_agent_override_before_target_request():
     captured_user_agent = ""
 
     def handler(request):
@@ -168,22 +169,23 @@ def test_crawler_fetch_page_uses_custom_user_agent():
     client = httpx.Client(transport=httpx.MockTransport(handler))
     crawler = Crawler(client=client)
 
-    page = crawler.fetch_page(
-        "https://example.com",
-        fetch_config_json={"user_agent_profile": "browser"},
-    )
+    with pytest.raises(ValueError, match="frozen gateway identity"):
+        crawler.fetch_page(
+            "https://example.com",
+            fetch_config_json={"user_agent_profile": "browser"},
+        )
 
-    assert "Mozilla/5.0" in captured_user_agent
-    assert page.metadata_json["request_user_agent"] == captured_user_agent
+    assert captured_user_agent == ""
 
 
-def test_crawler_fetch_http_error():
+def test_crawler_returns_non_ok_status_for_governed_classification():
     transport = make_mock_transport("Not Found", status_code=404)
     client = httpx.Client(transport=transport)
     crawler = Crawler(client=client)
 
-    with pytest.raises(httpx.HTTPStatusError):
-        crawler.fetch("https://example.com")
+    page = crawler.fetch_page("https://example.com")
+
+    assert page.status_code == 404
 
 
 def test_crawler_snapshot_creates_snapshot():

@@ -19,7 +19,9 @@ from web_listening.blocks.acquisition_profile import (
     CaptureAttempt,
 )
 from web_listening.blocks.crawler import FetchResult, HttpCrawler
-from web_listening.executors.http_wrapper import HttpAcquisitionAdapter as HttpWrapperAdapter
+from web_listening.executors.http_wrapper import (
+    HttpAcquisitionAdapter as HttpWrapperAdapter,
+)
 
 
 def make_fetch_result(
@@ -73,21 +75,21 @@ def make_profile(**updates) -> AcquisitionProfile:
     return AcquisitionProfile(**payload)
 
 
-def test_http_wrapper_status_error_uses_exception_request_when_response_is_unattached():
-    request = httpx.Request("GET", "https://example.com/missing", headers={"User-Agent": "Exception UA"})
+def test_http_wrapper_does_not_recover_a_legacy_direct_client_error():
+    request = httpx.Request(
+        "GET", "https://example.com/missing", headers={"User-Agent": "Exception UA"}
+    )
     response = httpx.Response(404, text="<html><main>missing</main></html>")
 
     class StatusErrorCrawler:
         def fetch_page(self, url, *, fetch_config_json=None):
             raise httpx.HTTPStatusError("not found", request=request, response=response)
 
-    result = HttpWrapperAdapter(StatusErrorCrawler()).capture(
-        "https://example.com/missing",
-        config={"headers": {"User-Agent": "Configured UA"}},
-    )
-
-    assert result.status_code == 404
-    assert result.metadata_json["request_user_agent"] == "Exception UA"
+    with pytest.raises(httpx.HTTPStatusError, match="not found"):
+        HttpWrapperAdapter(StatusErrorCrawler()).capture(
+            "https://example.com/missing",
+            config={"headers": {"User-Agent": "Configured UA"}},
+        )
 
 
 class FakeAdapter:
@@ -113,7 +115,9 @@ class FakeCloakProbeAdapterForSafety:
     adapter_id = "cloakbrowser"
 
     def capture(self, url: str, *, config=None) -> FetchResult:
-        raise AssertionError("cloakbrowser capture should be blocked before adapter execution")
+        raise AssertionError(
+            "cloakbrowser capture should be blocked before adapter execution"
+        )
 
 
 class FakeCloakPage:
@@ -124,7 +128,9 @@ class FakeCloakPage:
         self.url = "https://example.com/final"
 
     def goto(self, url: str, *, wait_until: str, timeout: int):
-        self.goto_calls.append({"url": url, "wait_until": wait_until, "timeout": timeout})
+        self.goto_calls.append(
+            {"url": url, "wait_until": wait_until, "timeout": timeout}
+        )
         return SimpleNamespace(status=200)
 
     def wait_for_selector(self, selector: str, *, timeout: int):
@@ -162,7 +168,9 @@ class FakeCloakBrowser:
 
 def test_http_like_good_fetch_result_passes_and_records_counts():
     gates = AcquisitionQualityGates(min_words=3, min_links=2, min_document_links=1)
-    result = make_fetch_result(text="one two three four", link_count=2, document_link_count=1)
+    result = make_fetch_result(
+        text="one two three four", link_count=2, document_link_count=1
+    )
 
     attempt = evaluate_fetch_result("web_http", "https://example.com/", result, gates)
 
@@ -198,13 +206,20 @@ def test_redirect_status_fails_when_status_ok_is_required():
 @pytest.mark.parametrize(
     ("result", "expected_reason"),
     [
-        (make_fetch_result(text="too short", link_count=3, document_link_count=1), "word_count 2 < min_words 3"),
         (
-            make_fetch_result(text="one two three", link_count=1, document_link_count=1),
+            make_fetch_result(text="too short", link_count=3, document_link_count=1),
+            "word_count 2 < min_words 3",
+        ),
+        (
+            make_fetch_result(
+                text="one two three", link_count=1, document_link_count=1
+            ),
             "link_count 1 < min_links 2",
         ),
         (
-            make_fetch_result(text="one two three", link_count=2, document_link_count=0),
+            make_fetch_result(
+                text="one two three", link_count=2, document_link_count=0
+            ),
             "document_link_count 0 < min_document_links 1",
         ),
     ],
@@ -229,7 +244,9 @@ def test_blocked_marker_fails_case_insensitively():
     )
     result = make_fetch_result(text="ACCESS DENIED by upstream", link_count=0)
 
-    attempt = evaluate_fetch_result("browser_rendered", "https://example.com/", result, gates)
+    attempt = evaluate_fetch_result(
+        "browser_rendered", "https://example.com/", result, gates
+    )
 
     assert attempt.status == "blocked"
     assert "blocked marker" in attempt.failure_reason
@@ -237,7 +254,9 @@ def test_blocked_marker_fails_case_insensitively():
 
 
 def test_evaluate_capture_attempt_preserves_existing_blocked_evidence():
-    gates = AcquisitionQualityGates(min_words=1, min_links=0, blocked_markers=["captcha"])
+    gates = AcquisitionQualityGates(
+        min_words=1, min_links=0, blocked_markers=["captcha"]
+    )
     attempt = CaptureAttempt(
         adapter="web_http",
         status="blocked",
@@ -351,7 +370,7 @@ def test_http_acquisition_adapter_returns_fetch_result_for_non_ok_http_response(
     assert "status_code 404" in attempt.failure_reason
 
 
-def test_cloakbrowser_adapter_uses_lazy_launch_and_allowlisted_config(monkeypatch):
+def test_cloakbrowser_target_read_is_disabled_before_launch(monkeypatch):
     page = FakeCloakPage()
     browser = FakeCloakBrowser(page)
     launch_calls = []
@@ -360,66 +379,33 @@ def test_cloakbrowser_adapter_uses_lazy_launch_and_allowlisted_config(monkeypatc
         launch_calls.append(kwargs)
         return browser
 
-    monkeypatch.setitem(sys.modules, "cloakbrowser", SimpleNamespace(launch=fake_launch))
+    monkeypatch.setitem(
+        sys.modules, "cloakbrowser", SimpleNamespace(launch=fake_launch)
+    )
     adapter = CloakBrowserAcquisitionAdapter()
 
-    result = adapter.capture(
-        "https://example.com/",
-        config={
-            "user_agent": "Example UA",
-            "headless": False,
-            "proxy": {"server": "http://proxy.example:8080"},
-            "timezone": "America/New_York",
-            "locale": "en-US",
-            "geoip": True,
-            "humanize": True,
-            "human_preset": "default",
-            "args": ["--not-forwarded"],
-            "timeout_ms": 1234,
-            "wait_until": "domcontentloaded",
-            "wait_for": "main",
-            "extra_wait_ms": 50,
-            "ignored": "not-forwarded",
-        },
-    )
+    with pytest.raises(RuntimeError, match="disabled"):
+        adapter.capture(
+            "https://example.com/",
+            config={"proxy": {"server": "http://proxy.example:8080"}},
+        )
 
-    assert launch_calls == [
-        {
-            "headless": False,
-            "proxy": {"server": "http://proxy.example:8080"},
-            "timezone": "America/New_York",
-            "locale": "en-US",
-            "geoip": True,
-            "humanize": True,
-            "human_preset": "default",
-        }
-    ]
-    assert browser.new_page_calls == [{"user_agent": "Example UA"}]
-    assert page.goto_calls == [
-        {"url": "https://example.com/", "wait_until": "domcontentloaded", "timeout": 1234}
-    ]
-    assert page.wait_for_selector_calls == [{"selector": "main", "timeout": 1234}]
-    assert page.wait_for_timeout_calls == [50]
-    assert browser.closed is True
-    assert result.status_code == 200
-    assert result.final_url == "https://example.com/final"
-    assert result.metadata_json["driver"] == "cloakbrowser"
-    assert result.metadata_json["request_user_agent"] == "Example UA"
-    assert result.metadata_json["humanize"] is True
-    assert result.metadata_json["wait_for"] == "main"
-    assert result.metadata_json["link_count"] == 3
+    assert launch_calls == []
+    assert browser.closed is False
 
 
-def test_cloakbrowser_adapter_reports_missing_optional_dependency(monkeypatch):
+def test_cloakbrowser_disabled_result_does_not_import_optional_dependency(monkeypatch):
     def fake_import_module(name: str):
         if name == "cloakbrowser":
             raise ImportError("missing cloakbrowser")
         raise AssertionError(f"unexpected import: {name}")
 
-    monkeypatch.setattr("web_listening.blocks.acquisition_capture.import_module", fake_import_module)
+    monkeypatch.setattr(
+        "web_listening.blocks.acquisition_capture.import_module", fake_import_module
+    )
     adapter = CloakBrowserAcquisitionAdapter()
 
-    with pytest.raises(RuntimeError, match=r"pip install -e .*\[cloakbrowser\]"):
+    with pytest.raises(RuntimeError, match="disabled"):
         adapter.capture("https://example.com/")
 
 
@@ -434,7 +420,9 @@ def test_run_capture_attempt_blocks_cloakbrowser_without_authorized_profile():
     )
 
     with pytest.raises(PermissionError, match="CloakBrowser capture requires"):
-        run_capture_attempt("https://example.com/", FakeCloakProbeAdapterForSafety(), profile)
+        run_capture_attempt(
+            "https://example.com/", FakeCloakProbeAdapterForSafety(), profile
+        )
 
 
 def test_build_builtin_adapters_exposes_http_browser_and_cloakbrowser_adapters():

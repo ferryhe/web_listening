@@ -1,0 +1,24 @@
+schema_version: agentic-site-rules.v1
+rule_id: example-agentic
+version: 1.0.0
+site_key: example
+scope:
+  seed_urls:
+    - https://example.invalid/reports/index.html
+  allowed_origins:
+    - https://example.invalid
+  allow_patterns:
+    - https://example.invalid/reports/**
+  queries:
+    - text: site:example.invalid annual report
+      required: false
+budgets:
+  max_depth: 2
+  max_requests: 20
+  max_bytes: 10485760
+  max_files: 20
+  max_concurrency: 2
+  max_retries: 1
+content_types:
+  - text/html
+  - application/pdf

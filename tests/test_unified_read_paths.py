@@ -139,6 +139,26 @@ def test_bounded_body_uses_final_url_when_gzip_suffix_disappears_on_redirect() -
     ]
 
 
+def test_caller_can_narrow_one_governed_read_body_limit() -> None:
+    transport = _Transport(
+        {
+            "https://example.com/robots.txt": (404, b"", {}),
+            "https://example.com/large.html": (
+                200,
+                b"0123456789",
+                {"content-type": "text/html"},
+            ),
+        }
+    )
+
+    with pytest.raises(BodyFailure) as error:
+        _reader(transport, "https://example.com").read(
+            "https://example.com/large.html", max_body_bytes=5
+        )
+
+    assert error.value.reason == "wire_budget_exhausted"
+
+
 def test_bounded_body_uses_final_url_when_gzip_suffix_appears_on_redirect() -> None:
     transport = _Transport(
         {
@@ -420,7 +440,7 @@ def test_legacy_tree_entrypoints_reject_before_storage(
     monkeypatch.setattr(module, "Storage", forbidden_storage)
 
     with pytest.raises(
-        ValueError, match="governed acquisition gateway|PreparedScopeExecution"
+        ValueError, match=r"governed acquisition gateway|PreparedScopeExecution"
     ):
         getattr(module, function_name)(**kwargs)
 

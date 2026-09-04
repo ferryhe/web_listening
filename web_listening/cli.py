@@ -1644,25 +1644,65 @@ def run_scope(
 ):
     """Run an initialized monitor scope incrementally."""
     from web_listening.blocks.job_orchestration import persist_job_result
-    from web_listening.blocks.staged_workflow import prepare_scope_execution
+    from web_listening.blocks.staged_workflow import (
+        InitialAcquisitionRejected,
+        prepare_scope_execution,
+    )
     from web_listening.blocks.staged_workflow import run_scope as staged_run_scope
+    from web_listening.contracts import (
+        acquisition_batch_result_from_initial_rejection,
+        acquisition_batch_result_from_scope_run,
+    )
 
     started = datetime.now(timezone.utc)
-    prepared = prepare_scope_execution(
-        operation="run",
-        scope_path=scope_path,
-        acquisition_profile_path=acquisition_profile_path,
-        max_depth=max_depth,
-        max_pages=max_pages,
-        max_files=max_files,
-        site_skill_root=site_skill_root,
-    )
+    try:
+        prepared = prepare_scope_execution(
+            operation="run",
+            scope_path=scope_path,
+            acquisition_profile_path=acquisition_profile_path,
+            max_depth=max_depth,
+            max_pages=max_pages,
+            max_files=max_files,
+            site_skill_root=site_skill_root,
+        )
+    except InitialAcquisitionRejected as exc:
+        acquisition_result = acquisition_batch_result_from_initial_rejection(
+            site_key=exc.plan.site_key,
+            requested_url=exc.plan.seed_url,
+            outcome=exc.outcome,
+        )
+        job = persist_job_result(
+            job_type="scope.run",
+            scope_id=exc.plan.scope_id,
+            produced_artifacts={},
+            accepted_at=started,
+            started_at=started,
+            finished_at=datetime.now(timezone.utc),
+            status="failed",
+            error="initial acquisition did not succeed",
+            error_code="acquisition.not_full_success",
+            error_detail={"counts": acquisition_result["counts"]},
+            acquisition_result=acquisition_result,
+        )
+        _emit_job(
+            job,
+            json_output=json_output,
+            human_text=(
+                f"Run scope failed initial acquisition\n"
+                f"Job ID: {job.job_id}\n"
+                f"Scope: {scope_path}\n"
+                f"status=failed scope_id={exc.plan.scope_id}"
+            ),
+        )
+        raise typer.Exit(code=1) from None
     artifacts = staged_run_scope(
         download_files=download_files,
         report_path=report_path or None,
         prepared=prepared,
     )
     plan = artifacts.plan
+    acquisition_result = acquisition_batch_result_from_scope_run(artifacts.result)
+    full_success = acquisition_result["full_success"] is True
     job = persist_job_result(
         job_type="scope.run",
         scope_id=artifacts.result.scope_id or plan.scope_id,
@@ -1674,6 +1714,11 @@ def run_scope(
         accepted_at=started,
         started_at=started,
         finished_at=datetime.now(timezone.utc),
+        status="completed" if full_success else "failed",
+        error="" if full_success else "acquisition batch did not fully succeed",
+        error_code="" if full_success else "acquisition.not_full_success",
+        error_detail={} if full_success else {"counts": acquisition_result["counts"]},
+        acquisition_result=acquisition_result,
     )
     _emit_job(
         job,
@@ -1686,6 +1731,8 @@ def run_scope(
             f"status={artifacts.result.status} scope_id={artifacts.result.scope_id} run_id={artifacts.result.run_id}"
         ),
     )
+    if not full_success:
+        raise typer.Exit(code=1)
 
 
 @app.command("report-scope")

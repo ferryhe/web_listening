@@ -223,6 +223,30 @@ def test_add_update_and_list_jobs(storage):
         )
     )
     run = storage.add_crawl_run(CrawlRun(scope_id=scope.id, run_type="bootstrap", status="completed"))
+    acquisition_result = {
+        "schema_version": "acquisition-batch-result.v1",
+        "run_id": f"scope-run-{run.id}",
+        "authoritative_status": "completed",
+        "status": "succeeded",
+        "full_success": True,
+        "counts": {
+            "requested": 1,
+            "succeeded": 1,
+            "failed": 0,
+            "unresolved": 0,
+            "valid_snapshots": 3,
+            "failed_evidence": 0,
+        },
+        "dispositions": [
+            {
+                "task_id": "example",
+                "requested_url": "https://example.com/",
+                "disposition": "succeeded",
+                "reason": "scope.completed",
+                "artifact_id": None,
+            }
+        ],
+    }
 
     saved = storage.add_job(
         Job(
@@ -235,6 +259,7 @@ def test_add_update_and_list_jobs(storage):
             run_id=run.id,
             produced_artifacts={"output_path": "data/reports/report.md"},
             artifact_summary={"artifact_count": 1, "artifact_keys": ["output_path"]},
+            acquisition_result=acquisition_result,
             error_detail={"message": ""},
             started_at=datetime.now(timezone.utc),
             finished_at=datetime.now(timezone.utc),
@@ -246,6 +271,8 @@ def test_add_update_and_list_jobs(storage):
     assert saved.stage_message == "Report generated."
     assert saved.produced_artifacts["output_path"].endswith("report.md")
     assert saved.artifact_summary["artifact_count"] == 1
+    assert saved.acquisition_result == acquisition_result
+    assert saved.to_delivery_payload()["acquisition_result"] == acquisition_result
 
     updated = storage.update_job(
         saved.job_id,

@@ -597,6 +597,17 @@ def _reviewed_limit(
 
 
 @dataclass(frozen=True, slots=True)
+class InitialAcquisitionRejected(RuntimeError):
+    """A governed initial seed response reached a non-accepted terminal state."""
+
+    plan: MonitorScopePlan
+    outcome: AcquisitionOutcome
+
+    def __post_init__(self) -> None:
+        RuntimeError.__init__(self, "initial governed acquisition was rejected")
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedScopeExecution:
     """One sealed authority and admitted seed response owned by one execution."""
 
@@ -683,8 +694,9 @@ def prepare_scope_execution(
             scope_id=f"admission-{effective_plan.scope_fingerprint[:16]}",
         )
         if not admitted_seed.accepted:
-            raise RuntimeError(
-                f"initial governed admission failed: {admitted_seed.classification}"
+            raise InitialAcquisitionRejected(
+                plan=effective_plan,
+                outcome=admitted_seed,
             )
         prepared = PreparedScopeExecution(
             operation=operation,

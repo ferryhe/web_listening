@@ -4,16 +4,52 @@ import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
 
+from web_listening.blocks.acquisition_terminal import classify_html_capture
 from web_listening.blocks.crawler import FetchResult
-from web_listening.contracts import CaptureContent, CaptureError, CaptureRequest, CaptureResult
+from web_listening.contracts import (
+    CaptureContent,
+    CaptureError,
+    CaptureRequest,
+    CaptureResult,
+)
 
 
-def result_from_fetch(request: CaptureRequest, result: FetchResult, started_at: datetime) -> CaptureResult:
+def result_from_fetch(
+    request: CaptureRequest, result: FetchResult, started_at: datetime
+) -> CaptureResult:
+    classification = classify_html_capture(
+        requested_url=str(request.url),
+        final_url=result.final_url or str(request.url),
+        status_code=result.status_code,
+        extracted_text=result.content_text,
+        raw_text=result.raw_html,
+    )
+    lineage = request.model_dump(
+        include={
+            "site_key",
+            "site_skill_id",
+            "site_skill_version",
+            "site_skill_digest",
+            "recipe_id",
+            "run_id",
+            "scope_id",
+            "request_id",
+            "executor_id",
+        }
+    )
+    if classification != "accepted":
+        return CaptureResult(
+            **lineage,
+            state="failed",
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc),
+            final_url=result.final_url,
+            status_code=result.status_code,
+            error=CaptureError(code=classification, message=classification),
+            metadata={"acquisition_classification": classification},
+        )
     return CaptureResult(
-        **request.model_dump(include={
-            "site_key", "site_skill_id", "site_skill_version", "site_skill_digest",
-            "recipe_id", "run_id", "scope_id", "request_id", "executor_id",
-        }),
+        **lineage,
         state="succeeded",
         started_at=started_at,
         finished_at=datetime.now(timezone.utc),

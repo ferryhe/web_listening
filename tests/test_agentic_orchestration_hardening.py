@@ -1869,7 +1869,7 @@ def test_round5_adapter_exception_boundary_covers_call_and_iteration_only(
             lambda request: httpx.Response(
                 404 if request.url.path == "/robots.txt" else 200,
                 headers={"content-type": "text/html"},
-                content=b"<html></html>",
+                    content=b"<html><body>crawler boundary fixture</body></html>",
                 request=request,
             )
         )

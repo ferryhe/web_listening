@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,8 +132,15 @@ def persist_job_result(
     error_detail: dict[str, object] | None = None,
     is_retryable: bool = False,
     artifact_summary: dict[str, object] | None = None,
+    acquisition_result: dict[str, object] | None = None,
 ) -> Job:
     artifacts = produced_artifacts or {}
+    if acquisition_result:
+        from web_listening.contracts import AcquisitionBatchResult
+
+        acquisition_result = AcquisitionBatchResult.model_validate_json(
+            json.dumps(acquisition_result)
+        ).model_dump(mode="json")
     resolved_stage = stage or (
         "completed"
         if status == "completed"
@@ -153,6 +161,7 @@ def persist_job_result(
                 run_id=run_id,
                 produced_artifacts=artifacts,
                 artifact_summary=artifact_summary or _summarize_artifacts(artifacts),
+                acquisition_result=acquisition_result or {},
                 error=error,
                 error_code=error_code,
                 error_detail=error_detail or {},

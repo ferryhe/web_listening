@@ -10,11 +10,14 @@ from typer.testing import CliRunner
 
 import web_listening.blocks.acquisition_tools as acquisition_tools
 from web_listening.cli import app
+from web_listening.blocks.acquisition_gateway import AcquisitionOutcome
 from web_listening.blocks.acquisition_profile import (
     build_default_acquisition_profile,
     render_acquisition_profile_yaml,
 )
 from web_listening.blocks.crawler import FetchResult
+from web_listening.blocks.access_gateway import AccessGatewayTransportError
+from web_listening.blocks.governed_read import governed_read_failure_payload
 from web_listening.blocks.monitor_scope_planner import (
     build_monitor_scope,
     load_monitor_scope_plan,
@@ -1978,6 +1981,216 @@ def test_bootstrap_failed_result_is_generic_runtime_failure_and_is_not_persisted
     assert persisted == []
 
 
+def test_run_scope_initial_governed_rejection_is_persisted_acquisition_failure(
+    tmp_path: Path,
+    monkeypatch,
+):
+    db_path = tmp_path / "jobs.db"
+    monkeypatch.setattr(settings, "db_path", db_path)
+    scope_path = tmp_path / "scope.yaml"
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text("profile_id: demo\n", encoding="utf-8")
+    scope_path.write_text(
+        """
+scope_fingerprint: demo
+site_key: demo
+display_name: Demo
+catalog: dev
+generated_at: 2026-04-14T00:00:00+00:00
+selection_review_status: approved
+selection_mode: manual
+business_goal: Track research.
+seed_url: https://example.com/
+homepage_url: https://example.com/
+fetch_mode: http
+fetch_config_json: {}
+tree_strategy: selected_scope
+tree_budget_profile: selected_scope_default
+file_scope_mode: site_root
+allowed_page_prefixes: [/]
+allowed_file_prefixes: [/]
+scope_id: 5
+selected_focus_prefixes: [/]
+excluded_page_prefixes: []
+deferred_page_prefixes: []
+excluded_categories: []
+max_depth: 3
+max_pages: 25
+max_files: 10
+based_on: {}
+selection_summary: {}
+notes: []
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    closed = []
+
+    class RejectedGateway:
+        plan = SimpleNamespace(acquisition_fingerprint="a" * 64)
+
+        def acquire(self, url, *, run_id, scope_id):
+            return AcquisitionOutcome(
+                request=SimpleNamespace(url=url, run_id=run_id),
+                result=None,
+                page=None,
+                classification="executor_error",
+                attempts=("web_http",),
+                coverage_complete=True,
+                attempt_records=(SimpleNamespace(reason="executor_error"),),
+            )
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow._compile_acquisition_gateway",
+        lambda *args, **kwargs: RejectedGateway(),
+    )
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.run_scope",
+        lambda **kwargs: pytest.fail("rejected admission must not enter staged run"),
+    )
+
+    response = runner.invoke(
+        app,
+        [
+            "run-scope",
+            "--scope-path",
+            str(scope_path),
+            "--acquisition-profile-path",
+            str(profile_path),
+            "--json",
+        ],
+    )
+
+    assert response.exit_code == 1
+    payload = json.loads(response.stdout)
+    acquisition = payload["acquisition_result"]
+    assert payload["job"]["status"] == "failed"
+    assert payload["error"]["code"] == "acquisition.not_full_success"
+    assert acquisition["status"] == "failed"
+    assert acquisition["full_success"] is False
+    assert acquisition["counts"] == {
+        "requested": 1,
+        "succeeded": 0,
+        "failed": 1,
+        "unresolved": 0,
+        "valid_snapshots": 0,
+        "failed_evidence": 1,
+    }
+    assert acquisition["dispositions"] == [
+        {
+            "task_id": "demo",
+            "requested_url": "https://example.com/",
+            "disposition": "failed",
+            "reason": "capture.executor_error",
+            "artifact_id": None,
+        }
+    ]
+    storage = Storage(db_path)
+    try:
+        jobs = storage.list_jobs(job_type="scope.run")
+    finally:
+        storage.close()
+    assert len(jobs) == 1
+    assert jobs[0].acquisition_result == acquisition
+    assert closed == [True]
+
+
+def test_run_scope_rollback_required_failure_stays_governed_and_unpersisted(
+    tmp_path: Path,
+    monkeypatch,
+):
+    db_path = tmp_path / "jobs.db"
+    monkeypatch.setattr(settings, "db_path", db_path)
+    scope_path = tmp_path / "scope.yaml"
+    profile_path = tmp_path / "profile.yaml"
+    scope_path.write_text("site_key: demo\n", encoding="utf-8")
+    profile_path.write_text("profile_id: demo\n", encoding="utf-8")
+    failure = AccessGatewayTransportError(
+        "timeout", "SECRET-ROLLBACK-REQUIRED", retryable=True
+    )
+
+    def fail_prepare(**kwargs):
+        del kwargs
+        raise failure
+
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.prepare_scope_execution", fail_prepare
+    )
+
+    response = runner.invoke(
+        app,
+        [
+            "run-scope",
+            "--scope-path",
+            str(scope_path),
+            "--acquisition-profile-path",
+            str(profile_path),
+            "--json",
+        ],
+    )
+
+    assert response.exit_code == 1
+    assert json.loads(response.stdout) == governed_read_failure_payload(failure)
+    assert "acquisition_result" not in response.stdout
+    assert "SECRET-ROLLBACK-REQUIRED" not in response.stdout
+    assert not db_path.exists()
+
+
+def test_run_scope_arbitrary_staged_failure_stays_generic_and_unpersisted(
+    tmp_path: Path,
+    monkeypatch,
+):
+    scope_path = tmp_path / "scope.yaml"
+    profile_path = tmp_path / "profile.yaml"
+    scope_path.write_text("site_key: demo\n", encoding="utf-8")
+    profile_path.write_text("profile_id: demo\n", encoding="utf-8")
+    canary = "SECRET-STAGED-RUNTIME"
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.prepare_scope_execution",
+        lambda **kwargs: SimpleNamespace(plan=SimpleNamespace(scope_id=5)),
+    )
+
+    def fail_staged(**kwargs):
+        del kwargs
+        raise RuntimeError(canary)
+
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.run_scope", fail_staged
+    )
+    persisted = []
+    monkeypatch.setattr(
+        "web_listening.blocks.job_orchestration.persist_job_result",
+        lambda **kwargs: persisted.append(kwargs),
+    )
+
+    response = runner.invoke(
+        app,
+        [
+            "run-scope",
+            "--scope-path",
+            str(scope_path),
+            "--acquisition-profile-path",
+            str(profile_path),
+            "--json",
+        ],
+    )
+
+    assert response.exit_code == 1
+    payload = json.loads(response.stdout)
+    assert payload["error"] == {
+        "code": "runtime.failed",
+        "detail": {},
+        "is_retryable": False,
+        "message": "command execution failed",
+    }
+    assert "acquisition_result" not in payload
+    assert canary not in response.stdout
+    assert persisted == []
+
+
 @pytest.mark.parametrize("command", ["bootstrap-scope", "run-scope"])
 def test_governed_scope_human_parser_errors_remain_human(command):
     result = runner.invoke(app, [command])
@@ -2027,7 +2240,17 @@ def test_scope_cli_prepares_once_and_uses_sealed_artifact_plan(
         return SimpleNamespace(
             plan=sealed_plan,
             report_path=tmp_path / "run.md",
-            result=SimpleNamespace(scope_id=7, run_id=11, status="completed"),
+            result=SimpleNamespace(
+                site_key="demo",
+                seed_url="https://example.com/",
+                scope_id=7,
+                run_id=11,
+                status="completed",
+                pages_seen=1,
+                files_seen=0,
+                page_failures=0,
+                file_failures=0,
+            ),
         )
 
     monkeypatch.setattr(
@@ -2125,7 +2348,17 @@ notes: []
         return SimpleNamespace(
             plan=SimpleNamespace(scope_id=5),
             report_path=report_path,
-            result=SimpleNamespace(status="completed", scope_id=5, run_id=9),
+            result=SimpleNamespace(
+                site_key="demo",
+                seed_url="https://example.com/",
+                status="completed",
+                scope_id=5,
+                run_id=9,
+                pages_seen=1,
+                files_seen=0,
+                page_failures=0,
+                file_failures=0,
+            ),
         )
 
     monkeypatch.setattr(
@@ -2177,6 +2410,114 @@ notes: []
     assert json_payload["artifact_contract"]["path_map"]["report_path"] == str(
         report_path
     )
+
+
+@pytest.mark.parametrize(
+    (
+        "pages_seen",
+        "files_seen",
+        "page_failures",
+        "file_failures",
+        "expected_exit",
+        "expected_status",
+    ),
+    [
+        (2, 1, 0, 0, 0, "succeeded"),
+        (2, 1, 1, 0, 1, "partial"),
+        (2, 1, 0, 1, 1, "partial"),
+        (0, 0, 1, 0, 1, "failed"),
+    ],
+    ids=["fully-successful", "mixed-page", "mixed-file", "failed"],
+)
+def test_run_scope_json_exposes_and_persists_canonical_acquisition_result(
+    pages_seen,
+    files_seen,
+    page_failures,
+    file_failures,
+    expected_exit,
+    expected_status,
+    tmp_path: Path,
+    monkeypatch,
+):
+    report_path = tmp_path / "run.md"
+    scope_path = tmp_path / "scope.yaml"
+    profile_path = tmp_path / "profile.yaml"
+    scope_path.write_text("site_key: demo\n", encoding="utf-8")
+    profile_path.write_text("profile_id: demo\n", encoding="utf-8")
+    plan = SimpleNamespace(scope_id=5, site_key="demo", seed_url="https://example.com/")
+    run_result = SimpleNamespace(
+        site_key="demo",
+        seed_url="https://example.com/",
+        status="completed",
+        scope_id=5,
+        run_id=9,
+        pages_seen=pages_seen,
+        files_seen=files_seen,
+        page_failures=page_failures,
+        file_failures=file_failures,
+    )
+    artifacts = SimpleNamespace(plan=plan, report_path=report_path, result=run_result)
+    persisted = []
+
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.prepare_scope_execution",
+        lambda **kwargs: SimpleNamespace(plan=plan),
+    )
+    monkeypatch.setattr(
+        "web_listening.blocks.staged_workflow.run_scope", lambda **kwargs: artifacts
+    )
+
+    def fake_persist(**kwargs):
+        persisted.append(kwargs)
+        return Job(job_id=1, **kwargs)
+
+    monkeypatch.setattr(
+        "web_listening.blocks.job_orchestration.persist_job_result", fake_persist
+    )
+
+    args = [
+        "run-scope",
+        "--scope-path",
+        str(scope_path),
+        "--acquisition-profile-path",
+        str(profile_path),
+        "--report-path",
+        str(report_path),
+        "--json",
+    ]
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    assert first.exit_code == second.exit_code == expected_exit
+    payload = json.loads(first.stdout)
+    second_payload = json.loads(second.stdout)
+    acquisition = payload["acquisition_result"]
+    assert acquisition == second_payload["acquisition_result"]
+    assert acquisition == persisted[0]["acquisition_result"]
+    assert acquisition["schema_version"] == "acquisition-batch-result.v1"
+    assert acquisition["authoritative_status"] == "completed"
+    assert acquisition["status"] == expected_status
+    assert acquisition["full_success"] is (expected_status == "succeeded")
+    assert payload["job"]["status"] == (
+        "completed" if expected_status == "succeeded" else "failed"
+    )
+    assert payload["error"]["code"] == (
+        "" if expected_status == "succeeded" else "acquisition.not_full_success"
+    )
+    assert acquisition["counts"] == {
+        "requested": 1,
+        "succeeded": 1 if expected_status == "succeeded" else 0,
+        "failed": 0 if expected_status == "succeeded" else 1,
+        "unresolved": 0,
+        "valid_snapshots": pages_seen + files_seen,
+        "failed_evidence": page_failures + file_failures,
+    }
+    assert len(acquisition["dispositions"]) == 1
+    assert persisted[0]["status"] == (
+        "completed" if expected_status == "succeeded" else "failed"
+    )
+    assert len(persisted) == 2
+    assert persisted[0]["acquisition_result"] == persisted[1]["acquisition_result"]
 
 
 def test_export_manifest_writes_json_yaml_and_markdown_artifacts(

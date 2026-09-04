@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,8 +22,11 @@ from web_listening.blocks.acquisition_profile import (
 from web_listening.blocks.agentic_orchestration import (
     AgenticAuthority,
     AgenticCandidate,
+    AgenticChildTask,
     AgenticOrchestrationError,
     AgenticOrchestrator,
+    AgenticParentTask,
+    AgenticRunResult,
     AgenticTaskRepository,
     HtmlLinkCrawlerAdapter,
     load_agentic_site_rules,
@@ -33,6 +37,7 @@ from web_listening.blocks.immutable_artifacts import ArtifactStore, ArtifactStor
 from web_listening.blocks.monitor_scope_planner import MonitorScopePlan
 from web_listening.blocks.storage import Storage
 from web_listening.contracts import (
+    AcquisitionBatchResult,
     RuntimeRequirement,
     SecretPolicy,
     SiteSkill,
@@ -405,6 +410,116 @@ def test_committed_agentic_site_rules_fixture_is_valid(tmp_path: Path) -> None:
     assert error.value.reason_code == "rules.invalid"
 
 
+def test_acquisition_batch_result_fixture_is_strict_and_idempotent() -> None:
+    fixture = (
+        Path(__file__).parents[1]
+        / "docs"
+        / "testing"
+        / "fixtures"
+        / "acquisition-batch-result-v1.sample.json"
+    )
+
+    first = AcquisitionBatchResult.model_validate_json(fixture.read_bytes())
+    second = AcquisitionBatchResult.model_validate_json(
+        first.model_dump_json().encode("utf-8")
+    )
+
+    assert first == second
+    assert first.counts.requested == len(first.dispositions)
+    assert first.status == "partial"
+    assert first.full_success is False
+
+    invalid = first.model_dump(mode="json")
+    invalid["counts"]["requested"] = 3
+    with pytest.raises(ValueError):
+        AcquisitionBatchResult.model_validate_json(json.dumps(invalid))
+
+    unstable = first.model_dump(mode="json")
+    unstable["dispositions"][1]["reason"] = "private exception message"
+    with pytest.raises(ValueError):
+        AcquisitionBatchResult.model_validate_json(json.dumps(unstable))
+
+
+@pytest.mark.parametrize(
+    ("task_status", "failure_code", "expected_reason"),
+    [
+        ("running", None, "task.running"),
+        ("queued", None, "task.queued"),
+        ("cancelled", None, "task.cancelled"),
+        ("running", "task.deferred", "task.deferred"),
+    ],
+)
+def test_nonterminal_agentic_batch_disposition_has_truthful_stable_reason(
+    task_status: str,
+    failure_code: str | None,
+    expected_reason: str,
+) -> None:
+    digest = "0" * 64
+    parent_status = "cancelled" if task_status == "cancelled" else "running"
+    parent = AgenticParentTask(
+        run_id="source-run-nonterminal",
+        parent_task_id="parent-task",
+        status=parent_status,
+        rule_id="rule",
+        rules_version="1.0.0",
+        rules_sha256=digest,
+        site_skill_id="skill",
+        site_skill_version="1.0.0",
+        site_skill_package_sha256=digest,
+        execution_plan_id="plan",
+        execution_plan_version="1.0.0",
+        execution_plan_sha256=digest,
+        read_adapter_id="adapter",
+        read_adapter_version="1.0.0",
+        replay_of_run_id=None,
+        requests_used=0,
+        bytes_used=0,
+        pages_used=0,
+        files_used=0,
+        warnings=(),
+        created_at="2026-09-04T00:00:00.000000Z",
+        finished_at=None,
+    )
+    task = AgenticChildTask(
+        task_id="seed-task",
+        run_id=parent.run_id,
+        task_key="read:https://example.invalid/",
+        task_ordinal=0,
+        kind="read",
+        required=True,
+        status=task_status,
+        requested_url="https://example.invalid/",
+        query=None,
+        depth=0,
+        discovery_kind="seed",
+        discovered_from_url=None,
+        parent_artifact_id=None,
+        adapter_id="adapter",
+        adapter_version="1.0.0",
+        discovery_adapter_id=None,
+        discovery_adapter_version=None,
+        attempt_count=0,
+        artifact_id=None,
+        access_decision_id=None,
+        failure_code=failure_code,
+        replay_of_task_id=None,
+        created_at="2026-09-04T00:00:00.000000Z",
+        finished_at=None,
+    )
+
+    batch = AgenticRunResult(
+        parent=parent,
+        tasks=(task,),
+        observations=(),
+        artifacts=(),
+    ).to_acquisition_batch_result()
+
+    assert batch["status"] == "unresolved"
+    assert batch["counts"]["unresolved"] == 1
+    assert batch["dispositions"][0]["disposition"] == "unresolved"
+    assert batch["dispositions"][0]["reason"] == expected_reason
+
+
 def test_parent_cannot_complete_until_every_required_child_is_terminal(
     stores, rules_path: Path, authority: AgenticAuthority
 ) -> None:
@@ -469,6 +584,242 @@ def test_complete_run_uses_gateway_stores_originals_and_traces_lineage(
     assert child.observation.access_decision_id.startswith("access-decision-")
     assert result.parent.site_skill_version == authority.site_skill_version
     assert result.parent.execution_plan_sha256 == authority.execution_plan_sha256
+
+
+def test_fully_successful_agentic_batch_has_explicit_terminal_counts(
+    stores, tmp_path: Path, authority: AgenticAuthority
+) -> None:
+    path = tmp_path / "successful-batch.yaml"
+    seeds = (
+        "https://example.invalid/root.html",
+        "https://example.invalid/second.html",
+    )
+    path.write_text(
+        _rules_text(seeds=seeds, max_depth=0),
+        encoding="utf-8",
+    )
+    rules = load_agentic_site_rules(path)
+    gateway = FakeReadGateway(
+        {
+            seeds[0]: (b"<html><body>first</body></html>", "text/html"),
+            seeds[1]: (b"<html><body>second</body></html>", "text/html"),
+        }
+    )
+
+    result = _orchestrator(
+        stores=stores, gateway=gateway, authority=authority
+    ).run(rules=rules, run_id="source-run-successful-batch")
+    batch = result.to_acquisition_batch_result()
+
+    assert batch == result.to_acquisition_batch_result()
+    assert batch["schema_version"] == "acquisition-batch-result.v1"
+    assert batch["status"] == "succeeded"
+    assert batch["full_success"] is True
+    assert batch["counts"] == {
+        "requested": 2,
+        "succeeded": 2,
+        "failed": 0,
+        "unresolved": 0,
+        "valid_snapshots": 2,
+        "failed_evidence": 0,
+    }
+    assert [item["requested_url"] for item in batch["dispositions"]] == list(seeds)
+    assert all(item["disposition"] == "succeeded" for item in batch["dispositions"])
+    assert all(item["reason"] == "read.completed" for item in batch["dispositions"])
+    assert all(item["artifact_id"] for item in batch["dispositions"])
+
+
+def test_agentic_batch_counts_only_external_seed_requests_and_honors_parent_status(
+    stores, tmp_path: Path, authority: AgenticAuthority
+) -> None:
+    path = tmp_path / "external-request-batch.yaml"
+    path.write_text(
+        _rules_text(queries="[{text: climate report, required: false}]"),
+        encoding="utf-8",
+    )
+    rules = load_agentic_site_rules(path)
+    gateway = FakeReadGateway(
+        {
+            "https://example.invalid/root.html": (HTML, "text/html"),
+            "https://example.invalid/child.html": (CHILD, "text/html"),
+        }
+    )
+
+    result = _orchestrator(
+        stores=stores,
+        gateway=gateway,
+        authority=authority,
+        search_adapter=FailingSearchAdapter(),
+    ).run(rules=rules, run_id="source-run-external-request-batch")
+    batch = result.to_acquisition_batch_result()
+
+    assert result.parent.status == "partial"
+    assert batch == result.to_acquisition_batch_result()
+    assert batch["authoritative_status"] == "partial"
+    assert batch["status"] == "partial"
+    assert batch["full_success"] is False
+    assert batch["counts"] == {
+        "requested": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "unresolved": 0,
+        "valid_snapshots": 2,
+        "failed_evidence": 0,
+    }
+    assert len(batch["dispositions"]) == 1
+    assert batch["dispositions"][0]["requested_url"] == rules.scope.seed_urls[0]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"<html><body><main>Substantive climate research report.</main>"
+        b"<script src='/cdn-cgi/rum?token=cloudflare'></script></body></html>",
+        b"<html><body><main>Substantive insurance update.</main>"
+        b"<script src='https://www.google.com/recaptcha/api.js'></script></body></html>",
+        b"<html><body><main>Substantive actuarial update.</main>"
+        b"<noscript>Enable JavaScript for interactive charts</noscript></body></html>",
+        b"<html><body><main>Cloudflare is discussed in this substantive climate "
+        b"infrastructure report.</main></body></html>",
+        b"<html><body><main>Substantive climate results. Enable JavaScript to view "
+        b"the interactive chart.</main></body></html>",
+    ],
+    ids=[
+        "cloudflare-insights",
+        "recaptcha-script",
+        "chart-noscript",
+        "visible-cloudflare-discussion",
+        "visible-interactive-chart-ui",
+    ],
+)
+def test_incidental_marker_mentions_keep_agentic_batch_fully_successful(
+    body, stores, rules_path: Path, authority: AgenticAuthority
+) -> None:
+    rules = load_agentic_site_rules(rules_path)
+    gateway = FakeReadGateway(
+        {"https://example.invalid/root.html": (body, "text/html")}
+    )
+
+    result = _orchestrator(
+        stores=stores, gateway=gateway, authority=authority
+    ).run(rules=rules, run_id=f"source-run-incidental-{hashlib.sha256(body).hexdigest()[:8]}")
+    batch = result.to_acquisition_batch_result()
+
+    assert result.parent.status == "completed"
+    assert batch["status"] == "succeeded"
+    assert batch["full_success"] is True
+    assert batch["counts"]["valid_snapshots"] == 1
+
+
+def test_verify_human_page_is_failed_without_agentic_artifact(
+    stores, rules_path: Path, authority: AgenticAuthority
+) -> None:
+    rules = load_agentic_site_rules(rules_path)
+    seed = rules.scope.seed_urls[0]
+    gateway = FakeReadGateway(
+        {
+            seed: (
+                b"<html><body>Please verify you are human to continue</body></html>",
+                "text/html",
+            )
+        }
+    )
+
+    result = _orchestrator(
+        stores=stores, gateway=gateway, authority=authority
+    ).run(rules=rules, run_id="source-run-verify-human")
+    batch = result.to_acquisition_batch_result()
+
+    assert result.parent.status == "failed"
+    assert result.artifacts == ()
+    assert batch["status"] == "failed"
+    assert batch["full_success"] is False
+    assert batch["counts"]["valid_snapshots"] == 0
+    assert batch["counts"]["failed_evidence"] == 1
+    assert batch["dispositions"][0]["reason"] == "capture.blocked"
+
+
+def test_mixed_agentic_batch_separates_snapshots_failures_and_unresolved_counts(
+    stores, tmp_path: Path, authority: AgenticAuthority
+) -> None:
+    path = tmp_path / "mixed-batch.yaml"
+    seeds = (
+        "https://example.invalid/root.html",
+        "https://example.invalid/captcha.html",
+        "https://example.invalid/error.html",
+    )
+    path.write_text(
+        _rules_text(seeds=seeds, max_depth=0, max_retries=0),
+        encoding="utf-8",
+    )
+    rules = load_agentic_site_rules(path)
+    gateway = FakeReadGateway(
+        {
+            seeds[0]: (b"<html><body>good content</body></html>", "text/html"),
+            seeds[1]: (
+                b"<html><body>Just a moment. Complete CAPTCHA.</body></html>",
+                "text/html",
+            ),
+            seeds[2]: (b"<html><body>unused</body></html>", "text/html"),
+        }
+    )
+    gateway.failures[seeds[2]] = [RuntimeError("private acquisition detail")]
+
+    result = _orchestrator(
+        stores=stores, gateway=gateway, authority=authority
+    ).run(rules=rules, run_id="source-run-mixed-batch")
+    batch = result.to_acquisition_batch_result()
+
+    assert batch["status"] == "partial"
+    assert batch["full_success"] is False
+    assert batch["counts"] == {
+        "requested": 3,
+        "succeeded": 1,
+        "failed": 2,
+        "unresolved": 0,
+        "valid_snapshots": 1,
+        "failed_evidence": 2,
+    }
+    assert len(batch["dispositions"]) == 3
+    assert len({item["task_id"] for item in batch["dispositions"]}) == 3
+    by_url = {item["requested_url"]: item for item in batch["dispositions"]}
+    assert by_url[seeds[0]]["disposition"] == "succeeded"
+    assert by_url[seeds[0]]["artifact_id"]
+    assert by_url[seeds[1]] == {
+        "task_id": by_url[seeds[1]]["task_id"],
+        "requested_url": seeds[1],
+        "disposition": "failed",
+        "reason": "capture.blocked",
+        "artifact_id": None,
+    }
+    assert by_url[seeds[2]]["disposition"] == "failed"
+    assert by_url[seeds[2]]["reason"] == "gateway.transport.unclassified_transport"
+    assert by_url[seeds[2]]["artifact_id"] is None
+    assert "private acquisition detail" not in str(batch)
+    assert len(result.artifacts) == 1
+
+
+def test_agentic_empty_extracted_content_is_failed_without_artifact(
+    stores, rules_path: Path, authority: AgenticAuthority
+) -> None:
+    rules = load_agentic_site_rules(rules_path)
+    seed = rules.scope.seed_urls[0]
+    gateway = FakeReadGateway(
+        {seed: (b"<!doctype html><html><body></body></html>", "text/html")}
+    )
+
+    result = _orchestrator(
+        stores=stores, gateway=gateway, authority=authority
+    ).run(rules=rules, run_id="source-run-empty-content")
+    batch = result.to_acquisition_batch_result()
+
+    assert result.parent.status == "failed"
+    assert result.artifacts == ()
+    assert batch["status"] == "failed"
+    assert batch["full_success"] is False
+    assert batch["counts"]["succeeded"] == 0
+    assert batch["counts"]["failed"] == 1
+    assert batch["dispositions"][0]["reason"] == "capture.empty_content"
 
 
 def test_same_run_replay_is_stable_and_creates_no_duplicate_observations(
@@ -610,6 +961,14 @@ def test_content_type_reject_fail_retry_cancel_and_replay_lineage_are_offline(
     assert all(
         item.reason_code == "gateway.transport.timeout" for item in failed.observations
     )
+    assert failed.to_acquisition_batch_result()["counts"] == {
+        "requested": 1,
+        "succeeded": 0,
+        "failed": 1,
+        "unresolved": 0,
+        "valid_snapshots": 0,
+        "failed_evidence": 2,
+    }
 
     replay_gateway = FakeReadGateway(
         {
@@ -648,6 +1007,17 @@ def test_content_type_reject_fail_retry_cancel_and_replay_lineage_are_offline(
     assert cancelled.parent.status == "cancelled"
     assert len(cancel_gateway.calls) == 1
     assert any(task.status == "cancelled" for task in cancelled.tasks)
+    cancelled_batch = cancelled.to_acquisition_batch_result()
+    assert cancelled_batch["status"] == "partial"
+    assert cancelled_batch["full_success"] is False
+    assert cancelled_batch["counts"] == {
+        "requested": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "unresolved": 0,
+        "valid_snapshots": 1,
+        "failed_evidence": 0,
+    }
 
 
 def test_crawler_and_store_failures_become_stable_partial_or_failed_states(

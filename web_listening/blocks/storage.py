@@ -1738,6 +1738,7 @@ class Storage:
                 run_id INTEGER,
                 produced_artifacts_json TEXT DEFAULT '{}',
                 artifact_summary_json TEXT DEFAULT '{}',
+                acquisition_result_json TEXT DEFAULT '{}',
                 error TEXT DEFAULT '',
                 error_code TEXT DEFAULT '',
                 error_detail_json TEXT DEFAULT '{}',
@@ -1935,6 +1936,7 @@ class Storage:
         self._ensure_column("jobs", "stage", "TEXT DEFAULT 'accepted'")
         self._ensure_column("jobs", "stage_message", "TEXT DEFAULT ''")
         self._ensure_column("jobs", "artifact_summary_json", "TEXT DEFAULT '{}'")
+        self._ensure_column("jobs", "acquisition_result_json", "TEXT DEFAULT '{}'")
         self._ensure_column("jobs", "error_code", "TEXT DEFAULT ''")
         self._ensure_column("jobs", "error_detail_json", "TEXT DEFAULT '{}'")
         self._ensure_column("jobs", "is_retryable", "INTEGER DEFAULT 0")
@@ -2548,9 +2550,10 @@ class Storage:
             """
             INSERT INTO jobs (
                 job_type, status, stage, stage_message, progress, scope_id, run_id,
-                produced_artifacts_json, artifact_summary_json, error, error_code,
-                error_detail_json, is_retryable, accepted_at, started_at, finished_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                produced_artifacts_json, artifact_summary_json,
+                acquisition_result_json, error, error_code, error_detail_json,
+                is_retryable, accepted_at, started_at, finished_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_type,
@@ -2562,6 +2565,7 @@ class Storage:
                 job.run_id,
                 json.dumps(job.produced_artifacts),
                 json.dumps(job.artifact_summary),
+                json.dumps(job.acquisition_result),
                 job.error,
                 job.error_code,
                 json.dumps(job.error_detail),
@@ -2584,6 +2588,7 @@ class Storage:
             "run_id",
             "produced_artifacts",
             "artifact_summary",
+            "acquisition_result",
             "error",
             "error_code",
             "error_detail",
@@ -2597,6 +2602,7 @@ class Storage:
     _JOB_FIELD_COLUMN_MAP: Final[dict[str, str]] = {
         "produced_artifacts": "produced_artifacts_json",
         "artifact_summary": "artifact_summary_json",
+        "acquisition_result": "acquisition_result_json",
         "error_detail": "error_detail_json",
     }
 
@@ -2613,7 +2619,12 @@ class Storage:
             assignments.append(f"{column_name} = ?")
             if isinstance(value, datetime):
                 params.append(value.isoformat())
-            elif key in {"produced_artifacts", "artifact_summary", "error_detail"}:
+            elif key in {
+                "produced_artifacts",
+                "artifact_summary",
+                "acquisition_result",
+                "error_detail",
+            }:
                 params.append(json.dumps(value or {}))
             elif key == "is_retryable":
                 params.append(int(bool(value)))
@@ -2687,6 +2698,12 @@ class Storage:
         if not isinstance(artifact_summary, dict):
             artifact_summary = {}
         try:
+            acquisition_result = json.loads(row["acquisition_result_json"] or "{}")
+        except json.JSONDecodeError:
+            acquisition_result = {}
+        if not isinstance(acquisition_result, dict):
+            acquisition_result = {}
+        try:
             error_detail = json.loads(row["error_detail_json"] or "{}")
         except json.JSONDecodeError:
             error_detail = {}
@@ -2703,6 +2720,7 @@ class Storage:
             run_id=row["run_id"],
             produced_artifacts=produced_artifacts,
             artifact_summary=artifact_summary,
+            acquisition_result=acquisition_result,
             error=row["error"] or "",
             error_code=row["error_code"] or "",
             error_detail=error_detail,

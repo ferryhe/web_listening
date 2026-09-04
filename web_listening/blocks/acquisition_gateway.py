@@ -12,6 +12,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, TYPE_CHECKING
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from web_listening.blocks.acquisition_terminal import (
+    classify_html_capture,
+    matches_blocked_marker,
+)
 from web_listening.blocks.crawler import Crawler, FetchResult
 from web_listening.blocks.diff import extract_links, find_document_links
 from web_listening.blocks.governed_read import ROLLBACK_REQUIRED_READ_ERRORS
@@ -136,11 +140,18 @@ class LegacyCrawlerGateway:
             # credentials or local diagnostics. Persist only the stable class.
             error = "executor_error"
         finished_at = datetime.now(timezone.utc)
-        classification = (
-            "executor_error"
-            if page is None
-            else ("not_found" if page.status_code in {404, 410} else "accepted")
-        )
+        if page is None:
+            classification = "executor_error"
+        elif page.status_code in {404, 410}:
+            classification = "not_found"
+        else:
+            classification = classify_html_capture(
+                requested_url=url,
+                final_url=page.final_url or url,
+                status_code=page.status_code,
+                extracted_text=page.content_text,
+                raw_text=page.raw_html,
+            )
         lineage = {
             field: getattr(request, field)
             for field in (
@@ -157,7 +168,7 @@ class LegacyCrawlerGateway:
         }
         result = CaptureResult(
             **lineage,
-            state="failed" if page is None else "succeeded",
+            state="succeeded" if classification == "accepted" else "failed",
             started_at=started_at,
             finished_at=finished_at,
             final_url=final_url,
@@ -168,12 +179,12 @@ class LegacyCrawlerGateway:
                     text=page.raw_html,
                     metadata={"content_kind": content_kind},
                 )
-                if page is not None
+                if classification == "accepted"
                 else None
             ),
             error=(
-                CaptureError(code="executor_error", message=error)
-                if page is None
+                CaptureError(code=classification, message=error or classification)
+                if classification != "accepted"
                 else None
             ),
             metadata={
@@ -229,14 +240,14 @@ class LegacyCrawlerGateway:
             separators=(",", ":"),
             ensure_ascii=True,
         )
-        if page is None:
+        if classification != "accepted":
             return AcquisitionOutcome(
                 request,
                 result,
                 None,
                 classification,
                 (classification,),
-                False,
+                classification == "not_found",
                 (attempt,),
             )
         return AcquisitionOutcome(
@@ -295,10 +306,13 @@ class GovernedAcquisitionGateway:
                 )
                 attempt_artifacts.append(())
                 continue
-            last_result = result
             classification, terminal, page, validation = self._classify(
                 request, result, content_kind
             )
+            result = self._normalize_failed_capture(
+                request, result, classification, validation
+            )
+            last_result = result
             attempts.append(
                 self._attempt(
                     request,
@@ -557,6 +571,53 @@ class GovernedAcquisitionGateway:
             metadata=dict(metadata or {}),
         )
 
+    @staticmethod
+    def _normalize_failed_capture(
+        request: CaptureRequest,
+        result: Any,
+        classification: str,
+        validation: Mapping[str, Any],
+    ) -> CaptureResult:
+        if classification == "accepted" and isinstance(result, CaptureResult):
+            return result
+        if not isinstance(result, CaptureResult):
+            return GovernedAcquisitionGateway._failed_result(
+                request,
+                classification,
+                classification,
+                metadata={"acquisition_validation": dict(validation)},
+            )
+        if result.state == "failed":
+            return result
+        lineage = {
+            field: getattr(request, field)
+            for field in (
+                "request_id",
+                "site_key",
+                "site_skill_id",
+                "site_skill_version",
+                "site_skill_digest",
+                "recipe_id",
+                "run_id",
+                "scope_id",
+                "executor_id",
+            )
+        }
+        return CaptureResult(
+            **lineage,
+            state="failed",
+            started_at=result.started_at,
+            finished_at=result.finished_at,
+            final_url=result.final_url,
+            status_code=result.status_code,
+            error=CaptureError(code=classification, message=classification),
+            metadata={
+                **dict(result.metadata),
+                "acquisition_classification": classification,
+                "acquisition_validation": validation,
+            },
+        )
+
     def _request(
         self,
         url: str,
@@ -654,6 +715,16 @@ class GovernedAcquisitionGateway:
             return decision("lineage_mismatch", True)
         if result.state != "succeeded":
             code = (result.error.code if result.error else "executor_error").lower()
+            if result.status_code in {404, 410}:
+                return decision("not_found", True)
+            if code in {
+                "blocked",
+                "blocked_redirect",
+                "empty_content",
+                "http_403",
+                "http_status_rejected",
+            }:
+                return decision(code)
             if any(
                 marker in code
                 for marker in (
@@ -676,12 +747,17 @@ class GovernedAcquisitionGateway:
             return decision("unsafe_redirect", True)
         if result.status_code in {404, 410}:
             return decision("not_found", True)
+        if result.status_code == 403:
+            return decision("http_403")
         if (
             result.status_code is None
             or not 200 <= result.status_code < 300
             or result.content is None
         ):
-            return decision("failed_quality_gate", failed_rules=["successful_content"])
+            return decision(
+                "http_status_rejected" if result.content is not None else "empty_content",
+                failed_rules=["successful_content"],
+            )
         if content_kind == "document":
             metadata = result.content.metadata
             if (
@@ -717,6 +793,18 @@ class GovernedAcquisitionGateway:
                 ),
             )
         page = self._page(result)
+        terminal_reason = classify_html_capture(
+            requested_url=str(request.url),
+            final_url=page.final_url or str(request.url),
+            status_code=page.status_code,
+            extracted_text=page.content_text,
+            raw_text=page.raw_html,
+        )
+        if terminal_reason != "accepted":
+            return decision(
+                terminal_reason,
+                failed_rules=[terminal_reason],
+            )
         links = extract_links(page.raw_html, page.final_url or str(request.url))
         document_links = find_document_links(links)
         gates = self.plan.quality_gates
@@ -738,9 +826,8 @@ class GovernedAcquisitionGateway:
             )
             if measured < minimum
         ]
-        lowered = page.content_text.casefold()
         markers = tuple(gates.get("blocked_markers", ()))
-        marker_matched = any(str(marker).casefold() in lowered for marker in markers)
+        marker_matched = matches_blocked_marker(page.content_text, markers)
         evidence = {
             "measurements": measurements,
             "failed_rules": failed_rules,

@@ -1,0 +1,31 @@
+{
+  "schema_version": "acquisition-batch-result.v1",
+  "run_id": "source-run-example",
+  "authoritative_status": "partial",
+  "status": "partial",
+  "full_success": false,
+  "counts": {
+    "requested": 2,
+    "succeeded": 1,
+    "failed": 1,
+    "unresolved": 0,
+    "valid_snapshots": 2,
+    "failed_evidence": 1
+  },
+  "dispositions": [
+    {
+      "task_id": "agentic-task-success",
+      "requested_url": "https://example.invalid/report.html",
+      "disposition": "succeeded",
+      "reason": "read.completed",
+      "artifact_id": "artifact-0123456789abcdef01234567"
+    },
+    {
+      "task_id": "agentic-task-blocked",
+      "requested_url": "https://example.invalid/captcha.html",
+      "disposition": "failed",
+      "reason": "capture.blocked",
+      "artifact_id": null
+    }
+  ]
+}

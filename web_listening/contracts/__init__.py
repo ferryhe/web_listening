@@ -24,6 +24,14 @@ from web_listening.contracts.capture import (
     CaptureRequest,
     CaptureResult,
 )
+from web_listening.contracts.acquisition_batch import (
+    ACQUISITION_BATCH_RESULT_VERSION,
+    AcquisitionBatchCounts,
+    AcquisitionBatchResult,
+    AcquisitionDisposition,
+    acquisition_batch_result_from_initial_rejection,
+    acquisition_batch_result_from_scope_run,
+)
 from web_listening.contracts.site_skill import (
     RuntimeRequirement,
     SecretPolicy,
@@ -54,6 +62,12 @@ from web_listening.contracts.tool_result import (
 
 __all__ = [
     "AcquisitionAttempt",
+    "ACQUISITION_BATCH_RESULT_VERSION",
+    "AcquisitionBatchCounts",
+    "AcquisitionBatchResult",
+    "AcquisitionDisposition",
+    "acquisition_batch_result_from_initial_rejection",
+    "acquisition_batch_result_from_scope_run",
     "ACCESS_DECISION_VERSION",
     "ACCESS_POLICY_VERSION",
     "AccessDecision",

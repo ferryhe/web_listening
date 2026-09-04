@@ -182,6 +182,7 @@ class Job(BaseModel):
     run_id: Optional[int] = None
     produced_artifacts: dict[str, object] = Field(default_factory=dict)
     artifact_summary: dict[str, object] = Field(default_factory=dict)
+    acquisition_result: dict[str, object] = Field(default_factory=dict)
     error: str = ""
     error_code: str = ""
     error_detail: dict[str, object] = Field(default_factory=dict)
@@ -190,7 +191,13 @@ class Job(BaseModel):
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
 
-    @field_validator("produced_artifacts", "artifact_summary", "error_detail", mode="before")
+    @field_validator(
+        "produced_artifacts",
+        "artifact_summary",
+        "acquisition_result",
+        "error_detail",
+        mode="before",
+    )
     @classmethod
     def parse_job_dict_payloads(cls, value):
         if isinstance(value, str):
@@ -245,7 +252,7 @@ class Job(BaseModel):
         }
 
     def to_delivery_payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "contract_version": "job_delivery.v1",
             "job": {
                 "job_id": self.job_id,
@@ -273,6 +280,9 @@ class Job(BaseModel):
             "artifact_contract": self.artifact_contract(),
             "next_action": self.next_recommended_action(),
         }
+        if self.acquisition_result:
+            payload["acquisition_result"] = self.acquisition_result
+        return payload
 
 
 class MonitorTask(BaseModel):

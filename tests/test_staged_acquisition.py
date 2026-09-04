@@ -12,6 +12,8 @@ from web_listening.blocks.acquisition_gateway import (
     GovernedAcquisitionGateway,
     LegacyCrawlerGateway,
 )
+from web_listening.blocks.acquisition_profile import build_default_acquisition_profile
+from web_listening.blocks.acquisition_terminal import classify_html_capture
 from web_listening.blocks.access_gateway import (
     AccessGatewayBudgetError,
     AccessGatewayRedirectError,
@@ -28,7 +30,12 @@ from web_listening.blocks.staged_workflow import (
     run_scope,
 )
 from web_listening.contracts import AcquisitionAttempt as ContractAcquisitionAttempt
-from web_listening.contracts import CaptureContent, CaptureError, CaptureResult
+from web_listening.contracts import (
+    CaptureContent,
+    CaptureError,
+    CaptureRequest,
+    CaptureResult,
+)
 from web_listening.executors.http_wrapper import HttpAcquisitionAdapter
 from web_listening.executors.registry import ExecutorMetadata
 from web_listening.executors.wrapper_protocol import result_from_fetch
@@ -106,6 +113,479 @@ def _result(request, *, success=True):
         finished_at=now,
         error=CaptureError(code="blocked", message="blocked"),
     )
+
+
+def _fetch_result(
+    *,
+    status_code: int,
+    final_url: str = "https://example.com/",
+    raw_html: str = "<html><body>ordinary content</body></html>",
+    content_text: str = "ordinary content",
+) -> FetchResult:
+    return FetchResult(
+        raw_html=raw_html,
+        cleaned_html=raw_html,
+        content_text=content_text,
+        markdown=content_text,
+        fit_markdown=content_text,
+        metadata_json={},
+        final_url=final_url,
+        status_code=status_code,
+    )
+
+
+def test_shared_classifier_rejects_precise_blocked_page_phrase():
+    text = "Sorry, you have been blocked"
+
+    reason = classify_html_capture(
+        requested_url="https://example.com/report",
+        final_url="https://example.com/report",
+        status_code=200,
+        extracted_text=text,
+        raw_text=f"<html><title>{text}</title><body>{text}</body></html>",
+    )
+
+    assert reason == "blocked"
+
+
+@pytest.mark.parametrize(
+    ("page", "reason"),
+    [
+        (_fetch_result(status_code=403), "http_403"),
+        (
+            _fetch_result(
+                status_code=200,
+                raw_html="<html><body>Just a moment. Complete CAPTCHA.</body></html>",
+                content_text="Just a moment. Complete CAPTCHA.",
+            ),
+            "blocked",
+        ),
+        (
+            _fetch_result(
+                status_code=200,
+                raw_html=(
+                    "<html><body>Please verify you are human to continue</body></html>"
+                ),
+                content_text="Please verify you are human to continue",
+            ),
+            "blocked",
+        ),
+        (
+            _fetch_result(
+                status_code=200,
+                final_url="https://example.com/captcha",
+            ),
+            "blocked_redirect",
+        ),
+        (
+            _fetch_result(
+                status_code=200,
+                raw_html="<html><body></body></html>",
+                content_text="",
+            ),
+            "empty_content",
+        ),
+    ],
+    ids=[
+        "http-403",
+        "browser-captcha",
+        "verify-human",
+        "captcha-redirect",
+        "empty-content",
+    ],
+)
+def test_legacy_gateway_failure_pages_never_become_successful_snapshots(page, reason):
+    class Crawler:
+        def fetch_page(self, url, *, fetch_mode, fetch_config_json):
+            del url, fetch_mode, fetch_config_json
+            return page
+
+    outcome = LegacyCrawlerGateway(
+        Crawler(), fetch_mode="browser", fetch_config_json={}
+    ).acquire("https://example.com/", run_id="1", scope_id="2")
+
+    assert outcome.classification == reason
+    assert not outcome.accepted
+    assert outcome.page is None
+    assert outcome.result is not None
+    assert outcome.result.state == "failed"
+    assert outcome.result.content is None
+    assert outcome.result.error is not None
+    assert outcome.result.error.code == reason
+    assert outcome.attempt_records[0].reason == reason
+    canonical = ContractAcquisitionAttempt.model_validate_json(
+        outcome.attempt_records[0].canonical_json
+    )
+    assert canonical.result.state == "failed"
+    assert canonical.result.content is None
+
+
+@pytest.mark.parametrize(
+    ("page", "reason"),
+    [
+        (_fetch_result(status_code=403), "http_403"),
+        (
+            _fetch_result(
+                status_code=200,
+                raw_html=(
+                    "<html><title>Sorry, you have been blocked</title>"
+                    "<body>You are unable to access this site.</body></html>"
+                ),
+                content_text=(
+                    "Sorry, you have been blocked. "
+                    "You are unable to access this site."
+                ),
+            ),
+            "blocked",
+        ),
+        (
+            _fetch_result(
+                status_code=200,
+                raw_html=(
+                    "<html><body>Please verify you are human to continue</body></html>"
+                ),
+                content_text="Please verify you are human to continue",
+            ),
+            "blocked",
+        ),
+        (
+            _fetch_result(
+                status_code=200,
+                final_url="https://example.com/captcha",
+            ),
+            "blocked_redirect",
+        ),
+        (
+            _fetch_result(
+                status_code=200,
+                raw_html="<html><body></body></html>",
+                content_text="",
+            ),
+            "empty_content",
+        ),
+    ],
+    ids=[
+        "http-403",
+        "precise-blocked-page",
+        "verify-human",
+        "captcha-redirect",
+        "empty-content",
+    ],
+)
+def test_wrapper_fetch_failures_are_capture_failures(page, reason):
+    capture_request = CaptureRequest(
+        site_key="example",
+        site_skill_id="example-skill",
+        site_skill_version="1.0.0",
+        site_skill_digest="a" * 64,
+        recipe_id="capture",
+        run_id="run-1",
+        scope_id="scope-1",
+        request_id="request-1",
+        executor_id="web_http",
+        url="https://example.com/",
+        requested_at=datetime.now(timezone.utc),
+    )
+
+    result = result_from_fetch(
+        capture_request, page, datetime.now(timezone.utc)
+    )
+
+    assert result.state == "failed"
+    assert result.content is None
+    assert result.error is not None
+    assert result.error.code == reason
+
+
+def test_compound_challenge_redirect_is_a_failed_capture():
+    capture_request = CaptureRequest(
+        site_key="example",
+        site_skill_id="example-skill",
+        site_skill_version="1.0.0",
+        site_skill_digest="a" * 64,
+        recipe_id="capture",
+        run_id="run-1",
+        scope_id="scope-1",
+        request_id="request-1",
+        executor_id="web_http",
+        url="https://example.com/",
+        requested_at=datetime.now(timezone.utc),
+    )
+    page = _fetch_result(
+        status_code=200,
+        final_url="https://example.com/cdn-cgi/challenge-platform/h/g/orchestrate",
+        raw_html="<html><body>Just a moment. Please wait.</body></html>",
+        content_text="Please wait.",
+    )
+
+    result = result_from_fetch(capture_request, page, datetime.now(timezone.utc))
+
+    assert result.state == "failed"
+    assert result.content is None
+    assert result.error is not None
+    assert result.error.code == "blocked_redirect"
+
+
+def test_normal_challenge_topic_redirect_is_a_successful_capture():
+    capture_request = CaptureRequest(
+        site_key="example",
+        site_skill_id="example-skill",
+        site_skill_version="1.0.0",
+        site_skill_digest="a" * 64,
+        recipe_id="capture",
+        run_id="run-1",
+        scope_id="scope-1",
+        request_id="request-1",
+        executor_id="web_http",
+        url="https://example.com/research",
+        requested_at=datetime.now(timezone.utc),
+    )
+    page = _fetch_result(
+        status_code=200,
+        final_url="https://example.com/research/challenge/climate-risk",
+        raw_html="<html><body>Substantive climate challenge research.</body></html>",
+        content_text="Substantive climate challenge research.",
+    )
+
+    result = result_from_fetch(capture_request, page, datetime.now(timezone.utc))
+
+    assert result.state == "succeeded"
+    assert result.content is not None
+    assert result.error is None
+
+
+@pytest.mark.parametrize(
+    ("raw_html", "content_text"),
+    [
+        (
+            "<html><body><main>Substantive climate research report.</main>"
+            "<script src='/cdn-cgi/rum?token=cloudflare'></script></body></html>",
+            "Substantive climate research report.",
+        ),
+        (
+            "<html><body><main>Substantive insurance update.</main>"
+            "<script src='https://www.google.com/recaptcha/api.js'></script></body></html>",
+            "Substantive insurance update.",
+        ),
+        (
+            "<html><body><main>Substantive actuarial update.</main>"
+            "<noscript>Enable JavaScript for interactive charts</noscript></body></html>",
+            "Substantive actuarial update.",
+        ),
+        (
+            "<html><body><main>Cloudflare is discussed in this substantive "
+            "climate infrastructure report.</main></body></html>",
+            "Cloudflare is discussed in this substantive climate infrastructure report.",
+        ),
+        (
+            "<html><body><main>Substantive climate results. Enable JavaScript "
+            "to view the interactive chart.</main></body></html>",
+            "Substantive climate results. Enable JavaScript to view the interactive chart.",
+        ),
+    ],
+    ids=[
+        "cloudflare-insights-script",
+        "recaptcha-script",
+        "interactive-chart-noscript",
+        "visible-cloudflare-discussion",
+        "visible-interactive-chart-ui",
+    ],
+)
+def test_substantive_pages_ignore_incidental_raw_block_markers(raw_html, content_text):
+    capture_request = CaptureRequest(
+        site_key="example",
+        site_skill_id="example-skill",
+        site_skill_version="1.0.0",
+        site_skill_digest="a" * 64,
+        recipe_id="capture",
+        run_id="run-1",
+        scope_id="scope-1",
+        request_id="request-1",
+        executor_id="web_http",
+        url="https://example.com/report",
+        requested_at=datetime.now(timezone.utc),
+    )
+    page = _fetch_result(
+        status_code=200,
+        raw_html=raw_html,
+        content_text=content_text,
+    )
+
+    result = result_from_fetch(capture_request, page, datetime.now(timezone.utc))
+
+    assert result.state == "succeeded"
+    assert result.content is not None
+    assert result.error is None
+
+
+@pytest.mark.parametrize(
+    ("page", "reason"),
+    [
+        (_fetch_result(status_code=403), "http_403"),
+        (
+            _fetch_result(
+                status_code=200,
+                raw_html="<html><body>Just a moment. Complete CAPTCHA.</body></html>",
+                content_text="Just a moment. Complete CAPTCHA.",
+            ),
+            "blocked",
+        ),
+        (
+            _fetch_result(
+                status_code=200,
+                raw_html=(
+                    "<html><body>Please verify you are human to continue</body></html>"
+                ),
+                content_text="Please verify you are human to continue",
+            ),
+            "blocked",
+        ),
+        (
+            _fetch_result(
+                status_code=200,
+                final_url="https://example.com/captcha",
+            ),
+            "blocked_redirect",
+        ),
+        (
+            _fetch_result(
+                status_code=200,
+                raw_html="<html><body></body></html>",
+                content_text="",
+            ),
+            "empty_content",
+        ),
+    ],
+    ids=[
+        "http-403",
+        "browser-captcha",
+        "verify-human",
+        "captcha-redirect",
+        "empty-content",
+    ],
+)
+def test_governed_gateway_terminal_quality_failures_are_not_success_content(
+    page, reason
+):
+    plan = _plan()
+    plan.quality_gates = MappingProxyType(
+        {
+            "min_words": 0,
+            "min_links": 0,
+            "min_document_links": 0,
+            "blocked_markers": (),
+        }
+    )
+
+    class Registry:
+        def execute(self, request):
+            return result_from_fetch(request, page, datetime.now(timezone.utc))
+
+    outcome = GovernedAcquisitionGateway(plan, Registry()).acquire(
+        "https://example.com/", run_id="run-1", scope_id="scope-1"
+    )
+
+    assert outcome.classification == reason
+    assert not outcome.accepted
+    assert outcome.page is None
+    assert outcome.result is not None
+    assert outcome.result.state == "failed"
+    assert outcome.result.content is None
+    assert outcome.result.error is not None
+    assert outcome.result.error.code == reason
+    assert all(not attempt.accepted for attempt in outcome.attempt_records)
+    for attempt in outcome.attempt_records:
+        canonical = ContractAcquisitionAttempt.model_validate_json(
+            attempt.canonical_json
+        )
+        assert canonical.result.state == "failed"
+        assert canonical.result.content is None
+
+
+@pytest.mark.parametrize(
+    "visible_text",
+    [
+        "This substantive report discusses Cloudflare infrastructure.",
+        "Substantive climate results. Enable JavaScript to view the interactive chart.",
+    ],
+    ids=["cloudflare-discussion", "interactive-chart-ui"],
+)
+def test_governed_default_profile_accepts_substantive_generic_marker_text(
+    visible_text,
+):
+    profile = build_default_acquisition_profile(
+        "demo", allowed_domains=["example.com"]
+    )
+    plan = _plan()
+    plan.quality_gates = MappingProxyType(
+        profile.quality_gates.model_dump(mode="python")
+    )
+    filler = " ".join(["substantive"] * 120)
+    html = (
+        f"<html><body><main>{visible_text} {filler}</main>"
+        "<a href='/one'>One</a><a href='/two'>Two</a>"
+        "<a href='/three'>Three</a></body></html>"
+    )
+
+    class Registry:
+        def execute(self, request):
+            return _result(request).model_copy(
+                update={
+                    "content": CaptureContent(media_type="text/html", text=html)
+                }
+            )
+
+    outcome = GovernedAcquisitionGateway(plan, Registry()).acquire(
+        "https://example.com/report", run_id="run-1", scope_id="scope-1"
+    )
+
+    assert outcome.classification == "accepted"
+    assert outcome.accepted
+    assert outcome.page is not None
+    canonical = ContractAcquisitionAttempt.model_validate_json(
+        outcome.attempt_records[0].canonical_json
+    )
+    assert canonical.result.metadata["acquisition_validation"]["blocked_marker"] == {
+        "matched": False,
+        "configured_count": 5,
+    }
+
+
+def test_governed_custom_high_confidence_marker_remains_blocked():
+    plan = _plan()
+    plan.quality_gates = MappingProxyType(
+        {
+            "min_words": 1,
+            "min_links": 0,
+            "min_document_links": 0,
+            "blocked_markers": ("SITE MAINTENANCE BLOCK PAGE",),
+        }
+    )
+
+    class Registry:
+        def execute(self, request):
+            return _result(request).model_copy(
+                update={
+                    "content": CaptureContent(
+                        media_type="text/html",
+                        text="<p>SITE MAINTENANCE BLOCK PAGE</p>",
+                    )
+                }
+            )
+
+    outcome = GovernedAcquisitionGateway(plan, Registry()).acquire(
+        "https://example.com/report", run_id="run-1", scope_id="scope-1"
+    )
+
+    assert outcome.classification == "blocked"
+    assert not outcome.accepted
+    canonical = ContractAcquisitionAttempt.model_validate_json(
+        outcome.attempt_records[0].canonical_json
+    )
+    assert canonical.result.metadata["acquisition_validation"]["blocked_marker"] == {
+        "matched": True,
+        "configured_count": 1,
+    }
 
 
 def test_governed_gateway_uses_frozen_fallback_and_deterministic_request_identity():
@@ -1033,7 +1513,7 @@ def test_governed_gateway_falls_back_after_failed_page_quality_gate():
     )
 
     assert outcome.accepted
-    assert outcome.attempts == ("failed_quality_gate", "accepted")
+    assert outcome.attempts == ("empty_content", "accepted")
     assert seen == ["web_http", "browser_rendered"]
 
 

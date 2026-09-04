@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone, timedelta
+import json
 import os
 from pathlib import Path
 import stat
@@ -17,7 +18,14 @@ from web_listening.blocks.governed_read import (
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictStr,
+    ValidationError,
+    field_validator,
+)
 
 from web_listening.blocks.acquisition_evidence import AcquisitionEvidenceError
 from web_listening.blocks.acquisition_tools import (
@@ -46,6 +54,7 @@ from web_listening.blocks.scope_lookup import (
 )
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
+from web_listening.contracts import AcquisitionBatchResult
 from web_listening.models import (
     AnalysisReport,
     Change,
@@ -376,6 +385,16 @@ class JobDeliveryPayload(BaseModel):
     artifacts: dict[str, object]
     artifact_contract: dict[str, object]
     next_action: str
+    acquisition_result: Optional[AcquisitionBatchResult] = None
+
+    @field_validator("acquisition_result", mode="before")
+    @classmethod
+    def validate_acquisition_result(cls, value):
+        if value is None or isinstance(value, AcquisitionBatchResult):
+            return value
+        return AcquisitionBatchResult.model_validate_json(
+            json.dumps(value, sort_keys=True, separators=(",", ":"))
+        )
 
 
 class JobWebhookRegistrationRequest(BaseModel):

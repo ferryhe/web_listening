@@ -16,6 +16,7 @@ from web_listening.blocks.acquisition_profile import (
     render_acquisition_profile_yaml,
 )
 from web_listening.blocks.crawler import FetchResult
+from web_listening.blocks.job_orchestration import persist_job_result
 from web_listening.blocks.monitor_scope_planner import (
     build_monitor_scope,
     render_yaml_text as render_scope_yaml_text,
@@ -1043,6 +1044,59 @@ def test_create_monitor_task_endpoint_persists_completed_job(tmp_path, monkeypat
     job_response = client.get(f"/api/v1/jobs/{payload['job_id']}")
     assert job_response.status_code == 200
     assert job_response.json()["job_id"] == payload["job_id"]
+
+
+def test_job_payload_endpoint_preserves_canonical_acquisition_result(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "api.db"
+    monkeypatch.setattr(routes.settings, "db_path", db_path)
+    acquisition_result = {
+        "schema_version": "acquisition-batch-result.v1",
+        "run_id": "scope-run-17",
+        "authoritative_status": "completed",
+        "status": "partial",
+        "full_success": False,
+        "counts": {
+            "requested": 2,
+            "succeeded": 1,
+            "failed": 1,
+            "unresolved": 0,
+            "valid_snapshots": 1,
+            "failed_evidence": 1,
+        },
+        "dispositions": [
+            {
+                "task_id": "successful-site",
+                "requested_url": "https://successful.example/",
+                "disposition": "succeeded",
+                "reason": "scope.completed",
+                "artifact_id": "artifact-17",
+            },
+            {
+                "task_id": "failed-site",
+                "requested_url": "https://failed.example/",
+                "disposition": "failed",
+                "reason": "scope.acquisition_failed",
+                "artifact_id": None,
+            },
+        ],
+    }
+    job = persist_job_result(
+        job_type="scope.run",
+        status="failed",
+        error_code="acquisition.not_full_success",
+        acquisition_result=acquisition_result,
+    )
+
+    response = TestClient(create_app()).get(f"/api/v1/jobs/{job.job_id}/payload")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["acquisition_result"] == job.to_delivery_payload()[
+        "acquisition_result"
+    ]
+    assert payload["acquisition_result"] == acquisition_result
 
 
 def test_create_monitor_task_endpoint_keeps_default_structured_policy_when_policy_fields_omitted(

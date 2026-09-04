@@ -48,6 +48,7 @@ from web_listening.blocks.acquisition_execution_plan import (
     compile_acquisition_execution_plan,
 )
 from web_listening.blocks.acquisition_profile import AcquisitionProfile
+from web_listening.blocks.acquisition_terminal import classify_html_capture
 from web_listening.blocks.diff import extract_links
 from web_listening.blocks.governed_read import (
     _MOCK_STATE_LOCK_TYPE,
@@ -73,6 +74,12 @@ from web_listening.blocks.site_diagnostic import (
     normalize_http_url,
 )
 from web_listening.contracts import access_decision as access_decision_module
+from web_listening.contracts.acquisition_batch import (
+    ACQUISITION_BATCH_RESULT_VERSION,
+    AcquisitionBatchCounts,
+    AcquisitionBatchResult,
+    AcquisitionDisposition,
+)
 from web_listening.contracts.access_decision import (
     _validate_non_sensitive_text,
     canonicalize_access_url,
@@ -2160,6 +2167,89 @@ class AgenticRunResult:
     tasks: tuple[AgenticChildTask, ...]
     observations: tuple[AgenticReadObservation, ...]
     artifacts: tuple[StoredArtifact, ...]
+
+    def to_acquisition_batch_result(self) -> dict[str, Any]:
+        """Project terminal read lineage into the versioned batch contract."""
+        read_tasks = tuple(task for task in self.tasks if task.kind == "read")
+        requested_tasks = tuple(
+            task for task in read_tasks if task.discovery_kind == "seed"
+        )
+        read_task_ids = frozenset(task.task_id for task in read_tasks)
+        last_observation = {
+            observation.task_id: observation for observation in self.observations
+        }
+        dispositions: list[AcquisitionDisposition] = []
+        for task in requested_tasks:
+            if task.status == "completed":
+                disposition = "succeeded"
+                reason = "read.completed"
+                artifact_id = task.artifact_id
+            elif task.status == "cancelled":
+                disposition = "unresolved"
+                reason = task.failure_code or "task.cancelled"
+                artifact_id = None
+            elif task.status not in _TERMINAL_TASK_STATUSES:
+                disposition = "unresolved"
+                reason = task.failure_code or f"task.{task.status}"
+                artifact_id = None
+            else:
+                disposition = "failed"
+                observation = last_observation.get(task.task_id)
+                reason = task.failure_code or (
+                    observation.reason_code
+                    if observation is not None
+                    else f"task.{task.status}"
+                )
+                artifact_id = None
+            dispositions.append(
+                AcquisitionDisposition(
+                    task_id=task.task_id,
+                    requested_url=task.requested_url or "",
+                    disposition=disposition,
+                    reason=reason,
+                    artifact_id=artifact_id,
+                )
+            )
+
+        succeeded = sum(item.disposition == "succeeded" for item in dispositions)
+        failed = sum(item.disposition == "failed" for item in dispositions)
+        unresolved = sum(item.disposition == "unresolved" for item in dispositions)
+        failed_evidence = sum(
+            observation.task_id in read_task_ids
+            and observation.status != "completed"
+            and observation.artifact_id is None
+            for observation in self.observations
+        )
+        counts = AcquisitionBatchCounts(
+            requested=len(dispositions),
+            succeeded=succeeded,
+            failed=failed,
+            unresolved=unresolved,
+            valid_snapshots=len(self.artifacts),
+            failed_evidence=failed_evidence,
+        )
+        if (
+            self.parent.status == "completed"
+            and counts.requested > 0
+            and counts.succeeded == counts.requested
+        ):
+            status = "succeeded"
+        elif counts.succeeded > 0 or counts.valid_snapshots > 0:
+            status = "partial"
+        elif counts.failed > 0:
+            status = "failed"
+        else:
+            status = "unresolved"
+        result = AcquisitionBatchResult(
+            schema_version=ACQUISITION_BATCH_RESULT_VERSION,
+            run_id=self.parent.run_id,
+            authoritative_status=self.parent.status,
+            status=status,
+            full_success=status == "succeeded",
+            counts=counts,
+            dispositions=tuple(dispositions),
+        )
+        return result.model_dump(mode="json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -5875,6 +5965,37 @@ class AgenticOrchestrator:
             )
             return (), (), False
 
+        if is_page:
+            raw_html = result.body.decode("utf-8", errors="replace")
+            from web_listening.blocks.normalizer import normalize_html
+
+            normalized = normalize_html(raw_html, base_url=result.final_url)
+            terminal_reason = classify_html_capture(
+                requested_url=task.requested_url or result.final_url,
+                final_url=result.final_url,
+                status_code=result.status_code,
+                extracted_text=normalized.content_text,
+                raw_text=raw_html,
+            )
+            if terminal_reason != "accepted":
+                reason = f"capture.{terminal_reason}"
+                self._record_failed_attempt(
+                    task=task,
+                    attempt=attempt,
+                    status="failed",
+                    current_url=result.final_url,
+                    final_url=result.final_url,
+                    status_code=result.status_code,
+                    access_decision_id=access_decision_id,
+                    reason_code=reason,
+                    redirect_chain=redirects,
+                    bytes_read=body_size,
+                    terminal=True,
+                    rules=rules,
+                    execution=execution,
+                )
+                return (), (), False
+
         discovered_from = _artifact_discovery(task)
         try:
             _FROZEN_RUN_VALIDATE(rules_snapshot)
@@ -6650,6 +6771,7 @@ def _safe_reason_component(value: object, fallback: str) -> str:
 
 
 __all__ = [
+    "ACQUISITION_BATCH_RESULT_VERSION",
     "AGENTIC_ORCHESTRATION_VERSION",
     "AGENTIC_SITE_RULES_VERSION",
     "AgenticAuthority",

@@ -25,9 +25,12 @@ from web_listening.blocks.governed_read import (
 
 try:
     from typer._click.exceptions import Exit as TyperExit
-    from typer._click.exceptions import UsageError as TyperUsageError
 except ImportError:  # pragma: no cover - depends on Typer's Click packaging.
     TyperExit = ClickExit
+
+try:
+    from typer._click.exceptions import UsageError as TyperUsageError
+except ImportError:  # pragma: no cover - depends on Typer's Click packaging.
     TyperUsageError = ClickUsageError
 
 

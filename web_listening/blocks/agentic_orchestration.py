@@ -2184,12 +2184,13 @@ class AgenticRunResult:
                 disposition = "succeeded"
                 reason = "read.completed"
                 artifact_id = task.artifact_id
-            elif (
-                task.status == "cancelled"
-                or task.status not in _TERMINAL_TASK_STATUSES
-            ):
+            elif task.status == "cancelled":
                 disposition = "unresolved"
                 reason = task.failure_code or "task.cancelled"
+                artifact_id = None
+            elif task.status not in _TERMINAL_TASK_STATUSES:
+                disposition = "unresolved"
+                reason = task.failure_code or f"task.{task.status}"
                 artifact_id = None
             else:
                 disposition = "failed"

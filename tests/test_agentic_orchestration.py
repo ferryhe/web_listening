@@ -22,8 +22,11 @@ from web_listening.blocks.acquisition_profile import (
 from web_listening.blocks.agentic_orchestration import (
     AgenticAuthority,
     AgenticCandidate,
+    AgenticChildTask,
     AgenticOrchestrationError,
     AgenticOrchestrator,
+    AgenticParentTask,
+    AgenticRunResult,
     AgenticTaskRepository,
     HtmlLinkCrawlerAdapter,
     load_agentic_site_rules,
@@ -435,6 +438,86 @@ def test_acquisition_batch_result_fixture_is_strict_and_idempotent() -> None:
     unstable["dispositions"][1]["reason"] = "private exception message"
     with pytest.raises(ValueError):
         AcquisitionBatchResult.model_validate_json(json.dumps(unstable))
+
+
+@pytest.mark.parametrize(
+    ("task_status", "failure_code", "expected_reason"),
+    [
+        ("running", None, "task.running"),
+        ("queued", None, "task.queued"),
+        ("cancelled", None, "task.cancelled"),
+        ("running", "task.deferred", "task.deferred"),
+    ],
+)
+def test_nonterminal_agentic_batch_disposition_has_truthful_stable_reason(
+    task_status: str,
+    failure_code: str | None,
+    expected_reason: str,
+) -> None:
+    digest = "0" * 64
+    parent_status = "cancelled" if task_status == "cancelled" else "running"
+    parent = AgenticParentTask(
+        run_id="source-run-nonterminal",
+        parent_task_id="parent-task",
+        status=parent_status,
+        rule_id="rule",
+        rules_version="1.0.0",
+        rules_sha256=digest,
+        site_skill_id="skill",
+        site_skill_version="1.0.0",
+        site_skill_package_sha256=digest,
+        execution_plan_id="plan",
+        execution_plan_version="1.0.0",
+        execution_plan_sha256=digest,
+        read_adapter_id="adapter",
+        read_adapter_version="1.0.0",
+        replay_of_run_id=None,
+        requests_used=0,
+        bytes_used=0,
+        pages_used=0,
+        files_used=0,
+        warnings=(),
+        created_at="2026-09-04T00:00:00.000000Z",
+        finished_at=None,
+    )
+    task = AgenticChildTask(
+        task_id="seed-task",
+        run_id=parent.run_id,
+        task_key="read:https://example.invalid/",
+        task_ordinal=0,
+        kind="read",
+        required=True,
+        status=task_status,
+        requested_url="https://example.invalid/",
+        query=None,
+        depth=0,
+        discovery_kind="seed",
+        discovered_from_url=None,
+        parent_artifact_id=None,
+        adapter_id="adapter",
+        adapter_version="1.0.0",
+        discovery_adapter_id=None,
+        discovery_adapter_version=None,
+        attempt_count=0,
+        artifact_id=None,
+        access_decision_id=None,
+        failure_code=failure_code,
+        replay_of_task_id=None,
+        created_at="2026-09-04T00:00:00.000000Z",
+        finished_at=None,
+    )
+
+    batch = AgenticRunResult(
+        parent=parent,
+        tasks=(task,),
+        observations=(),
+        artifacts=(),
+    ).to_acquisition_batch_result()
+
+    assert batch["status"] == "unresolved"
+    assert batch["counts"]["unresolved"] == 1
+    assert batch["dispositions"][0]["disposition"] == "unresolved"
+    assert batch["dispositions"][0]["reason"] == expected_reason
 
 
 def test_parent_cannot_complete_until_every_required_child_is_terminal(

@@ -431,7 +431,7 @@ Safety rules:
 
 ## Version and Runtime Compatibility
 
-Compatibility inventory last reviewed on **2026-09-04**.
+Compatibility inventory last reviewed on **2026-09-05**.
 
 | Component | Compatibility policy / observation |
 |---|---|
@@ -441,7 +441,7 @@ Compatibility inventory last reviewed on **2026-09-04**.
 | MCP | Declared `>=1.28.1,<2.0.0`; verified at 1.28.1; 2.x is not qualified |
 | BrowserAct | Exact isolated contract `browser-act-cli==1.0.6`; latest observed 1.0.6 |
 | Playwright | Declared `>=1.52.0`; Windows AMD64/Python 3.12.14 isolated qualification adopted for 1.62.0; reader adoption remains #69 |
-| CloakBrowser | Declared `>=0.3.26`; external host observed 0.3.27; latest observed 0.4.12 |
+| CloakBrowser | Declared `>=0.3.26`; exact 0.5.8 Windows AMD64/Python 3.12.14 Stable/Preview qualification deferred because keyed binaries and a task-scoped paid license were unavailable |
 
 External-host and latest-version observations are inventory signals, **not compatibility certification**. Do not raise lower bounds or upgrade deployed runtimes from those observations alone. Every upgrade requires qualification in an isolated environment, focused adapter/contract tests, the full project suite, and a rollback decision.
 
@@ -494,6 +494,68 @@ if ($hadPlaywrightBrowsersPath) {
 ```
 
 `$qualRoot` must be the exact temporary qualification root, never `%LOCALAPPDATA%\ms-playwright` or another production cache.
+
+### CloakBrowser 0.5.8 qualification
+
+**Conclusion: defer.** The canonical [Windows AMD64 evidence](docs/testing/fixtures/cloakbrowser-0.5.8-qualification.win32-x86_64.json) was produced in an isolated Python 3.12.14 environment without a license environment variable or cache key file. It records wheel `cloakbrowser-0.5.8-py3-none-any.whl` (SHA-256 `408e360962298757ef5cce4b0dcda91cee0da8387c9e2b92aab33504eaa4dce6`) and the exact resolved set `anyio==4.15.0`, `certifi==2026.7.22`, `cffi==2.1.1`, `cryptography==50.0.1`, `greenlet==3.5.5`, `h11==0.16.0`, `httpcore==1.0.9`, `httpx==0.28.1`, `idna==3.19`, `playwright==1.62.0`, `pycparser==3.0`, `pyee==13.0.1`, and `typing-extensions==4.16.0`. The package identity is also available from [PyPI](https://pypi.org/project/cloakbrowser/0.5.8/) and the wrapper surface from the [upstream v0.5.8 release](https://github.com/CloakHQ/CloakBrowser/releases/tag/v0.5.8).
+
+Stable and Preview remain separate evidence. On 2026-09-05, the vendor channel resolver returned Stable `151.0.7922.108.3` and Preview `151.0.7922.108.6` for `windows-x64`; that date-stamped observation is distinct from the fixture's fixed `browser_version` pins. Offline validation uses the fixed pins and embedded signed-manifest snapshots, so later resolver drift cannot change the result. The Stable archive is `cloakbrowser-windows-x64.zip` with signed SHA-256 `5e03b7abab14d44f2f55368a888378ddca9eefadb08c08b6c28610aec580ab3a`, expected executable `chromium-151.0.7922.108.3-pro/chrome.exe`; Preview uses archive SHA-256 `5bd3951f470fff79998a437a139e3e8d68478bc2663402aca1666faf4eadac37`, expected executable `chromium-151.0.7922.108.6-pro/chrome.exe`. The paid archives returned no authorized bytes without a key, so neither executable was present and no honest executable SHA-256 could be recorded.
+
+The harness proves that a missing key uses the hard-coded unlicensed/free build `146.0.7680.177.5`, a synthetic invalid key falls through to an unlicensed path, and the free-plan branch deliberately drops a requested exact version before binary resolution. None of those paths qualifies the keyed Stable/Preview pair. It also deterministically covers missing, corrupt, and directory binary paths, prevents canonical first-run download, maps launch failure, rejects a challenge page as content success, continues teardown after close failure, preserves cancellation and `BaseException`, and verifies task-owned temporary/process cleanup. No license value is read into the result, printed, or persisted.
+
+The required real loopback lifecycle—launch, `new_page`, `goto`, rendered content, status, final URL, content access, close, navigation timeout, and cancellation—was not run because no task-scoped paid license or keyed executable was available. No public canary was authorized or used. The minimum future qualification surface is exactly `headless=true`, `locale=en-US`, `timezone=America/New_York`, and `humanize=true`. Proxy, geo-IP, frames, extensions, CAPTCHA bypass, login, and session persistence remain boundary-only. This qualification neither implements #68 nor enables any production reader; the existing fallback order, HTTP reader, ordinary Playwright reader, dependency bounds, caches, CLI/API/MCP contracts, and scheduled work remain unchanged.
+
+Validate the self-digesting, recursively closed fixture offline (no CloakBrowser install or browser is required):
+
+```powershell
+py -3.12 tools\qualify_cloakbrowser_0_5_8.py --validate-result docs\testing\fixtures\cloakbrowser-0.5.8-qualification.win32-x86_64.json
+```
+
+To reproduce this exact `defer` evidence, use a new isolated root and a clean cache. This deliberately does not download a browser or point at `%USERPROFILE%\.cloakbrowser`:
+
+```powershell
+$qualRoot = Join-Path $env:TEMP "web-listening-cloakbrowser-058-repeat"
+$hadCloakLicense = Test-Path Env:CLOAKBROWSER_LICENSE_KEY
+$previousCloakLicense = $null
+if ($hadCloakLicense) {
+    throw "Use a fresh shell without CLOAKBROWSER_LICENSE_KEY; the qualification will not read it."
+}
+py -3.12 -m venv $qualRoot\venv
+& $qualRoot\venv\Scripts\python.exe -m pip download --no-deps --no-cache-dir --only-binary=:all: cloakbrowser==0.5.8 --dest $qualRoot\wheel
+& $qualRoot\venv\Scripts\python.exe -m pip install --no-cache-dir $qualRoot\wheel\cloakbrowser-0.5.8-py3-none-any.whl "anyio==4.15.0" "certifi==2026.7.22" "cffi==2.1.1" "cryptography==50.0.1" "greenlet==3.5.5" "h11==0.16.0" "httpcore==1.0.9" "httpx==0.28.1" "idna==3.19" "playwright==1.62.0" "pycparser==3.0" "pyee==13.0.1" "typing-extensions==4.16.0"
+New-Item -ItemType Directory -Path $qualRoot\browser-cache
+Remove-Item Env:CLOAKBROWSER_LICENSE_KEY -ErrorAction SilentlyContinue
+& $qualRoot\venv\Scripts\python.exe tools\qualify_cloakbrowser_0_5_8.py --wheel $qualRoot\wheel\cloakbrowser-0.5.8-py3-none-any.whl --browser-cache $qualRoot\browser-cache --write $qualRoot\result.json
+Compare-Object (Get-Content -Raw $qualRoot\result.json) (Get-Content -Raw docs\testing\fixtures\cloakbrowser-0.5.8-qualification.win32-x86_64.json)
+```
+
+`Compare-Object` must produce no output for this exact platform. A future `adopt` decision requires a separately authorized paid-key run, both exact pinned executables preinstalled in the isolated cache, their executable SHA-256 values, the complete loopback lifecycle and failure paths, and clean teardown for each channel. Each additional platform needs its own evidence.
+
+For any future authorized paid-key run, capture the caller's process-level license-variable state before the workflow sets, replaces, or removes it. Keep the saved value only in the same PowerShell process and never print or persist it:
+
+```powershell
+$hadCloakLicense = Test-Path Env:CLOAKBROWSER_LICENSE_KEY
+$previousCloakLicense = if ($hadCloakLicense) {
+    $env:CLOAKBROWSER_LICENSE_KEY
+} else {
+    $null
+}
+```
+
+Rollback is paired to wrapper, channel, and binary. For the current deferred run, uninstall the exact wrapper/dependencies and remove only `$qualRoot\browser-cache` and `$qualRoot\venv`. If a future authorized run installs the named keyed builds, first remove exactly `$qualRoot\browser-cache\chromium-151.0.7922.108.3-pro` and `$qualRoot\browser-cache\chromium-151.0.7922.108.6-pro`, then uninstall the same pinned wrapper/dependencies and remove the isolated environment. Finally restore the caller's license-variable state without printing it:
+
+```powershell
+& $qualRoot\venv\Scripts\python.exe -m pip uninstall -y cloakbrowser anyio certifi cffi cryptography greenlet h11 httpcore httpx idna playwright pycparser pyee typing-extensions
+Remove-Item -LiteralPath $qualRoot\browser-cache -Recurse -Force
+Remove-Item -LiteralPath $qualRoot\venv -Recurse -Force
+if ($hadCloakLicense) {
+    $env:CLOAKBROWSER_LICENSE_KEY = $previousCloakLicense
+} else {
+    Remove-Item Env:CLOAKBROWSER_LICENSE_KEY -ErrorAction SilentlyContinue
+}
+```
+
+Never use the production CloakBrowser cache for qualification or rollback. The fixture supports exactly one conclusion, `defer`, with SHA-256 `a5b8256b3f797395048f0fd107f60c73b489983dbc9bbcae95ea6c4857ccdd72`.
 
 ### Semantic-version decision rubric
 

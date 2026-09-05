@@ -698,7 +698,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--validate-result", type=Path)
     args = parser.parse_args(argv)
     if args.validate_result is not None:
-        payload = json.loads(args.validate_result.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(args.validate_result.read_text(encoding="utf-8"))
+        except OSError:
+            parser.error("unable to read qualification result")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            parser.error("qualification result is not valid JSON")
         errors = validate_qualification_result(payload)
         if errors:
             parser.error("invalid qualification result: " + ", ".join(errors))
@@ -706,7 +711,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.wheel is None or args.browser_cache is None:
         parser.error("--wheel and --browser-cache are required to run qualification")
-    result = qualify(wheel=args.wheel, browser_cache=args.browser_cache)
+    try:
+        result = qualify(wheel=args.wheel, browser_cache=args.browser_cache)
+    except RuntimeError as exc:
+        parser.error(f"qualification failed: {exc}")
     errors = validate_qualification_result(result)
     if errors:
         parser.error("generated qualification result is invalid: " + ", ".join(errors))

@@ -309,6 +309,150 @@ def test_generation_writes_exact_self_validated_adopt_artifact(
     assert output.read_text(encoding="utf-8") == canonical_json(payload) + "\n"
 
 
+def test_validate_result_missing_file_is_a_traceback_free_argparse_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "result.json"
+
+    with pytest.raises(SystemExit) as exited:
+        main(
+            [
+                "--validate-result",
+                str(tmp_path / "missing.json"),
+                "--write",
+                str(output),
+            ]
+        )
+
+    assert exited.value.code == 2
+    assert not output.exists()
+    captured = capsys.readouterr()
+    assert "error: unable to read qualification result" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_validate_result_unreadable_file_is_a_traceback_free_argparse_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    result = tmp_path / "result.json"
+    result.write_text("{}", encoding="utf-8")
+    output = tmp_path / "output.json"
+
+    def raise_os_error(*_: object, **__: object) -> str:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(Path, "read_text", raise_os_error)
+
+    with pytest.raises(SystemExit) as exited:
+        main(["--validate-result", str(result), "--write", str(output)])
+
+    assert exited.value.code == 2
+    assert not output.exists()
+    captured = capsys.readouterr()
+    assert "error: unable to read qualification result" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_validate_result_malformed_json_is_a_traceback_free_argparse_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    result = tmp_path / "result.json"
+    result.write_text("{", encoding="utf-8")
+    output = tmp_path / "output.json"
+
+    with pytest.raises(SystemExit) as exited:
+        main(["--validate-result", str(result), "--write", str(output)])
+
+    assert exited.value.code == 2
+    assert not output.exists()
+    captured = capsys.readouterr()
+    assert "error: qualification result is not valid JSON" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_validate_result_invalid_utf8_is_a_traceback_free_argparse_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    result = tmp_path / "result.json"
+    result.write_bytes(b"\xff")
+    output = tmp_path / "output.json"
+
+    with pytest.raises(SystemExit) as exited:
+        main(["--validate-result", str(result), "--write", str(output)])
+
+    captured = capsys.readouterr()
+    assert exited.value.code == 2
+    assert not output.exists()
+    assert "error: qualification result is not valid JSON" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_validate_result_invalid_canonical_payload_is_an_argparse_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    result = tmp_path / "result.json"
+    result.write_text(
+        canonical_json(
+            _rehashed_fixture(
+                lambda payload: payload["package"].__setitem__("latest", "1.62.1")
+            )
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "output.json"
+
+    with pytest.raises(SystemExit) as exited:
+        main(["--validate-result", str(result), "--write", str(output)])
+
+    captured = capsys.readouterr()
+    assert exited.value.code == 2
+    assert not output.exists()
+    assert "error: invalid qualification result: package.latest" in captured.err
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Playwright 1.62.0 is not installed in this interpreter",
+        "wheel path does not exist",
+        "isolated browser cache path does not exist",
+        "explicit qualification preflight failed",
+    ],
+    ids=["missing-runtime", "missing-wheel", "missing-cache", "explicit-runtime-error"],
+)
+def test_generation_runtime_errors_are_traceback_free_argparse_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    message: str,
+) -> None:
+    output = tmp_path / "result.json"
+
+    def raise_runtime_error(**_: object) -> dict[str, object]:
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(qualification, "qualify", raise_runtime_error)
+
+    with pytest.raises(SystemExit) as exited:
+        main(
+            [
+                "--wheel",
+                "ignored.whl",
+                "--browser-cache",
+                str(tmp_path),
+                "--write",
+                str(output),
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert exited.value.code == 2
+    assert not output.exists()
+    assert f"error: qualification failed: {message}" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_qualification_binds_playwright_to_the_selected_isolated_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

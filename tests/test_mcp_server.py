@@ -575,3 +575,4 @@ async def test_mcp_server_registers_expected_tools():
         "web_listening_get_job",
         "web_listening_read_artifact",
     }.issubset(names)
+    assert len(names) == 10

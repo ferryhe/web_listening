@@ -431,7 +431,7 @@ Safety rules:
 
 ## Version and Runtime Compatibility
 
-Compatibility inventory last reviewed on **2026-08-21**.
+Compatibility inventory last reviewed on **2026-09-04**.
 
 | Component | Compatibility policy / observation |
 |---|---|
@@ -440,7 +440,7 @@ Compatibility inventory last reviewed on **2026-08-21**.
 | FastAPI | Project environment verified at 0.139.2 |
 | MCP | Declared `>=1.28.1,<2.0.0`; verified at 1.28.1; 2.x is not qualified |
 | BrowserAct | Exact isolated contract `browser-act-cli==1.0.6`; latest observed 1.0.6 |
-| Playwright | Declared `>=1.52.0`; external host observed 1.59.0; latest observed 1.61.0 |
+| Playwright | Declared `>=1.52.0`; Windows AMD64/Python 3.12.14 isolated qualification adopted for 1.62.0; reader adoption remains #69 |
 | CloakBrowser | Declared `>=0.3.26`; external host observed 0.3.27; latest observed 0.4.12 |
 
 External-host and latest-version observations are inventory signals, **not compatibility certification**. Do not raise lower bounds or upgrade deployed runtimes from those observations alone. Every upgrade requires qualification in an isolated environment, focused adapter/contract tests, the full project suite, and a rollback decision.
@@ -448,6 +448,52 @@ External-host and latest-version observations are inventory signals, **not compa
 The `dev` and `mcp` extras both declare `mcp>=1.28.1,<2.0.0`. The stdio server uses the qualified MCP 1.x `FastMCP` API; MCP 2.x must not be installed until it is separately qualified.
 
 BrowserAct has an exact isolated inspection contract: it must run from a separate Python 3.12 tool environment, must not be added to project dependencies, and must pass `web-listening inspect-browseract --json` as version 1.0.6 with the expected advertised capabilities. Inspection executes only bounded version/runtime/help probes; the production executor and wrapper reject every target request before spawning BrowserAct. It, Playwright, and CloakBrowser are not supported 2.0 target-content readers.
+
+### Playwright 1.62.0 qualification
+
+**Conclusion: adopt.** The committed, canonical [Windows AMD64 evidence](docs/testing/fixtures/playwright-1.62.0-qualification.win32-x86_64.json) was produced in an isolated Python 3.12.14 environment, matching the project's supported Python range. This adopts only the exact package/browser pair for that platform qualification scope; it does not authorize production reader adoption, a dependency-bound change, a production cache install, or any target navigation. No public live canary was run.
+
+The exact evidence is Playwright `1.62.0`, wheel `playwright-1.62.0-py3-none-win_amd64.whl` (`92c0d98ed04eb35af557b709875edba415b1f548bdb22ddb5bb3e1e6c835c2f1`), resolved `greenlet==3.5.5`, `pyee==13.0.1`, and `typing-extensions==4.16.0`. Its matching Chromium artifacts are Playwright revision `1234`, Chrome for Testing `151.0.7922.34` at `chromium-1234/chrome-win64/chrome.exe` (SHA-256 `409805a16d6416087e6b2f778df1cf8f7bbb267d6b99f6b5bb0a618eace234f2`), and the headless runtime actually launched by the harness at `chromium_headless_shell-1234/chrome-headless-shell-win64/chrome-headless-shell.exe` (SHA-256 `ce4635cd0e5dc0e21494542a701f347e91c1f1d821970578d97ed8df4ced50ef`). The fixture carries its own canonical SHA-256 and rejects identity tampering in the focused tests.
+
+The qualification harness starts only a loopback HTTP server. It records launch, context/page creation, a redirect, JavaScript-rendered HTML, status, navigation timeout, asyncio cancellation, missing/corrupt-binary and launch-failure handling, close-failure handling, and post-close process/temp checks. Re-run the committed-result validator without a browser:
+
+```powershell
+py -3.12 tools\qualify_playwright_1_62.py --validate-result docs\testing\fixtures\playwright-1.62.0-qualification.win32-x86_64.json
+```
+
+For a real repeat of the named evidence scope, create a new temporary root, install exactly `playwright==1.62.0` into an isolated Python 3.12.14 environment, set `PLAYWRIGHT_BROWSERS_PATH` to that root's `browsers` directory for browser installation, and supply the downloaded wheel with `--wheel` (the harness binds its selected `--browser-cache` itself):
+
+```powershell
+$qualRoot = Join-Path $env:TEMP "web-listening-pw162-repeat"
+$hadPlaywrightBrowsersPath = Test-Path Env:PLAYWRIGHT_BROWSERS_PATH
+$previousPlaywrightBrowsersPath = $env:PLAYWRIGHT_BROWSERS_PATH
+py -3.12 -m venv $qualRoot\venv
+& $qualRoot\venv\Scripts\python.exe -m pip download --no-deps --no-cache-dir --only-binary=:all: playwright==1.62.0 --dest $qualRoot\wheel
+& $qualRoot\venv\Scripts\python.exe -m pip install --no-cache-dir $qualRoot\wheel\playwright-1.62.0-py3-none-win_amd64.whl "greenlet==3.5.5" "pyee==13.0.1" "typing-extensions==4.16.0"
+$env:PLAYWRIGHT_BROWSERS_PATH = "$qualRoot\browsers"
+& $qualRoot\venv\Scripts\python.exe -m playwright install chromium
+& $qualRoot\venv\Scripts\python.exe tools\qualify_playwright_1_62.py --wheel $qualRoot\wheel\playwright-1.62.0-py3-none-win_amd64.whl --browser-cache $env:PLAYWRIGHT_BROWSERS_PATH --write $qualRoot\result.json
+Compare-Object (Get-Content -Raw $qualRoot\result.json) (Get-Content -Raw docs\testing\fixtures\playwright-1.62.0-qualification.win32-x86_64.json)
+```
+
+`Compare-Object` must produce no output for this exact Windows AMD64/Python 3.12.14 scope. Every additional platform needs its own platform-specific evidence. Never point either command at the production Playwright cache.
+
+The upstream 1.62 release pairs this browser build and adds JavaScript/Node `AbortSignal` cancellation. The Python 1.62 `Page.goto` signature still exposes timeout/wait-until/referer rather than `signal`; #69 must define its own Python cancellation boundary and stable outcome mapping. It must keep the package and both `PLAYWRIGHT_BROWSERS_PATH` artifacts together, close page/context/browser on every path, consume only governed gateway bytes, and preserve the current disabled wrapper/direct-reader behavior until its separately authorized reader-adoption work. The 1.62 release notes also confirm that headless execution uses Chrome Headless Shell while headed execution uses Chrome for Testing. See the [upstream 1.62 release notes](https://playwright.dev/docs/release-notes).
+
+If a later isolated qualification must be rolled back, remove only the isolated environment and its paired browser cache:
+
+```powershell
+& $qualRoot\venv\Scripts\python.exe -m pip uninstall -y playwright pyee greenlet typing-extensions
+Remove-Item -LiteralPath $qualRoot\browsers -Recurse -Force
+Remove-Item -LiteralPath $qualRoot\venv -Recurse -Force
+if ($hadPlaywrightBrowsersPath) {
+    $env:PLAYWRIGHT_BROWSERS_PATH = $previousPlaywrightBrowsersPath
+} else {
+    Remove-Item Env:PLAYWRIGHT_BROWSERS_PATH -ErrorAction SilentlyContinue
+}
+```
+
+`$qualRoot` must be the exact temporary qualification root, never `%LOCALAPPDATA%\ms-playwright` or another production cache.
 
 ### Semantic-version decision rubric
 

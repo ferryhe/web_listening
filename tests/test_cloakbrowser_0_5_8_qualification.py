@@ -98,6 +98,20 @@ def test_stable_and_preview_are_separate_exact_pins() -> None:
         }
 
 
+def test_platform_tag_is_derived_from_detected_os_and_architecture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(qualification, "PLATFORM_TAG", "tampered-constant")
+
+    assert qualification._detected_platform_tag("Windows", "AMD64") == "windows-x64"
+    assert qualification._detected_platform_tag("Windows", "x86_64") == "windows-x64"
+    assert qualification._detected_platform_tag("Linux", "x86_64") == "unsupported"
+    assert (
+        qualification._detected_platform_tag("Windows", "AMD64")
+        != qualification.PLATFORM_TAG
+    )
+
+
 def test_fixture_records_all_required_outcomes_without_inventing_runtime() -> None:
     payload = _fixture()
     checks = payload["checks"]

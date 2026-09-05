@@ -117,6 +117,12 @@ def _digest_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _detected_platform_tag(os_name: str, architecture: str) -> str:
+    if os_name == "Windows" and architecture in {"AMD64", "x86_64"}:
+        return "windows-x64"
+    return "unsupported"
+
+
 def _passed(code: str, **details: object) -> dict[str, object]:
     return {"code": code, "passed": True, **details}
 
@@ -732,10 +738,12 @@ def qualify(*, wheel: Path, browser_cache: Path) -> dict[str, object]:
         raise RuntimeError(
             "resolved qualification environment does not match the pinned dependency set"
         )
+    os_name = platform.system()
+    architecture = platform.machine()
     actual_platform = {
-        "architecture": platform.machine(),
-        "os": platform.system(),
-        "platform_tag": PLATFORM_TAG,
+        "architecture": architecture,
+        "os": os_name,
+        "platform_tag": _detected_platform_tag(os_name, architecture),
         "python_version": platform.python_version(),
     }
     if actual_platform != EXPECTED_PLATFORM:

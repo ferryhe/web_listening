@@ -61,6 +61,7 @@ def test_acquisition_tools_v1_sample_fixture_has_frontend_agent_contract_shape()
     assert tools["browser_rendered"]["recommended_when"][0] == "dynamic JavaScript-rendered public pages"
     assert tools["browser_rendered"]["runtime_status"] == "optional_runtime"
     assert tools["browser_rendered"]["optional_runtime"]["extra"] == "browser"
+    assert tools["browser_rendered"]["optional_runtime"]["package"] == "playwright==1.62.0"
     assert tools["cloakbrowser"]["recommended_when"][0] == "authorized stealth browser or CDP-like contexts"
     assert tools["cloakbrowser"]["requires_profile_safety"] == {
         "allow_stealth_browser": True,

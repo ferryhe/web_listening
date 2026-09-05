@@ -258,7 +258,6 @@ def test_supported_target_readers_have_no_direct_http_or_browser_navigation() ->
         root / "web_listening/executors/http_wrapper.py",
         root / "web_listening/executors/browseract.py",
         root / "web_listening/executors/browseract_wrapper.py",
-        root / "web_listening/executors/playwright_wrapper.py",
         root / "web_listening/executors/cloakbrowser_wrapper.py",
         root / "web_listening/cli.py",
         root / "web_listening/api/routes.py",
@@ -280,6 +279,15 @@ def test_supported_target_readers_have_no_direct_http_or_browser_navigation() ->
     }
 
     assert findings == {}
+
+    playwright_wrapper = (
+        root / "web_listening/executors/playwright_wrapper.py"
+    ).read_text(encoding="utf-8")
+    assert "authority.read_gateway.read(" in playwright_wrapper
+    assert 'self._page.route("**/*", route_request)' in playwright_wrapper
+    assert "offline=True" in playwright_wrapper
+    assert 'route.abort("blockedbyclient")' in playwright_wrapper
+    assert 'self._page.route_web_socket("**/*"' in playwright_wrapper
 
     browseract_wrapper = (
         root / "web_listening/executors/browseract_wrapper.py"

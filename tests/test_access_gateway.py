@@ -744,16 +744,28 @@ def test_rebinding_private_reserved_and_peer_failures_open_no_body_or_write(
     ]
 
 
-def test_safe_pinned_transport_timeout_maps_to_frozen_robots_timeout(
+@pytest.mark.parametrize(
+    ("timeout_seconds", "expected_timeout"),
+    [(5.0, 5.0), (None, 30.0)],
+)
+def test_request_timeout_applies_to_safe_pinned_robots_fetch(
     monkeypatch: pytest.MonkeyPatch,
+    timeout_seconds: float | None,
+    expected_timeout: float,
 ) -> None:
+    observed_timeouts: list[float] = []
     monkeypatch.setattr(
         "socket.getaddrinfo",
         lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))],
     )
+
+    def connect(*args, timeout: float, **kwargs):
+        observed_timeouts.append(timeout)
+        raise TimeoutError("timed out")
+
     monkeypatch.setattr(
         "socket.create_connection",
-        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("timed out")),
+        connect,
     )
     access = AccessGateway(
         AccessGatewayConfig(
@@ -762,16 +774,51 @@ def test_safe_pinned_transport_timeout_maps_to_frozen_robots_timeout(
             diagnostic_artifact_sha256=DIAGNOSTIC_SHA256,
             pacing_interval=timedelta(0),
         ),
-        transport=SafePinnedTransport(),
+        transport=SafePinnedTransport(timeout=30.0),
         clock=ManualClock(),
     )
 
-    result = access.request("https://example.com/report", consume=read_body)
+    result = access.request_with_context(
+        "https://example.com/report",
+        consume=lambda raw, _context: read_body(raw),
+        timeout_seconds=timeout_seconds,
+    )
 
     assert (result.decision.outcome, result.decision.reason_code) == (
         "error",
         "robots.timeout",
     )
+    assert observed_timeouts == [expected_timeout]
+
+
+def test_safe_pinned_transport_rejects_per_request_timeout_enlargement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "socket.getaddrinfo",
+        lambda *args, **kwargs: pytest.fail("DNS must not be reached"),
+    )
+
+    access = AccessGateway(
+        AccessGatewayConfig(
+            identity=identity(),
+            allowed_origins=frozenset({ORIGIN}),
+            diagnostic_artifact_sha256=DIAGNOSTIC_SHA256,
+            pacing_interval=timedelta(0),
+        ),
+        transport=SafePinnedTransport(timeout=5.0),
+        clock=ManualClock(),
+    )
+
+    with pytest.raises(AccessGatewayTransportError) as caught:
+        access.request_with_context(
+            "https://example.com/report",
+            consume=lambda raw, _context: read_body(raw),
+            timeout_seconds=30.0,
+        )
+
+    assert caught.value.kind == "timeout_configuration"
+    assert caught.value.retryable is False
 
 
 def test_safe_pinned_pre_response_unicode_failure_closes_socket_once(

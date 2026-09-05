@@ -1,6 +1,6 @@
 # web_listening
 
-`web_listening` 3.1 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
+`web_listening` 3.2 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
 
 The supported 1.0 scope is complete and stable. Future changes follow the semantic-version policy below. The canonical product flow is:
 
@@ -24,11 +24,13 @@ Version 3.0 establishes `immutable-artifact-store.v1`, the durable storage contr
 
 Version 3.1 adds `agentic-site-rules.v1` and `agentic-orchestration.v1` as an additive Agentic exploration core. Strict versioned YAML binds exact origins, allow globs, optional/required search queries, depth/request/decoded-byte/file/concurrency/retry budgets, and allowed content types. Crawler and explicitly authorized search adapters can only propose inert candidates; the orchestrator performs every target-content read through the unified gateway and persists every successful original through `ArtifactStore`. Deterministic parent/child tasks, read observations, and replay links preserve rule, Site Skill, execution-plan, adapter, discovery, access-decision, redirect, artifact, and run lineage. Issue #53 does not create the final acquisition manifest, classification/knowledge-base/chunk/index/ready outputs, a second network authority, or a new live-site default.
 
+Version 3.2 adopts the qualified Playwright 1.62.0 runtime as an optional governed reader for compiled `browser_rendered` recipe steps. The shared gateway still performs the main-document read and every redirect under the frozen origin, robots, SSRF, request-count, and byte boundaries. Playwright receives only the admitted final response through route fulfillment and aborts every other browser request, so scripts can render the supplied DOM without creating a direct-browser network path. Bare URLs, fetch modes, profiles, probes, and the legacy browser wrappers remain unable to grant execution authority.
+
 ## Supported interfaces and target-read paths
 
-This inventory is authoritative for 3.1. “Supported read” means production target content may be consumed; planning evidence and offline fixtures are not target reads. Version 3.1 preserves the governed 2.0 read authority and immutable 3.0 storage semantics while adding bounded Agentic orchestration.
+This inventory is authoritative for 3.2. “Supported read” means production target content may be consumed; planning evidence and offline fixtures are not target reads. Version 3.2 preserves the governed 2.0 read authority and immutable 3.0 storage semantics while adding the plan-bound browser renderer.
 
-| Path | 3.1 status | Execution rule |
+| Path | 3.2 status | Execution rule |
 |---|---|---|
 | Canonical `discover` section inventory | Supported planning read through a per-target gateway | Each reviewed catalog target is digest-bound to its own planning `AccessGateway`; robots rejection/error and every gateway or bounded-body failure propagate before inventory directories, YAML, or report creation, and successful planning reads grant no later execution authority. |
 | Crawler HTML, XML, feed, and sitemap content | Supported through scoped `web_http` execution | Every URL, including a discovered candidate and every redirect hop, enters `AccessGateway`; redirects are never followed automatically. |
@@ -36,7 +38,7 @@ This inventory is authoritative for 3.1. “Supported read” means production t
 | Search, fallback, and rescue candidates | Discovery/planning only until re-admitted | Candidate discovery does not grant read authority. A selected URL must re-enter a complete compiled scoped plan and the gateway before content is read. |
 | Agentic crawler/search exploration | Additive bounded orchestration core | A strict `agentic-site-rules.v1`, exact Site Skill/execution-plan authority, and versioned adapters create deterministic candidate tasks. Adapters return URLs only; every content read uses the unified gateway, and every successful original uses the immutable artifact store. |
 | Tree bootstrap and incremental crawling | Supported only from the governed staged scope flow | The supplied sealed authority, gateway, and accepted exact-URL seed are mandatory. Initial admission occurs before constructing `Storage`; the accepted response is consumed once at its unchanged URL, while a seed or later page/file rejection/error rolls back the entire current execution and its deferred API job. Rollback never removes a preexisting artifact directory; exact current-execution directory ownership is journaled separately. Canonical URLs are dedupe keys only. Direct bootstrap without an admitted seed rejects, and the legacy incremental wrapper is disabled in favor of `PreparedScopeExecution`. |
-| Browser, Playwright, CloakBrowser, and BrowserAct target navigation | Disabled | These adapters cannot navigate target URLs in 2.0. BrowserAct executor and wrapper calls fail locally before a target wrapper, stealth, or browser-open process can spawn; only the separate version/runtime/help inspection probes may execute. The adapters are not supported content readers. |
+| Browser-rendered article content | Supported only through scoped `browser_rendered` execution | One prepared adapter is sealed to the exact compiled plan step and exact governed gateway. The gateway reads the main document and redirects; Playwright 1.62.0 receives only the final admitted bytes, runs inline JavaScript, and blocks all other requests. BrowserAct, CloakBrowser, direct `BrowserCrawler`, stdio wrapper, one-off probe, and fetch-mode navigation remain disabled. |
 | Legacy `Crawler`/`DocumentProcessor` direct-client construction | Disabled in production | A gateway is required. The `httpx.MockTransport` compatibility seam is offline-test-only and itself wraps `AccessGateway`; it is not a production transport option. |
 | `diagnose-site` robots/sitemap reads | Explicitly isolated planning producer | It uses its separate bounded, pinned, robots-first diagnostic transport, never fetches page candidates, mutates no execution scope, and grants no acquisition authority. |
 
@@ -48,7 +50,7 @@ The supported execution interfaces are deliberately aligned:
 | REST API | `POST /api/v1/monitor-scopes/{scope_id}/bootstrap` and `/run` | Request body supplies `scope_path` and `acquisition_profile_path`; the one sealed authority is admitted before job/Storage mutation and handed unchanged into execution | HTTP 403/502 with the applicable exact robots envelope, or HTTP 502 with the separate governed-read error; neither creates a job row. |
 | MCP | `web_listening_bootstrap_scope`, `web_listening_run_scope` | Explicit `scope_path` and required `acquisition_profile_path` | The same exact robots envelope/reason code or separate governed-read error payload as CLI/API. |
 
-The site-level `check`/`download-docs`, one-off acquisition probe/fallback/rescue, legacy tree wrappers, and their REST/MCP compatibility surfaces do not form a second target-read authority. In 2.0 they may inspect stored/planning evidence or report that governed authority is required, but they cannot bypass the scoped gateway. CLI remains canonical for `discover -> classify -> select -> plan-scope`; REST does not add planning authority.
+The site-level `check`/`download-docs`, one-off acquisition probe/fallback/rescue, legacy tree wrappers, and their REST/MCP compatibility surfaces do not form a second target-read authority. They may inspect stored/planning evidence or report that governed authority is required, but they cannot bypass the scoped gateway or prepare a browser reader. CLI remains canonical for `discover -> classify -> select -> plan-scope`; REST does not add planning authority.
 
 ## Robots and sitemap diagnosis
 
@@ -153,7 +155,7 @@ Formal `bootstrap-scope` and `run-scope` execution requires an acquisition profi
 5. `site_skill_script_sha256`
 6. `executor_version`
 
-The package resolves and validates the exact Site Skill, applies requested runtime limits without allowing them to enlarge the reviewed scope, compiles one non-empty `acquisition-execution-plan.v1`, verifies executor capability and runtime policy, and constructs the gateway **before opening Storage or mutating state**. The gateway body ceiling and transport timeout come strictly from the sealed `web_http` step's `stdout_bytes` and `timeout_seconds`; missing, invalid, or inconsistent step limits fail closed before a target consumer or write. That same sealed preparation owns the compiled plan, gateway, exact target, and admitted seed from initial admission through execution; scope/profile files are not reloaded and authority is not recompiled after bookkeeping begins. CLI bootstrap/run prepare once and use `artifacts.plan` after execution rather than performing a preliminary scope load. The compiled plan—not picker metadata, a probe result, `fetch_mode`, or `fetch_config_json`—is formal executor authority. Partial governed bindings fail closed. Legacy fetch fields retain compatibility and lineage meaning only.
+The package resolves and validates the exact Site Skill, applies requested runtime limits without allowing them to enlarge the reviewed scope, compiles one non-empty `acquisition-execution-plan.v1`, verifies executor capability and runtime policy, and constructs the gateway **before opening Storage or mutating state**. Gateway-backed `web_http` and `browser_rendered` steps supply their sealed `stdout_bytes` and `timeout_seconds`: the shared transport uses ceilings large enough for the largest declared timeout and response body, while every executor read reapplies its own exact timeout and byte limit. A per-read timeout may narrow but cannot enlarge the shared transport ceiling. Missing or invalid limits fail closed before a target consumer or write. That same sealed preparation owns the compiled plan, gateway, exact target, and admitted seed from initial admission through execution; scope/profile files are not reloaded and authority is not recompiled after bookkeeping begins. CLI bootstrap/run prepare once and use `artifacts.plan` after execution rather than performing a preliminary scope load. The compiled plan—not picker metadata, a probe result, `fetch_mode`, or `fetch_config_json`—is formal executor authority. Partial governed bindings fail closed. Legacy fetch fields retain compatibility and lineage meaning only.
 
 Packaged Site Skills are discovered and validated statically: registry inspection does not import scripts, execute code, access the network, or resolve DNS. Package versions and SHA-256 digests make the selected authority reproducible.
 
@@ -424,7 +426,7 @@ Safety rules:
 
 - Keep scopes bounded with explicit/effective `max_depth`, `max_pages`, and `max_files`; never expand a whole site blindly.
 - Profile domains must be a non-empty subset of the governed Site Skill domains.
-- Browser, Playwright, CloakBrowser, and BrowserAct target navigation is disabled in 2.0; optional-runtime inspection does not grant read authority.
+- Browser rendering is available only inside one compiled `browser_rendered` step prepared with its exact governed gateway. Direct Playwright, BrowserCrawler, BrowserAct, CloakBrowser, fetch-mode, and probe navigation remains disabled; optional-runtime inspection and qualification evidence grant no read authority.
 - Treat acquisition picker/probe results as planning evidence, never as permission to bypass the reviewed scope, profile, Site Skill, or compiled plan.
 - A bootstrap creates the baseline; a later run performs change detection.
 - Agentic discovery adapters propose candidates only. They cannot supply target bodies, enlarge the rule/plan/Site Skill boundary, bypass the gateway, or bypass immutable original storage.
@@ -435,23 +437,23 @@ Compatibility inventory last reviewed on **2026-09-05**.
 
 | Component | Compatibility policy / observation |
 |---|---|
-| `web-listening` | `3.1.0` |
+| `web-listening` | `3.2.0` |
 | Python | Declared `>=3.12,<3.13`; verified with 3.12.3 |
 | FastAPI | Project environment verified at 0.139.2 |
 | MCP | Declared `>=1.28.1,<2.0.0`; verified at 1.28.1; 2.x is not qualified |
 | BrowserAct | Exact isolated contract `browser-act-cli==1.0.6`; latest observed 1.0.6 |
-| Playwright | Declared `>=1.52.0`; Windows AMD64/Python 3.12.14 isolated qualification adopted for 1.62.0; reader adoption remains #69 |
+| Playwright | Optional extra pinned to `==1.62.0`; governed reader adopted from the Windows AMD64/Python 3.12.14 qualification; other platforms require their own evidence |
 | CloakBrowser | Declared `>=0.3.26`; exact 0.5.8 Windows AMD64/Python 3.12.14 Stable/Preview qualification deferred because keyed binaries and a task-scoped paid license were unavailable |
 
 External-host and latest-version observations are inventory signals, **not compatibility certification**. Do not raise lower bounds or upgrade deployed runtimes from those observations alone. Every upgrade requires qualification in an isolated environment, focused adapter/contract tests, the full project suite, and a rollback decision.
 
 The `dev` and `mcp` extras both declare `mcp>=1.28.1,<2.0.0`. The stdio server uses the qualified MCP 1.x `FastMCP` API; MCP 2.x must not be installed until it is separately qualified.
 
-BrowserAct has an exact isolated inspection contract: it must run from a separate Python 3.12 tool environment, must not be added to project dependencies, and must pass `web-listening inspect-browseract --json` as version 1.0.6 with the expected advertised capabilities. Inspection executes only bounded version/runtime/help probes; the production executor and wrapper reject every target request before spawning BrowserAct. It, Playwright, and CloakBrowser are not supported 2.0 target-content readers.
+BrowserAct has an exact isolated inspection contract: it must run from a separate Python 3.12 tool environment, must not be added to project dependencies, and must pass `web-listening inspect-browseract --json` as version 1.0.6 with the expected advertised capabilities. Inspection executes only bounded version/runtime/help probes; the production executor and wrapper reject every target request before spawning BrowserAct. BrowserAct and CloakBrowser remain unsupported target-content readers. Playwright is supported only through the prepared governed path described below.
 
 ### Playwright 1.62.0 qualification
 
-**Conclusion: adopt.** The committed, canonical [Windows AMD64 evidence](docs/testing/fixtures/playwright-1.62.0-qualification.win32-x86_64.json) was produced in an isolated Python 3.12.14 environment, matching the project's supported Python range. This adopts only the exact package/browser pair for that platform qualification scope; it does not authorize production reader adoption, a dependency-bound change, a production cache install, or any target navigation. No public live canary was run.
+**Conclusion: adopt.** The committed, canonical [Windows AMD64 evidence](docs/testing/fixtures/playwright-1.62.0-qualification.win32-x86_64.json) was produced in an isolated Python 3.12.14 environment, matching the project's supported Python range. The evidence qualifies only the exact package/browser pair for that platform; it does not itself grant runtime read authority or authorize a production cache install. Version 3.2 separately adopts that pair behind the compiled-plan gateway boundary. No public live canary was run.
 
 The exact evidence is Playwright `1.62.0`, wheel `playwright-1.62.0-py3-none-win_amd64.whl` (`92c0d98ed04eb35af557b709875edba415b1f548bdb22ddb5bb3e1e6c835c2f1`), resolved `greenlet==3.5.5`, `pyee==13.0.1`, and `typing-extensions==4.16.0`. Its matching Chromium artifacts are Playwright revision `1234`, Chrome for Testing `151.0.7922.34` at `chromium-1234/chrome-win64/chrome.exe` (SHA-256 `409805a16d6416087e6b2f778df1cf8f7bbb267d6b99f6b5bb0a618eace234f2`), and the headless runtime actually launched by the harness at `chromium_headless_shell-1234/chrome-headless-shell-win64/chrome-headless-shell.exe` (SHA-256 `ce4635cd0e5dc0e21494542a701f347e91c1f1d821970578d97ed8df4ced50ef`). The fixture carries its own canonical SHA-256 and rejects identity tampering in the focused tests.
 
@@ -478,7 +480,20 @@ Compare-Object (Get-Content -Raw $qualRoot\result.json) (Get-Content -Raw docs\t
 
 `Compare-Object` must produce no output for this exact Windows AMD64/Python 3.12.14 scope. Every additional platform needs its own platform-specific evidence. Never point either command at the production Playwright cache.
 
-The upstream 1.62 release pairs this browser build and adds JavaScript/Node `AbortSignal` cancellation. The Python 1.62 `Page.goto` signature still exposes timeout/wait-until/referer rather than `signal`; #69 must define its own Python cancellation boundary and stable outcome mapping. It must keep the package and both `PLAYWRIGHT_BROWSERS_PATH` artifacts together, close page/context/browser on every path, consume only governed gateway bytes, and preserve the current disabled wrapper/direct-reader behavior until its separately authorized reader-adoption work. The 1.62 release notes also confirm that headless execution uses Chrome Headless Shell while headed execution uses Chrome for Testing. See the [upstream 1.62 release notes](https://playwright.dev/docs/release-notes).
+The upstream 1.62 release pairs this browser build and adds JavaScript/Node `AbortSignal` cancellation. The Python 1.62 `Page.goto` signature still exposes timeout/wait-until/referer rather than `signal`, so the 3.2 adapter defines its own stable Python cancellation boundary. It keeps the package and browser artifacts together, closes page/context/browser/driver and its owned temporary directory on every path, consumes only governed gateway bytes, and preserves the disabled wrapper/direct-reader behavior. The 1.62 release notes also confirm that headless execution uses Chrome Headless Shell while headed execution uses Chrome for Testing. See the [upstream 1.62 release notes](https://playwright.dev/docs/release-notes).
+
+### Governed browser reader enablement and rollback
+
+Install the optional runtime only in the intended project environment; this command does not install or upgrade a browser binary automatically:
+
+```powershell
+py -3.12 -m pip install -e ".[browser]"
+py -3.12 -m playwright install chromium
+```
+
+The second command is an explicit operator action and must use the cache chosen for that environment. A capture is enabled only when a reviewed scope resolves a Site Skill recipe whose compiled executor is `browser_rendered`. The staged compiler then seals the exact plan step and gateway into the adapter. A URL, `fetch_mode`, ordinary config, acquisition probe, qualification fixture, or installed browser cannot prepare that authority. The browser never follows the target network itself: the gateway performs the main-document request and all redirects, then the adapter fulfills the final navigation from those bounded bytes and aborts subresources.
+
+For immediate behavioral rollback, change the reviewed Site Skill/profile selection back to a `web_http` recipe and rerun scope planning; direct and fallback browser paths remain disabled. To remove the optional runtime, uninstall `playwright` only from the environment where it was added. Remove a browser cache only when its exact path and ownership are known; do not delete a shared or production cache.
 
 If a later isolated qualification must be rolled back, remove only the isolated environment and its paired browser cache:
 
@@ -576,6 +591,8 @@ Issue #51 migrates supported crawler, sitemap/feed, document/attachment, candida
 Issue #52 changes durable content behavior from mutable same-URL document state to an immutable blob/version/observation/lineage contract. Although its tables are added without destructively migrating legacy rows, consumers adopting the new store must use portable URIs, distinguish blob/version/observation identities, and stop relying on same-URL overwrite semantics. That is incompatible artifact/storage behavior under the rubric, so the project advances from 2.0.0 to **3.0.0**. Crawler/search orchestration and acquisition-manifest production remain out of scope.
 
 Issue #53 adds versioned Agentic rules, candidate exploration, and durable parent/child/read-observation state without changing the existing staged CLI, access authority, immutable identity, or storage contract. It is a backward-compatible capability and additive schema evolution, so the project advances from 3.0.0 to **3.1.0**. Final acquisition-manifest production and downstream classification/index/ready work remain separately gated.
+
+Issue #69 adds an optional, compiled-plan-bound `browser_rendered` reader without changing the HTTP reader, storage contract, fallback order, or direct-reader boundary. It is a backward-compatible optional capability under the rubric, so the project advances from 3.1.0 to **3.2.0**.
 
 ### Weekly review policy
 

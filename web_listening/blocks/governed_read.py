@@ -178,10 +178,10 @@ class GovernedReadGateway:
         url: str,
         *,
         max_body_bytes: int | None = None,
-        before_target_request: Callable[
-            [str, AccessDecision], Callable[[], None] | None
-        ]
-        | None = None,
+        before_target_request: (
+            Callable[[str, AccessDecision], Callable[[], None] | None] | None
+        ) = None,
+        timeout_seconds: float | None = None,
     ) -> GovernedReadResult:
         with self.__runtime_lock:
             dispatch = self.__runtime_dispatch
@@ -192,6 +192,13 @@ class GovernedReadGateway:
             if type(max_body_bytes) is not int or max_body_bytes < 1:
                 raise ValueError("max_body_bytes must be a positive integer")
             effective_limit = min(effective_limit, max_body_bytes)
+        if timeout_seconds is not None and (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be positive and finite")
 
         body_evidence = None
 
@@ -226,6 +233,7 @@ class GovernedReadGateway:
             url,
             consume=consume,
             before_target_request=before_target_request,
+            timeout_seconds=timeout_seconds,
         )
         dispatch.validate_runtime(self)
         if result.value is None or result.response is None:
@@ -359,6 +367,7 @@ class _MockClientTransport:
         user_agent: str,
         identity_sha256: str,
         progress: Callable[[], None] | None = None,
+        timeout_seconds: float | None = None,
     ) -> RawHttpResponse:
         del identity_sha256
         _transport, handler = self._validate_identity()
@@ -373,6 +382,8 @@ class _MockClientTransport:
             url,
             headers={"User-Agent": user_agent},
         )
+        if timeout_seconds is not None:
+            request.extensions["web_listening_timeout_seconds"] = timeout_seconds
         request.read()
         response = handler(request)
         if not isinstance(response, Response):
@@ -465,10 +476,10 @@ class MockClientReadGateway:
         url: str,
         *,
         max_body_bytes: int | None = None,
-        before_target_request: Callable[
-            [str, AccessDecision], Callable[[], None] | None
-        ]
-        | None = None,
+        before_target_request: (
+            Callable[[str, AccessDecision], Callable[[], None] | None] | None
+        ) = None,
+        timeout_seconds: float | None = None,
     ) -> GovernedReadResult:
         normalized_url, origin = normalize_http_url(url)
         with self._state_lock:
@@ -478,6 +489,7 @@ class MockClientReadGateway:
             normalized_url,
             max_body_bytes=max_body_bytes,
             before_target_request=before_target_request,
+            timeout_seconds=timeout_seconds,
         )
         if result.final_url == normalized_url and normalized_url != url:
             return replace(result, final_url=url)

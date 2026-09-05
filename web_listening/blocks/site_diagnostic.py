@@ -5,6 +5,7 @@ import http.client
 import io
 import ipaddress
 import json
+import math
 import os
 import re
 import socket
@@ -118,6 +119,7 @@ class DiagnosticTransport(Protocol):
         user_agent: str,
         identity_sha256: str,
         progress: Callable[[], None] | None = None,
+        timeout_seconds: float | None = None,
     ) -> RawHttpResponse: ...
 
 
@@ -222,10 +224,24 @@ class SafePinnedTransport:
         user_agent: str,
         identity_sha256: str,
         progress: Callable[[], None] | None = None,
+        timeout_seconds: float | None = None,
     ) -> RawHttpResponse:
-        del (
-            identity_sha256
-        )  # The caller records and checks it; it is never sent as a header.
+        del identity_sha256  # The caller records and checks it; it is never sent as a header.
+        effective_timeout = self.timeout
+        if timeout_seconds is not None:
+            if (
+                isinstance(timeout_seconds, bool)
+                or not isinstance(timeout_seconds, (int, float))
+                or not math.isfinite(timeout_seconds)
+                or timeout_seconds <= 0
+                or timeout_seconds > self.timeout
+            ):
+                raise TransportFailure(
+                    "timeout_configuration",
+                    "per-request timeout must be positive and cannot enlarge transport timeout",
+                    safety=True,
+                )
+            effective_timeout = float(timeout_seconds)
         _FROZEN_SAFE_PINNED_VALIDATE_RUNTIME(self)
         dispatch = self.__runtime_dispatch
         if progress is not None:
@@ -263,7 +279,7 @@ class SafePinnedTransport:
                 if progress is not None:
                     progress()
                 raw = create_connection(
-                    (address, origin.effective_port), timeout=self.timeout
+                    (address, origin.effective_port), timeout=effective_timeout
                 )
                 if dispatch is not None and type(raw) is not dispatch.socket_type:
                     raise TransportFailure(
@@ -308,9 +324,9 @@ class SafePinnedTransport:
                         "socket timeout capability changed",
                         safety=True,
                     )
-                dispatch.socket_settimeout(raw, self.timeout)
+                dispatch.socket_settimeout(raw, effective_timeout)
             else:
-                raw.settimeout(self.timeout)
+                raw.settimeout(effective_timeout)
             if origin.scheme == "https":
                 if progress is not None:
                     progress()
@@ -403,7 +419,7 @@ class SafePinnedTransport:
                     else http.client.HTTPConnection
                 )
             connection = connection_type(
-                origin.host, origin.effective_port, timeout=self.timeout
+                origin.host, origin.effective_port, timeout=effective_timeout
             )
             if dispatch is not None and (
                 type(connection) is not connection_type

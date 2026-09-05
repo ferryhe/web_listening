@@ -117,6 +117,33 @@ def _sealed_web_http_limits(compiled) -> tuple[float, int]:
     return next(iter(pairs))
 
 
+def _sealed_gateway_limits(compiled) -> tuple[float, int]:
+    """Return non-enlarging transport limits for all gateway-backed plan steps."""
+    pairs: list[tuple[float, int]] = []
+    for step in compiled.steps:
+        if str(step.get("executor_id")) not in {"web_http", "browser_rendered"}:
+            continue
+        limits = step.get("limits")
+        if not isinstance(limits, Mapping):
+            raise ValueError("sealed gateway limits are missing")
+        timeout = limits.get("timeout_seconds")
+        stdout = limits.get("stdout_bytes")
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+            or isinstance(stdout, bool)
+            or not isinstance(stdout, int)
+            or stdout <= 0
+        ):
+            raise ValueError("sealed gateway limits must be positive and finite")
+        pairs.append((float(timeout), stdout))
+    if not pairs:
+        raise ValueError("sealed gateway limits require a gateway-backed plan step")
+    return max(timeout for timeout, _ in pairs), max(stdout for _, stdout in pairs)
+
+
 def _preflight_optional_browser_runtimes(planned, *, importer=import_module) -> None:
     """Validate only optional browser runtimes selected by the governed plan."""
     try:
@@ -224,10 +251,10 @@ def _compile_acquisition_gateway(
             "formal scope execution requires a governed non-empty acquisition plan"
         )
     planned = {str(step["executor_id"]) for step in compiled.steps}
-    if planned != {"web_http"}:
+    if not planned or not planned.issubset({"web_http", "browser_rendered"}):
         raise ValueError(
-            "formal execution supports only gateway-backed web_http recipes; "
-            "direct browser and subprocess target reads are disabled"
+            "formal execution supports only gateway-backed web_http and "
+            "browser_rendered recipes; direct subprocess target reads are disabled"
         )
     for step in compiled.steps:
         config = dict(step.get("config", {}))
@@ -239,7 +266,7 @@ def _compile_acquisition_gateway(
                 "executor request identity must not override the frozen AccessGateway identity"
             )
 
-    timeout_seconds, max_body_bytes = _sealed_web_http_limits(compiled)
+    timeout_seconds, max_body_bytes = _sealed_gateway_limits(compiled)
 
     read_gateway = build_runtime_read_gateway(
         authority_sha256=compiled.acquisition_fingerprint,
@@ -258,18 +285,21 @@ def _compile_acquisition_gateway(
         ),
     )
 
-    class _Executor:
-        def __init__(self, executor_id):
-            self.executor_id = executor_id
+    class _HttpExecutor:
+        def __init__(self, step):
+            self.executor_id = "web_http"
+            self._timeout_seconds = float(step["limits"]["timeout_seconds"])
+            self._max_body_bytes = int(step["limits"]["stdout_bytes"])
             self._closed = False
 
         def execute(self, request):
             started = datetime.now(timezone.utc)
-            response = read_gateway.read(str(request.url))
-            if (
-                self.executor_id == "web_http"
-                and request.metadata.get("content_kind") == "document"
-            ):
+            response = read_gateway.read(
+                str(request.url),
+                max_body_bytes=self._max_body_bytes,
+                timeout_seconds=self._timeout_seconds,
+            )
+            if request.metadata.get("content_kind") == "document":
                 return CaptureResult(
                     **request.model_dump(
                         include={
@@ -349,8 +379,22 @@ def _compile_acquisition_gateway(
 
     executors = {}
     try:
-        for executor_id in planned:
-            executors[executor_id] = _Executor(executor_id)
+        for step in compiled.steps:
+            executor_id = str(step["executor_id"])
+            if executor_id == "web_http":
+                executors[executor_id] = _HttpExecutor(step)
+                continue
+            from web_listening.executors.playwright_wrapper import (
+                BrowserAcquisitionExecutor,
+                prepare_browser_acquisition_adapter,
+            )
+
+            adapter = prepare_browser_acquisition_adapter(
+                compiled,
+                step,
+                read_gateway,
+            )
+            executors[executor_id] = BrowserAcquisitionExecutor(adapter)
         registry = ExecutorRegistry(
             executors,
             metadata={

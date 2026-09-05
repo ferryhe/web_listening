@@ -137,7 +137,7 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             "runtime_status": "optional_runtime",
             "optional_runtime": {
                 "extra": "browser",
-                "package": "playwright>=1.52.0",
+                "package": "playwright==1.62.0",
                 "install_note": "Install with `pip install -e .[browser]` and run `playwright install chromium`.",
             },
             "frontend_control": {
@@ -151,7 +151,8 @@ def acquisition_tools_catalog() -> dict[str, Any]:
             "implemented_for_pr3_probing": True,
             "probe_capable": True,
             "safety_notes": [
-                "Use for authorized public-page rendering only.",
+                "A reviewed browser_rendered recipe is required; a URL, fetch mode, profile, or probe alone grants no read authority.",
+                "The governed gateway reads the main document and every redirect; the browser receives only those bytes and blocks every other request.",
                 "Requires optional browser runtime support to be installed.",
             ],
         },

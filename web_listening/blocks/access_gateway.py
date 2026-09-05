@@ -455,10 +455,10 @@ class AccessGateway:
         url: str,
         *,
         consume: Callable[[RawHttpResponse, AccessGatewayConsumerContext], T],
-        before_target_request: Callable[
-            [str, AccessDecision], Callable[[], None] | None
-        ]
-        | None = None,
+        before_target_request: (
+            Callable[[str, AccessDecision], Callable[[], None] | None] | None
+        ) = None,
+        timeout_seconds: float | None = None,
     ) -> AccessGatewayResult[T]:
         """Authorize and perform one manually redirected content request chain."""
         dispatch = self.__runtime_dispatch
@@ -471,7 +471,11 @@ class AccessGateway:
         while True:
             dispatch.validate_runtime(self)
             try:
-                policy = dispatch.policy_for(self, current_origin)
+                policy = dispatch.policy_for(
+                    self,
+                    current_origin,
+                    timeout_seconds=timeout_seconds,
+                )
             except AccessGatewayError as exc:
                 exc.with_context(
                     current_url=current_url,
@@ -539,6 +543,7 @@ class AccessGateway:
                         transport_request=transport_request,
                         safe_request=dispatch.safe_pinned_request,
                         safe_addresses=dispatch.safe_pinned_addresses,
+                        timeout_seconds=timeout_seconds,
                     )
                     try:
                         dispatch.validate_runtime(self)
@@ -719,7 +724,12 @@ class AccessGateway:
         if not is_public_address(origin.host):
             raise AccessGatewayOriginError("non-public target address is forbidden")
 
-    def _policy_for(self, origin: NormalizedOrigin) -> AccessPolicy:
+    def _policy_for(
+        self,
+        origin: NormalizedOrigin,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> AccessPolicy:
         dispatch = self.__runtime_dispatch
         key = dispatch.cache_key(self, origin)
         while True:
@@ -737,7 +747,11 @@ class AccessGateway:
                 break
 
         try:
-            policy = dispatch.fetch_policy(self, origin)
+            policy = dispatch.fetch_policy(
+                self,
+                origin,
+                timeout_seconds=timeout_seconds,
+            )
         except BaseException:
             with self._cache_condition:
                 self._inflight_policy_keys.discard(key)
@@ -750,7 +764,12 @@ class AccessGateway:
             self._cache_condition.notify_all()
         return policy
 
-    def _fetch_policy(self, origin: NormalizedOrigin) -> AccessPolicy:
+    def _fetch_policy(
+        self,
+        origin: NormalizedOrigin,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> AccessPolicy:
         dispatch = self.__runtime_dispatch
         robots_url = origin.as_url_origin() + "/robots.txt"
         with self.__runtime_lock:
@@ -779,6 +798,7 @@ class AccessGateway:
                 transport_request=transport_request,
                 safe_request=dispatch.safe_pinned_request,
                 safe_addresses=dispatch.safe_pinned_addresses,
+                timeout_seconds=timeout_seconds,
             )
             try:
                 dispatch.validate_runtime(self)
@@ -1239,6 +1259,7 @@ def _request_transport(
     transport_request: Callable[..., RawHttpResponse],
     safe_request: Callable[..., RawHttpResponse],
     safe_addresses: Callable[..., list[str]],
+    timeout_seconds: float | None = None,
 ) -> RawHttpResponse:
     if type(transport) is SafePinnedTransport:
         if (
@@ -1256,20 +1277,20 @@ def _request_transport(
             user_agent=user_agent,
             identity_sha256=identity_sha256,
             progress=progress,
+            timeout_seconds=timeout_seconds,
         )
     if progress is not None:
-        return transport_request(
-            transport,
-            url,
-            user_agent=user_agent,
-            identity_sha256=identity_sha256,
-            progress=progress,
-        )
+        kwargs = {"progress": progress}
+    else:
+        kwargs = {}
+    if timeout_seconds is not None:
+        kwargs["timeout_seconds"] = timeout_seconds
     return transport_request(
         transport,
         url,
         user_agent=user_agent,
         identity_sha256=identity_sha256,
+        **kwargs,
     )
 
 

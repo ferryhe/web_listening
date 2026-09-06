@@ -1096,7 +1096,7 @@ def _redact_url(value: str) -> str:
     try:
         parsed = urlsplit(value)
     except ValueError:
-        return _redact_text(value)
+        return "[URL REDACTED]"
     if not parsed.scheme or not parsed.netloc:
         return _redact_text(value)
     query = []

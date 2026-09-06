@@ -82,6 +82,7 @@ def test_f4_f5_exhausted(output):
         },
     )
     assert result.data_status == "no_content"
+    assert result.ok and result.error is None and not result.has_data
     assert result.stop_reason == "no_usable_content"
     assert len(result.attempts) == 3
     assert result.attempts[-1]["data_status"] == "not_applicable"
@@ -130,6 +131,33 @@ def test_f8_reuse(output):
     assert result.attempts[0]["reason"] == "in_process_evidence_reused"
 
 
+def test_reuse_redirected_attempt(output):
+    page = make_fetch_result(text=BODY, status_code=200, final_url=URL + "/redirected")
+    page.raw_html = BODY
+    first = run(output, {"web_http": FakeAdapter("web_http", page)})
+    http = reader("web_http")
+    second = run(output, {"web_http": http}, prior_attempts=first.attempts)
+    assert second.has_data and not http.calls
+    assert second.data["requested_url"] == URL
+    assert second.data["final_url"] == URL + "/redirected"
+    assert second.data["sha256"] == first.data["sha256"]
+    assert second.attempts[0]["reason"] == "in_process_evidence_reused"
+
+
+@pytest.mark.parametrize(
+    "missing", [("sha256",), ("content_ref",), ("sha256", "content_ref")]
+)
+def test_partial_prior_attempt_invokes_reader(output, missing):
+    first = run(output, {"web_http": reader("web_http")})
+    evidence = {
+        key: value for key, value in first.attempts[0].items() if key not in missing
+    }
+    http = reader("web_http")
+    second = run(output, {"web_http": http}, prior_attempts=[evidence])
+    assert second.has_data and http.calls == [{"url": URL, "config": None}]
+    assert not second.attempts[0]["skipped"]
+
+
 @pytest.mark.parametrize(
     "status,expected",
     [
@@ -146,6 +174,7 @@ def test_f9_terminal(output, status, expected):
         {"web_http": reader("web_http", BODY, status), "browser_rendered": browser},
     )
     assert result.data_status == expected
+    assert result.ok and result.error is None and not result.has_data
     assert not browser.calls
 
 
@@ -293,7 +322,7 @@ def test_public_wrapper_parity_and_cli_validation(output):
     expected = article.fetch_article_content(URL).model_dump(mode="json")
     assert web_listening_fetch_article_content(URL) == expected
     result = CliRunner().invoke(app, ["fetch-article-content", "--url", URL])
-    assert result.exit_code == 2
+    assert result.exit_code == 0
     assert json.loads(result.stdout) == expected
     invalid = CliRunner().invoke(
         app, ["fetch-article-content", "--url", "https://user:secret@example.com/"]

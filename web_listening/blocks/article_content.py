@@ -133,7 +133,7 @@ def _result(
 ):
     has_data = status == "present"
     return ToolResult(
-        ok=has_data,
+        ok=error is None,
         has_data=has_data,
         data_status=status,
         data_count=1 if has_data else 0,
@@ -354,7 +354,8 @@ def _fetch_with_readers(
                 evidence.get("data_status") in {"present", "artifact_only"}
                 and evidence.get("requested_url") == url
                 and evidence.get("selected_method", evidence.get("tool")) == tool
-                and evidence.get("final_url") == url
+                and evidence.get("sha256")
+                and evidence.get("content_ref")
             ):
                 try:
                     body = _read_evidence(

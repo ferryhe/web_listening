@@ -1156,6 +1156,43 @@ def inspect_browseract_command(
     )
 
 
+@app.command("fetch-article-content")
+def fetch_article_content_command(
+    url: str = typer.Option(..., "--url", help="Article URL within reviewed scope."),
+    profile_path: str = typer.Option(
+        "", "--profile-path", help="Reviewed acquisition profile."
+    ),
+    scope_path: str = typer.Option(
+        "", "--scope-path", help="Reviewed scope with Site Skill bindings."
+    ),
+    site_key: str = typer.Option("", "--site-key", help="Stable site key."),
+    goal_preset: str = typer.Option(
+        "page_text", "--goal-preset", help="Content quality preset."
+    ),
+    output_dir: str = typer.Option(
+        "", "--output-dir", help="Artifact directory inside the data root."
+    ),
+    inline_content_limit: int = typer.Option(
+        2_000, "--inline-content-limit", help="Maximum inline UTF-8 bytes."
+    ),
+):
+    """Fetch article content and emit its JSON evidence envelope."""
+    from web_listening.mcp.tools import web_listening_fetch_article_content
+
+    payload = web_listening_fetch_article_content(
+        url,
+        profile_path=profile_path or None,
+        site_key=site_key or None,
+        goal_preset=goal_preset,
+        output_dir=output_dir or None,
+        inline_content_limit=inline_content_limit,
+        scope_path=scope_path or None,
+    )
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    if not (payload.get("ok") or payload.get("has_data")):
+        raise typer.Exit(2)
+
+
 @app.command("probe-acquisition")
 def probe_acquisition_command(
     url: str = typer.Option(

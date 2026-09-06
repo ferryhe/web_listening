@@ -938,10 +938,74 @@ def _error_result(
     ).model_dump(mode="json")
 
 
+def web_listening_fetch_article_content(
+    url: str,
+    *,
+    profile: dict[str, Any] | None = None,
+    profile_path: str | None = None,
+    site_key: str | None = None,
+    goal_preset: str = "page_text",
+    quality_gates: dict[str, Any] | None = None,
+    safety: dict[str, Any] | None = None,
+    allowed_domains: list[str] | str | None = None,
+    inline_content_limit: int = 2_000,
+    output_dir: str | None = None,
+    scope_path: str | None = None,
+    prior_attempts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Read an article through reviewed compiled authority and return evidence."""
+    from web_listening.blocks.article_content import fetch_article_content
+
+    try:
+        if profile_path and _has_inline_safety_override(
+            safety=safety, allowed_domains=allowed_domains
+        ):
+            raise AcquisitionToolError("profile_path forbids inline safety overrides")
+        domains = _default_allowed_domains_for_url(
+            url,
+            profile_provided=bool(profile or profile_path),
+            safety=safety,
+            allowed_domains=allowed_domains,
+        )
+        return fetch_article_content(
+            url,
+            profile=profile,
+            profile_path=profile_path,
+            site_key=site_key,
+            goal_preset=goal_preset,
+            quality_gates=quality_gates,
+            safety=safety,
+            allowed_domains=domains,
+            inline_content_limit=inline_content_limit,
+            output_dir=output_dir,
+            scope_path=scope_path,
+            prior_attempts=prior_attempts,
+        ).model_dump(mode="json")
+    except AccessRejectedError as exc:
+        return access_rejection_payload(exc)
+    except GOVERNED_READ_RUNTIME_ERRORS as exc:
+        return governed_read_failure_payload(exc)
+    except (ValueError, TypeError) as exc:
+        return _error_result(
+            "fetch_article_content",
+            code="invalid_acquisition_request",
+            message="invalid article-content request",
+            exception_type=type(exc).__name__,
+        )
+    except Exception as exc:  # noqa: BLE001 - Return the transport error envelope.
+        return _error_result(
+            "fetch_article_content",
+            code="article_content_failed",
+            message="article-content acquisition failed",
+            exception_type=type(exc).__name__,
+        )
+
+
 __all__ = [
     "web_listening_acquire_with_fallback",
     "web_listening_bootstrap_scope",
     "web_listening_export_manifest",
+    "web_listening_fetch_article_content",
     "web_listening_get_job",
     "web_listening_list_acquisition_tools",
     "web_listening_probe_tool_once",

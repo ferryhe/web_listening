@@ -441,6 +441,33 @@ def _serialize_report_payload(report: object) -> Optional[dict[str, object]]:
 # ── Acquisition ─────────────────────────────────────────────────────────────
 
 
+class ArticleContentFetchRequest(BaseModel):
+    scope_path: str | None = None
+    prior_attempts: list[dict[str, Any]] | None = None
+    url: str
+    profile: dict[str, Any] | None = None
+    profile_path: str | None = None
+    site_key: str | None = None
+    goal_preset: str = "page_text"
+    quality_gates: dict[str, Any] | None = None
+    safety: dict[str, Any] | None = None
+    allowed_domains: list[str] | str | None = None
+    inline_content_limit: int = 2_000
+    output_dir: str | None = None
+
+
+@router.post("/acquisition/article-content/fetch")
+def fetch_article_content_endpoint(body: ArticleContentFetchRequest):
+    from web_listening.mcp.tools import web_listening_fetch_article_content
+
+    payload = body.model_dump()
+    if body.profile_path:
+        payload["profile_path"] = str(_safe_input_path(body.profile_path))
+    if body.scope_path:
+        payload["scope_path"] = str(_safe_input_path(body.scope_path))
+    return web_listening_fetch_article_content(**payload)
+
+
 @router.get("/acquisition/tools")
 def get_acquisition_tools():
     return acquisition_tools_catalog()

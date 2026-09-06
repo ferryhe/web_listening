@@ -565,6 +565,7 @@ async def test_mcp_server_registers_expected_tools():
 
     assert {
         "web_listening_list_acquisition_tools",
+        "web_listening_fetch_article_content",
         "web_listening_probe_tool_once",
         "web_listening_recommend_next_tool",
         "web_listening_acquire_with_fallback",
@@ -575,4 +576,4 @@ async def test_mcp_server_registers_expected_tools():
         "web_listening_get_job",
         "web_listening_read_artifact",
     }.issubset(names)
-    assert len(names) == 10
+    assert len(names) == 11

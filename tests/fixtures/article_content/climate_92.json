@@ -1,0 +1,8 @@
+{
+  "contract_version": "article_content.v1",
+  "consumer": "climate-issue-92",
+  "content_ref_base": "caller-supplied output_dir",
+  "sha256_scope": "complete UTF-8 reader body",
+  "required_data_keys": ["selected_method", "requested_url", "final_url", "content_type", "truncated_preview", "truncated", "content_ref", "sha256", "extraction_metadata", "attempts"],
+  "required_attempt_keys": ["tool", "data_status", "stop_reason", "skipped", "reason"]
+}

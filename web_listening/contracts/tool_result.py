@@ -23,6 +23,8 @@ DataStatus = Literal[
     "artifact_only",
     "not_applicable",
     "running",
+    "no_content",
+    "interaction_required",
 ]
 
 

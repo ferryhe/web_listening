@@ -1096,8 +1096,18 @@ def _redact_url(value: str) -> str:
     try:
         parsed = urlsplit(value)
     except ValueError:
-        return _redact_text(value)
+        return "[URL REDACTED]"
     if not parsed.scheme or not parsed.netloc:
+        # Re-feeding value through _redact_text would re-match the URL regex
+        # and re-enter _redact_url, recreating the same recursion as the
+        # urlsplit ValueError branch above. Only block when value is itself a
+        # bare URL (so the regex would re-route it through _redact_url again);
+        # for embedded URLs inside text like raw HTML, _redact_text applies
+        # text rules per-match without recursion.
+        import re as _re
+
+        if _re.fullmatch(r"https?://[^\s<>\"']+", value, flags=_re.IGNORECASE):
+            return "[URL REDACTED]"
         return _redact_text(value)
     query = []
     for name, item in parse_qsl(parsed.query, keep_blank_values=True):

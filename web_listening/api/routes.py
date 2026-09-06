@@ -24,6 +24,7 @@ from pydantic import (
     Field,
     StrictStr,
     ValidationError,
+    field_serializer,
     field_validator,
 )
 
@@ -54,7 +55,7 @@ from web_listening.blocks.scope_lookup import (
 )
 from web_listening.blocks.storage import Storage
 from web_listening.config import settings
-from web_listening.contracts import AcquisitionBatchResult
+from web_listening.contracts import AcquisitionBatchResult, AcquisitionBatchResultV2
 from web_listening.models import (
     AnalysisReport,
     Change,
@@ -386,6 +387,18 @@ class JobDeliveryPayload(BaseModel):
     artifact_contract: dict[str, object]
     next_action: str
     acquisition_result: Optional[AcquisitionBatchResult] = None
+    acquisition_result_v2: Optional[AcquisitionBatchResultV2] = None
+
+    @field_validator("acquisition_result_v2", mode="before")
+    @classmethod
+    def validate_acquisition_result_v2(cls, value):
+        if value is None or isinstance(value, AcquisitionBatchResultV2):
+            return value
+        return AcquisitionBatchResultV2.model_validate_json(json.dumps(value))
+
+    @field_serializer("acquisition_result_v2")
+    def serialize_acquisition_result_v2(self, value):
+        return value.model_dump(mode="json", exclude_none=True) if value is not None else None
 
     @field_validator("acquisition_result", mode="before")
     @classmethod

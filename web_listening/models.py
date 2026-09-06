@@ -183,6 +183,7 @@ class Job(BaseModel):
     produced_artifacts: dict[str, object] = Field(default_factory=dict)
     artifact_summary: dict[str, object] = Field(default_factory=dict)
     acquisition_result: dict[str, object] = Field(default_factory=dict)
+    acquisition_result_v2: dict[str, object] | None = None
     error: str = ""
     error_code: str = ""
     error_detail: dict[str, object] = Field(default_factory=dict)
@@ -282,6 +283,8 @@ class Job(BaseModel):
         }
         if self.acquisition_result:
             payload["acquisition_result"] = self.acquisition_result
+        if self.acquisition_result_v2 is not None:
+            payload["acquisition_result_v2"] = self.acquisition_result_v2
         return payload
 
 

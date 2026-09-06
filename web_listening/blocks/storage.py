@@ -2441,36 +2441,47 @@ class Storage:
         return [self._row_to_document(r) for r in rows]
 
     def list_scope_documents(
-        self, scope_id: int, run_id: Optional[int] = None
+        self,
+        scope_id: int,
+        run_id: Optional[int] = None,
+        *,
+        include_legacy_fallback: bool = True,
     ) -> List[Document]:
+        # Historical exporters require the observation's own document identity.
+        # Keep the existing legacy-reader fallback available to other callers.
+        document_ref = (
+            "COALESCE(fo.document_id, tf.latest_document_id)"
+            if include_legacy_fallback
+            else "fo.document_id"
+        )
         if run_id is None:
             rows = self.conn.execute(
-                """
+                f"""
                 SELECT
                     d.*,
                     COALESCE(tp.canonical_url, d.page_url, '') AS page_url,
                     fo.tracked_local_path AS tracked_local_path
                 FROM file_observations fo
                 LEFT JOIN tracked_files tf ON tf.id = fo.file_id
-                JOIN documents d ON d.id = COALESCE(fo.document_id, tf.latest_document_id)
+                JOIN documents d ON d.id = {document_ref}
                 LEFT JOIN tracked_pages tp ON tp.id = fo.page_id
-                WHERE fo.scope_id = ? AND COALESCE(fo.document_id, tf.latest_document_id) IS NOT NULL
+                WHERE fo.scope_id = ? AND {document_ref} IS NOT NULL
                 ORDER BY tp.canonical_url ASC, d.download_url ASC, fo.id ASC
                 """,
                 (scope_id,),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                """
+                f"""
                 SELECT
                     d.*,
                     COALESCE(tp.canonical_url, d.page_url, '') AS page_url,
                     fo.tracked_local_path AS tracked_local_path
                 FROM file_observations fo
                 LEFT JOIN tracked_files tf ON tf.id = fo.file_id
-                JOIN documents d ON d.id = COALESCE(fo.document_id, tf.latest_document_id)
+                JOIN documents d ON d.id = {document_ref}
                 LEFT JOIN tracked_pages tp ON tp.id = fo.page_id
-                WHERE fo.scope_id = ? AND fo.run_id = ? AND COALESCE(fo.document_id, tf.latest_document_id) IS NOT NULL
+                WHERE fo.scope_id = ? AND fo.run_id = ? AND {document_ref} IS NOT NULL
                 ORDER BY tp.canonical_url ASC, d.download_url ASC, fo.id ASC
                 """,
                 (scope_id, run_id),
@@ -2546,6 +2557,10 @@ class Storage:
 
     def add_job(self, job: Job) -> Job:
         now = datetime.now(timezone.utc).isoformat()
+        # Keep legacy rows byte-identical; v2 is metadata in the existing JSON.
+        acquisition_result = dict(job.acquisition_result)
+        if job.acquisition_result_v2 is not None:
+            acquisition_result["acquisition_result_v2"] = job.acquisition_result_v2
         cur = self.conn.execute(
             """
             INSERT INTO jobs (
@@ -2565,7 +2580,7 @@ class Storage:
                 job.run_id,
                 json.dumps(job.produced_artifacts),
                 json.dumps(job.artifact_summary),
-                json.dumps(job.acquisition_result),
+                json.dumps(acquisition_result),
                 job.error,
                 job.error_code,
                 json.dumps(job.error_detail),
@@ -2703,6 +2718,9 @@ class Storage:
             acquisition_result = {}
         if not isinstance(acquisition_result, dict):
             acquisition_result = {}
+        acquisition_result_v2 = acquisition_result.pop("acquisition_result_v2", None)
+        if not isinstance(acquisition_result_v2, dict):
+            acquisition_result_v2 = None
         try:
             error_detail = json.loads(row["error_detail_json"] or "{}")
         except json.JSONDecodeError:
@@ -2721,6 +2739,7 @@ class Storage:
             produced_artifacts=produced_artifacts,
             artifact_summary=artifact_summary,
             acquisition_result=acquisition_result,
+            acquisition_result_v2=acquisition_result_v2,
             error=row["error"] or "",
             error_code=row["error_code"] or "",
             error_detail=error_detail,

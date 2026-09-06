@@ -204,7 +204,7 @@ def _portable_json(value):
 
 
 def _compile_acquisition_gateway(
-    plan, *, acquisition_profile_path=None, site_skill_root=None
+    plan, *, acquisition_profile_path=None, site_skill_root=None, acquisition_profile=None
 ):
     """Resolve all governed authority before Storage (and therefore mutation) exists."""
     from web_listening.blocks.acquisition_execution_plan import (
@@ -235,9 +235,16 @@ def _compile_acquisition_gateway(
         raise ValueError(
             "formal scope execution requires complete governed acquisition bindings"
         )
-    if acquisition_profile_path is None:
+    if acquisition_profile_path is not None and acquisition_profile is not None:
+        raise ValueError("supply acquisition_profile or acquisition_profile_path, not both")
+    if acquisition_profile_path is None and acquisition_profile is None:
         raise ValueError("governed scope requires --acquisition-profile-path")
-    profile = load_acquisition_profile(acquisition_profile_path, strict=True)
+    if acquisition_profile is not None:
+        from web_listening.blocks.acquisition_profile import AcquisitionProfile
+
+        profile = AcquisitionProfile.model_validate(acquisition_profile.model_dump())
+    else:
+        profile = load_acquisition_profile(acquisition_profile_path, strict=True)
     skill = resolve_site_skill_contract(
         site_key=plan.site_key,
         version=str(based_on.get("site_skill_version", "")),

@@ -39,6 +39,19 @@ def test_no_netloc_redaction_keeps_text_rules(value: str, expected: str):
     assert redact_persisted_value({"url": value}) == {"url": expected}
 
 
+@pytest.mark.parametrize(
+    "value",
+    (
+        "https:///path",
+    ),
+)
+def test_no_netloc_with_url_prefix_redacts_without_recursion(value: str):
+    # Pre-fix: scheme present but empty netloc routed value back through
+    # _redact_text, which re-matched the URL regex and re-entered _redact_url,
+    # producing RecursionError. Post-fix: stable placeholder, no recursion.
+    assert redact_persisted_value({"url": value}) == {"url": "[URL REDACTED]"}
+
+
 def test_marker_query_and_header_text_keep_existing_redaction_rules():
     redacted = redact_persisted_value(
         {

@@ -1,0 +1,1554 @@
+{
+  "comment": "This fixture is a regression fixture, not current production.",
+  "evidence": [
+    {
+      "site_key": "updated-00",
+      "requested_url": "https://updated-00.example/",
+      "artifact_id": "manifest-updated-00-1",
+      "classification": null,
+      "run": {
+        "id": 1,
+        "scope_id": 1,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-01",
+      "requested_url": "https://updated-01.example/",
+      "artifact_id": "manifest-updated-01-1",
+      "classification": null,
+      "run": {
+        "id": 2,
+        "scope_id": 2,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-02",
+      "requested_url": "https://updated-02.example/",
+      "artifact_id": "manifest-updated-02-1",
+      "classification": null,
+      "run": {
+        "id": 3,
+        "scope_id": 3,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-03",
+      "requested_url": "https://updated-03.example/",
+      "artifact_id": "manifest-updated-03-1",
+      "classification": null,
+      "run": {
+        "id": 4,
+        "scope_id": 4,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-04",
+      "requested_url": "https://updated-04.example/",
+      "artifact_id": "manifest-updated-04-1",
+      "classification": null,
+      "run": {
+        "id": 5,
+        "scope_id": 5,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-05",
+      "requested_url": "https://updated-05.example/",
+      "artifact_id": "manifest-updated-05-1",
+      "classification": null,
+      "run": {
+        "id": 6,
+        "scope_id": 6,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-06",
+      "requested_url": "https://updated-06.example/",
+      "artifact_id": "manifest-updated-06-1",
+      "classification": null,
+      "run": {
+        "id": 7,
+        "scope_id": 7,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-07",
+      "requested_url": "https://updated-07.example/",
+      "artifact_id": "manifest-updated-07-1",
+      "classification": null,
+      "run": {
+        "id": 8,
+        "scope_id": 8,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-08",
+      "requested_url": "https://updated-08.example/",
+      "artifact_id": "manifest-updated-08-1",
+      "classification": null,
+      "run": {
+        "id": 9,
+        "scope_id": 9,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-09",
+      "requested_url": "https://updated-09.example/",
+      "artifact_id": "manifest-updated-09-1",
+      "classification": null,
+      "run": {
+        "id": 10,
+        "scope_id": 10,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-10",
+      "requested_url": "https://updated-10.example/",
+      "artifact_id": "manifest-updated-10-1",
+      "classification": null,
+      "run": {
+        "id": 11,
+        "scope_id": 11,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-11",
+      "requested_url": "https://updated-11.example/",
+      "artifact_id": "manifest-updated-11-1",
+      "classification": null,
+      "run": {
+        "id": 12,
+        "scope_id": 12,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-12",
+      "requested_url": "https://updated-12.example/",
+      "artifact_id": "manifest-updated-12-1",
+      "classification": null,
+      "run": {
+        "id": 13,
+        "scope_id": 13,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-13",
+      "requested_url": "https://updated-13.example/",
+      "artifact_id": "manifest-updated-13-1",
+      "classification": null,
+      "run": {
+        "id": 14,
+        "scope_id": 14,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-14",
+      "requested_url": "https://updated-14.example/",
+      "artifact_id": "manifest-updated-14-1",
+      "classification": null,
+      "run": {
+        "id": 15,
+        "scope_id": 15,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-15",
+      "requested_url": "https://updated-15.example/",
+      "artifact_id": "manifest-updated-15-1",
+      "classification": null,
+      "run": {
+        "id": 16,
+        "scope_id": 16,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-16",
+      "requested_url": "https://updated-16.example/",
+      "artifact_id": "manifest-updated-16-1",
+      "classification": null,
+      "run": {
+        "id": 17,
+        "scope_id": 17,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-17",
+      "requested_url": "https://updated-17.example/",
+      "artifact_id": "manifest-updated-17-1",
+      "classification": null,
+      "run": {
+        "id": 18,
+        "scope_id": 18,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-18",
+      "requested_url": "https://updated-18.example/",
+      "artifact_id": "manifest-updated-18-1",
+      "classification": null,
+      "run": {
+        "id": 19,
+        "scope_id": 19,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-19",
+      "requested_url": "https://updated-19.example/",
+      "artifact_id": "manifest-updated-19-1",
+      "classification": null,
+      "run": {
+        "id": 20,
+        "scope_id": 20,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-20",
+      "requested_url": "https://updated-20.example/",
+      "artifact_id": "manifest-updated-20-1",
+      "classification": null,
+      "run": {
+        "id": 21,
+        "scope_id": 21,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-21",
+      "requested_url": "https://updated-21.example/",
+      "artifact_id": "manifest-updated-21-1",
+      "classification": null,
+      "run": {
+        "id": 22,
+        "scope_id": 22,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-22",
+      "requested_url": "https://updated-22.example/",
+      "artifact_id": "manifest-updated-22-1",
+      "classification": null,
+      "run": {
+        "id": 23,
+        "scope_id": 23,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-23",
+      "requested_url": "https://updated-23.example/",
+      "artifact_id": "manifest-updated-23-1",
+      "classification": null,
+      "run": {
+        "id": 24,
+        "scope_id": 24,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-24",
+      "requested_url": "https://updated-24.example/",
+      "artifact_id": "manifest-updated-24-1",
+      "classification": null,
+      "run": {
+        "id": 25,
+        "scope_id": 25,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-25",
+      "requested_url": "https://updated-25.example/",
+      "artifact_id": "manifest-updated-25-1",
+      "classification": null,
+      "run": {
+        "id": 26,
+        "scope_id": 26,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-26",
+      "requested_url": "https://updated-26.example/",
+      "artifact_id": "manifest-updated-26-1",
+      "classification": null,
+      "run": {
+        "id": 27,
+        "scope_id": 27,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-27",
+      "requested_url": "https://updated-27.example/",
+      "artifact_id": "manifest-updated-27-1",
+      "classification": null,
+      "run": {
+        "id": 28,
+        "scope_id": 28,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-28",
+      "requested_url": "https://updated-28.example/",
+      "artifact_id": "manifest-updated-28-1",
+      "classification": null,
+      "run": {
+        "id": 29,
+        "scope_id": 29,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-29",
+      "requested_url": "https://updated-29.example/",
+      "artifact_id": "manifest-updated-29-1",
+      "classification": null,
+      "run": {
+        "id": 30,
+        "scope_id": 30,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-30",
+      "requested_url": "https://updated-30.example/",
+      "artifact_id": "manifest-updated-30-1",
+      "classification": null,
+      "run": {
+        "id": 31,
+        "scope_id": 31,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-31",
+      "requested_url": "https://updated-31.example/",
+      "artifact_id": "manifest-updated-31-1",
+      "classification": null,
+      "run": {
+        "id": 32,
+        "scope_id": 32,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "updated-32",
+      "requested_url": "https://updated-32.example/",
+      "artifact_id": "manifest-updated-32-1",
+      "classification": null,
+      "run": {
+        "id": 33,
+        "scope_id": 33,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 2,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "unchanged-00",
+      "requested_url": "https://unchanged-00.example/",
+      "artifact_id": "manifest-unchanged-00-1",
+      "classification": null,
+      "run": {
+        "id": 34,
+        "scope_id": 34,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "unchanged-01",
+      "requested_url": "https://unchanged-01.example/",
+      "artifact_id": "manifest-unchanged-01-1",
+      "classification": null,
+      "run": {
+        "id": 35,
+        "scope_id": 35,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "unchanged-02",
+      "requested_url": "https://unchanged-02.example/",
+      "artifact_id": "manifest-unchanged-02-1",
+      "classification": null,
+      "run": {
+        "id": 36,
+        "scope_id": 36,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "unchanged-03",
+      "requested_url": "https://unchanged-03.example/",
+      "artifact_id": "manifest-unchanged-03-1",
+      "classification": null,
+      "run": {
+        "id": 37,
+        "scope_id": 37,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "unchanged-04",
+      "requested_url": "https://unchanged-04.example/",
+      "artifact_id": "manifest-unchanged-04-1",
+      "classification": null,
+      "run": {
+        "id": 38,
+        "scope_id": 38,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "unchanged-05",
+      "requested_url": "https://unchanged-05.example/",
+      "artifact_id": "manifest-unchanged-05-1",
+      "classification": null,
+      "run": {
+        "id": 39,
+        "scope_id": 39,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "unchanged-06",
+      "requested_url": "https://unchanged-06.example/",
+      "artifact_id": "manifest-unchanged-06-1",
+      "classification": null,
+      "run": {
+        "id": 40,
+        "scope_id": 40,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "unchanged-07",
+      "requested_url": "https://unchanged-07.example/",
+      "artifact_id": "manifest-unchanged-07-1",
+      "classification": null,
+      "run": {
+        "id": 41,
+        "scope_id": 41,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "unchanged-08",
+      "requested_url": "https://unchanged-08.example/",
+      "artifact_id": "manifest-unchanged-08-1",
+      "classification": null,
+      "run": {
+        "id": 42,
+        "scope_id": 42,
+        "run_type": "bootstrap",
+        "status": "completed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 3,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-00",
+      "requested_url": "https://blocked-00.example/",
+      "artifact_id": "manifest-blocked-00-1",
+      "classification": "http_403",
+      "run": {
+        "id": 43,
+        "scope_id": 43,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-01",
+      "requested_url": "https://blocked-01.example/",
+      "artifact_id": "manifest-blocked-01-1",
+      "classification": "http_403",
+      "run": {
+        "id": 44,
+        "scope_id": 44,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-02",
+      "requested_url": "https://blocked-02.example/",
+      "artifact_id": "manifest-blocked-02-1",
+      "classification": "http_403",
+      "run": {
+        "id": 45,
+        "scope_id": 45,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-03",
+      "requested_url": "https://blocked-03.example/",
+      "artifact_id": "manifest-blocked-03-1",
+      "classification": "http_403",
+      "run": {
+        "id": 46,
+        "scope_id": 46,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-04",
+      "requested_url": "https://blocked-04.example/",
+      "artifact_id": "manifest-blocked-04-1",
+      "classification": "http_403",
+      "run": {
+        "id": 47,
+        "scope_id": 47,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-05",
+      "requested_url": "https://blocked-05.example/",
+      "artifact_id": "manifest-blocked-05-1",
+      "classification": "http_403",
+      "run": {
+        "id": 48,
+        "scope_id": 48,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-06",
+      "requested_url": "https://blocked-06.example/",
+      "artifact_id": "manifest-blocked-06-1",
+      "classification": "http_403",
+      "run": {
+        "id": 49,
+        "scope_id": 49,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-07",
+      "requested_url": "https://blocked-07.example/",
+      "artifact_id": "manifest-blocked-07-1",
+      "classification": "http_403",
+      "run": {
+        "id": 50,
+        "scope_id": 50,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-08",
+      "requested_url": "https://blocked-08.example/",
+      "artifact_id": "manifest-blocked-08-1",
+      "classification": "http_403",
+      "run": {
+        "id": 51,
+        "scope_id": 51,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-09",
+      "requested_url": "https://blocked-09.example/",
+      "artifact_id": "manifest-blocked-09-1",
+      "classification": "http_403",
+      "run": {
+        "id": 52,
+        "scope_id": 52,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-10",
+      "requested_url": "https://blocked-10.example/",
+      "artifact_id": "manifest-blocked-10-1",
+      "classification": "http_403",
+      "run": {
+        "id": 53,
+        "scope_id": 53,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-11",
+      "requested_url": "https://blocked-11.example/",
+      "artifact_id": "manifest-blocked-11-1",
+      "classification": "http_403",
+      "run": {
+        "id": 54,
+        "scope_id": 54,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-12",
+      "requested_url": "https://blocked-12.example/",
+      "artifact_id": "manifest-blocked-12-1",
+      "classification": "http_403",
+      "run": {
+        "id": 55,
+        "scope_id": 55,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "blocked-13",
+      "requested_url": "https://blocked-13.example/",
+      "artifact_id": "manifest-blocked-13-1",
+      "classification": "http_403",
+      "run": {
+        "id": 56,
+        "scope_id": 56,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    },
+    {
+      "site_key": "failed-00",
+      "requested_url": "https://failed-00.example/",
+      "artifact_id": "manifest-failed-00-1",
+      "classification": "executor_error",
+      "run": {
+        "id": 57,
+        "scope_id": 57,
+        "run_type": "bootstrap",
+        "status": "failed",
+        "started_at": null,
+        "finished_at": null,
+        "pages_seen": 0,
+        "files_seen": 0,
+        "pages_changed": 0,
+        "files_changed": 0,
+        "error_message": ""
+      }
+    }
+  ],
+  "result": {
+    "schema_version": "acquisition-batch-result.v2",
+    "run_id": "aggregate",
+    "authoritative_status": "partial",
+    "status": "partial",
+    "full_success": false,
+    "counts": {
+      "requested": 57,
+      "updated": 33,
+      "unchanged": 9,
+      "blocked": 14,
+      "failed": 1,
+      "unresolved": 0,
+      "valid_snapshots": 126,
+      "failed_evidence": 15,
+      "succeeded": 42
+    },
+    "dispositions": [
+      {
+        "task_id": "blocked-00",
+        "site_key": "blocked-00",
+        "requested_url": "https://blocked-00.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-01",
+        "site_key": "blocked-01",
+        "requested_url": "https://blocked-01.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-02",
+        "site_key": "blocked-02",
+        "requested_url": "https://blocked-02.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-03",
+        "site_key": "blocked-03",
+        "requested_url": "https://blocked-03.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-04",
+        "site_key": "blocked-04",
+        "requested_url": "https://blocked-04.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-05",
+        "site_key": "blocked-05",
+        "requested_url": "https://blocked-05.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-06",
+        "site_key": "blocked-06",
+        "requested_url": "https://blocked-06.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-07",
+        "site_key": "blocked-07",
+        "requested_url": "https://blocked-07.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-08",
+        "site_key": "blocked-08",
+        "requested_url": "https://blocked-08.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-09",
+        "site_key": "blocked-09",
+        "requested_url": "https://blocked-09.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-10",
+        "site_key": "blocked-10",
+        "requested_url": "https://blocked-10.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-11",
+        "site_key": "blocked-11",
+        "requested_url": "https://blocked-11.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-12",
+        "site_key": "blocked-12",
+        "requested_url": "https://blocked-12.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "blocked-13",
+        "site_key": "blocked-13",
+        "requested_url": "https://blocked-13.example/",
+        "disposition": "blocked",
+        "reason": "capture.http_403"
+      },
+      {
+        "task_id": "failed-00",
+        "site_key": "failed-00",
+        "requested_url": "https://failed-00.example/",
+        "disposition": "failed",
+        "reason": "capture.executor_error"
+      },
+      {
+        "task_id": "unchanged-00",
+        "site_key": "unchanged-00",
+        "requested_url": "https://unchanged-00.example/",
+        "disposition": "unchanged",
+        "reason": "scope.unchanged",
+        "artifact_id": "manifest-unchanged-00-1"
+      },
+      {
+        "task_id": "unchanged-01",
+        "site_key": "unchanged-01",
+        "requested_url": "https://unchanged-01.example/",
+        "disposition": "unchanged",
+        "reason": "scope.unchanged",
+        "artifact_id": "manifest-unchanged-01-1"
+      },
+      {
+        "task_id": "unchanged-02",
+        "site_key": "unchanged-02",
+        "requested_url": "https://unchanged-02.example/",
+        "disposition": "unchanged",
+        "reason": "scope.unchanged",
+        "artifact_id": "manifest-unchanged-02-1"
+      },
+      {
+        "task_id": "unchanged-03",
+        "site_key": "unchanged-03",
+        "requested_url": "https://unchanged-03.example/",
+        "disposition": "unchanged",
+        "reason": "scope.unchanged",
+        "artifact_id": "manifest-unchanged-03-1"
+      },
+      {
+        "task_id": "unchanged-04",
+        "site_key": "unchanged-04",
+        "requested_url": "https://unchanged-04.example/",
+        "disposition": "unchanged",
+        "reason": "scope.unchanged",
+        "artifact_id": "manifest-unchanged-04-1"
+      },
+      {
+        "task_id": "unchanged-05",
+        "site_key": "unchanged-05",
+        "requested_url": "https://unchanged-05.example/",
+        "disposition": "unchanged",
+        "reason": "scope.unchanged",
+        "artifact_id": "manifest-unchanged-05-1"
+      },
+      {
+        "task_id": "unchanged-06",
+        "site_key": "unchanged-06",
+        "requested_url": "https://unchanged-06.example/",
+        "disposition": "unchanged",
+        "reason": "scope.unchanged",
+        "artifact_id": "manifest-unchanged-06-1"
+      },
+      {
+        "task_id": "unchanged-07",
+        "site_key": "unchanged-07",
+        "requested_url": "https://unchanged-07.example/",
+        "disposition": "unchanged",
+        "reason": "scope.unchanged",
+        "artifact_id": "manifest-unchanged-07-1"
+      },
+      {
+        "task_id": "unchanged-08",
+        "site_key": "unchanged-08",
+        "requested_url": "https://unchanged-08.example/",
+        "disposition": "unchanged",
+        "reason": "scope.unchanged",
+        "artifact_id": "manifest-unchanged-08-1"
+      },
+      {
+        "task_id": "updated-00",
+        "site_key": "updated-00",
+        "requested_url": "https://updated-00.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-00-1"
+      },
+      {
+        "task_id": "updated-01",
+        "site_key": "updated-01",
+        "requested_url": "https://updated-01.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-01-1"
+      },
+      {
+        "task_id": "updated-02",
+        "site_key": "updated-02",
+        "requested_url": "https://updated-02.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-02-1"
+      },
+      {
+        "task_id": "updated-03",
+        "site_key": "updated-03",
+        "requested_url": "https://updated-03.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-03-1"
+      },
+      {
+        "task_id": "updated-04",
+        "site_key": "updated-04",
+        "requested_url": "https://updated-04.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-04-1"
+      },
+      {
+        "task_id": "updated-05",
+        "site_key": "updated-05",
+        "requested_url": "https://updated-05.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-05-1"
+      },
+      {
+        "task_id": "updated-06",
+        "site_key": "updated-06",
+        "requested_url": "https://updated-06.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-06-1"
+      },
+      {
+        "task_id": "updated-07",
+        "site_key": "updated-07",
+        "requested_url": "https://updated-07.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-07-1"
+      },
+      {
+        "task_id": "updated-08",
+        "site_key": "updated-08",
+        "requested_url": "https://updated-08.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-08-1"
+      },
+      {
+        "task_id": "updated-09",
+        "site_key": "updated-09",
+        "requested_url": "https://updated-09.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-09-1"
+      },
+      {
+        "task_id": "updated-10",
+        "site_key": "updated-10",
+        "requested_url": "https://updated-10.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-10-1"
+      },
+      {
+        "task_id": "updated-11",
+        "site_key": "updated-11",
+        "requested_url": "https://updated-11.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-11-1"
+      },
+      {
+        "task_id": "updated-12",
+        "site_key": "updated-12",
+        "requested_url": "https://updated-12.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-12-1"
+      },
+      {
+        "task_id": "updated-13",
+        "site_key": "updated-13",
+        "requested_url": "https://updated-13.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-13-1"
+      },
+      {
+        "task_id": "updated-14",
+        "site_key": "updated-14",
+        "requested_url": "https://updated-14.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-14-1"
+      },
+      {
+        "task_id": "updated-15",
+        "site_key": "updated-15",
+        "requested_url": "https://updated-15.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-15-1"
+      },
+      {
+        "task_id": "updated-16",
+        "site_key": "updated-16",
+        "requested_url": "https://updated-16.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-16-1"
+      },
+      {
+        "task_id": "updated-17",
+        "site_key": "updated-17",
+        "requested_url": "https://updated-17.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-17-1"
+      },
+      {
+        "task_id": "updated-18",
+        "site_key": "updated-18",
+        "requested_url": "https://updated-18.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-18-1"
+      },
+      {
+        "task_id": "updated-19",
+        "site_key": "updated-19",
+        "requested_url": "https://updated-19.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-19-1"
+      },
+      {
+        "task_id": "updated-20",
+        "site_key": "updated-20",
+        "requested_url": "https://updated-20.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-20-1"
+      },
+      {
+        "task_id": "updated-21",
+        "site_key": "updated-21",
+        "requested_url": "https://updated-21.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-21-1"
+      },
+      {
+        "task_id": "updated-22",
+        "site_key": "updated-22",
+        "requested_url": "https://updated-22.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-22-1"
+      },
+      {
+        "task_id": "updated-23",
+        "site_key": "updated-23",
+        "requested_url": "https://updated-23.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-23-1"
+      },
+      {
+        "task_id": "updated-24",
+        "site_key": "updated-24",
+        "requested_url": "https://updated-24.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-24-1"
+      },
+      {
+        "task_id": "updated-25",
+        "site_key": "updated-25",
+        "requested_url": "https://updated-25.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-25-1"
+      },
+      {
+        "task_id": "updated-26",
+        "site_key": "updated-26",
+        "requested_url": "https://updated-26.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-26-1"
+      },
+      {
+        "task_id": "updated-27",
+        "site_key": "updated-27",
+        "requested_url": "https://updated-27.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-27-1"
+      },
+      {
+        "task_id": "updated-28",
+        "site_key": "updated-28",
+        "requested_url": "https://updated-28.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-28-1"
+      },
+      {
+        "task_id": "updated-29",
+        "site_key": "updated-29",
+        "requested_url": "https://updated-29.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-29-1"
+      },
+      {
+        "task_id": "updated-30",
+        "site_key": "updated-30",
+        "requested_url": "https://updated-30.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-30-1"
+      },
+      {
+        "task_id": "updated-31",
+        "site_key": "updated-31",
+        "requested_url": "https://updated-31.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-31-1"
+      },
+      {
+        "task_id": "updated-32",
+        "site_key": "updated-32",
+        "requested_url": "https://updated-32.example/",
+        "disposition": "updated",
+        "reason": "scope.changed",
+        "artifact_id": "manifest-updated-32-1"
+      }
+    ],
+    "summary": {
+      "checked": 57,
+      "succeeded": 42,
+      "failed": 15
+    }
+  }
+}

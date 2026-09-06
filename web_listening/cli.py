@@ -1655,6 +1655,7 @@ def run_scope(
     from web_listening.contracts import (
         acquisition_batch_result_from_initial_rejection,
         acquisition_batch_result_from_scope_run,
+        aggregate_batch_result_v2,
     )
 
     started = datetime.now(timezone.utc)
@@ -1686,6 +1687,7 @@ def run_scope(
             error_code="acquisition.not_full_success",
             error_detail={"counts": acquisition_result["counts"]},
             acquisition_result=acquisition_result,
+            acquisition_result_v2=aggregate_batch_result_v2(acquisition_result),
         )
         _emit_job(
             job,
@@ -1722,6 +1724,7 @@ def run_scope(
         error_code="" if full_success else "acquisition.not_full_success",
         error_detail={} if full_success else {"counts": acquisition_result["counts"]},
         acquisition_result=acquisition_result,
+        acquisition_result_v2=aggregate_batch_result_v2(acquisition_result),
     )
     _emit_job(
         job,
@@ -1826,6 +1829,36 @@ def report_scope(
             )
         ),
     )
+
+
+@app.command("aggregate-batch-result")
+def aggregate_batch_result_command(
+    input_path: Path = typer.Option(
+        ..., "--input",
+        help="JSON file containing v1 and/or v2 records (single record or list); the aggregator projects v1 to v2 conservatively and emits canonical v2.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit canonical aggregated v2 JSON."
+    ),
+):
+    """Aggregate terminal site results offline, without opening Storage."""
+    from web_listening.contracts import aggregate_batch_result_v2
+    from web_listening.contracts.site_diagnostic import canonical_json
+
+    try:
+        records = json.loads(input_path.read_text(encoding="utf-8"))
+        payload = aggregate_batch_result_v2(
+            records if isinstance(records, list) else [records]
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        typer.echo(f"Invalid batch input: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+    if json_output:
+        typer.echo(canonical_json(payload))
+    else:
+        typer.echo(
+            " ".join(f"{key}={value}" for key, value in payload["summary"].items())
+        )
 
 
 @app.command("export-manifest")

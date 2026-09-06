@@ -133,6 +133,7 @@ def persist_job_result(
     is_retryable: bool = False,
     artifact_summary: dict[str, object] | None = None,
     acquisition_result: dict[str, object] | None = None,
+    acquisition_result_v2: dict[str, object] | None = None,
 ) -> Job:
     artifacts = produced_artifacts or {}
     if acquisition_result:
@@ -141,6 +142,16 @@ def persist_job_result(
         acquisition_result = AcquisitionBatchResult.model_validate_json(
             json.dumps(acquisition_result)
         ).model_dump(mode="json")
+        if acquisition_result_v2 is None:
+            from web_listening.contracts import aggregate_batch_result_v2
+
+            acquisition_result_v2 = aggregate_batch_result_v2(acquisition_result)
+    if acquisition_result_v2 is not None:
+        from web_listening.contracts import AcquisitionBatchResultV2
+
+        acquisition_result_v2 = AcquisitionBatchResultV2.model_validate_json(
+            json.dumps(acquisition_result_v2)
+        ).model_dump(mode="json", exclude_none=True)
     resolved_stage = stage or (
         "completed"
         if status == "completed"
@@ -162,6 +173,7 @@ def persist_job_result(
                 produced_artifacts=artifacts,
                 artifact_summary=artifact_summary or _summarize_artifacts(artifacts),
                 acquisition_result=acquisition_result or {},
+                acquisition_result_v2=acquisition_result_v2,
                 error=error,
                 error_code=error_code,
                 error_detail=error_detail or {},

@@ -1,0 +1,693 @@
+{
+  "schema_version": "web-listening-manifest.v1",
+  "manifest_id": "manifest-demo-1",
+  "generated_at": "2026-09-01T00:00:00Z",
+  "producer": {
+    "name": "web-listening",
+    "version": "3.2.0",
+    "command": "web-listening export-manifest --scope-path monitor_scope.yaml",
+    "contract_version": "web-listening-manifest.v1"
+  },
+  "artifact_root": ".",
+  "run": {
+    "run_id": "run-1",
+    "run_type": "export_manifest",
+    "started_at": "2026-09-01T00:00:00Z",
+    "completed_at": "2026-09-01T00:00:00Z",
+    "input_paths": [
+      "monitor_scope.yaml"
+    ],
+    "output_paths": [],
+    "idempotency_key": "demo|8fc25d00983c6b388def81c9bc39a5268b6aa6849d0c77d174e131087e34d00d|1",
+    "parent_run_id": "1",
+    "scope_path": "monitor_scope.yaml",
+    "selection_path": null,
+    "parameters": {
+      "scope_fingerprint": "8fc25d00983c6b388def81c9bc39a5268b6aa6849d0c77d174e131087e34d00d",
+      "fetch_mode": "http",
+      "max_depth": 3,
+      "max_pages": 100,
+      "max_files": 20
+    }
+  },
+  "job": null,
+  "source": {
+    "source_id": "demo",
+    "site_url": "https://example.com/",
+    "site_name": "Demo",
+    "scope_profile": "selected_scope_default",
+    "tree_seed_url": "https://example.com/",
+    "tree_page_prefixes": [
+      "/"
+    ],
+    "tree_file_prefixes": [
+      "/"
+    ],
+    "catalog_key": "test"
+  },
+  "status": {
+    "state": "completed",
+    "stage": "export_manifest",
+    "counts": {
+      "discovered_items": 4,
+      "downloaded_assets": 0,
+      "changed_items": 0,
+      "warnings": 0,
+      "errors": 0
+    },
+    "message": "Manifest exported for downstream document conversion."
+  },
+  "artifacts": {
+    "reports": [],
+    "structured_exports": [],
+    "compatibility_exports": []
+  },
+  "discovered_items": [
+    {
+      "item_id": "item-c5861e87680142a0",
+      "item_type": "page_link",
+      "url": "https://example.com/a",
+      "title": null,
+      "status": "existing",
+      "item_state": "existing",
+      "discovered_from": "https://example.com/",
+      "parent_item_id": "item-b7883add1471cf4b",
+      "observed_at": "2026-09-01T00:00:00Z",
+      "provenance": {
+        "source_id": "demo",
+        "run_id": "run-1",
+        "input_artifacts": [
+          "monitor_scope.yaml"
+        ],
+        "parent_item_id": "item-b7883add1471cf4b",
+        "observed_at": "2026-09-01T00:00:00Z",
+        "extraction_method": "http"
+      },
+      "content_type": null,
+      "http_status": null,
+      "checksum": null,
+      "metadata": {
+        "page_url": "https://example.com/",
+        "snapshot_id": 1,
+        "source_run_id": 1,
+        "prior_snapshot_id": null
+      }
+    },
+    {
+      "item_id": "item-053b7405fc8e9655",
+      "item_type": "page_link",
+      "url": "https://example.com/b",
+      "title": null,
+      "status": "existing",
+      "item_state": "existing",
+      "discovered_from": "https://example.com/",
+      "parent_item_id": "item-b7883add1471cf4b",
+      "observed_at": "2026-09-01T00:00:00Z",
+      "provenance": {
+        "source_id": "demo",
+        "run_id": "run-1",
+        "input_artifacts": [
+          "monitor_scope.yaml"
+        ],
+        "parent_item_id": "item-b7883add1471cf4b",
+        "observed_at": "2026-09-01T00:00:00Z",
+        "extraction_method": "http"
+      },
+      "content_type": null,
+      "http_status": null,
+      "checksum": null,
+      "metadata": {
+        "page_url": "https://example.com/",
+        "snapshot_id": 1,
+        "source_run_id": 1,
+        "prior_snapshot_id": null
+      }
+    },
+    {
+      "item_id": "item-7c97b17b07256f89",
+      "item_type": "page_link",
+      "url": "https://example.com/c",
+      "title": null,
+      "status": "existing",
+      "item_state": "existing",
+      "discovered_from": "https://example.com/",
+      "parent_item_id": "item-b7883add1471cf4b",
+      "observed_at": "2026-09-01T00:00:00Z",
+      "provenance": {
+        "source_id": "demo",
+        "run_id": "run-1",
+        "input_artifacts": [
+          "monitor_scope.yaml"
+        ],
+        "parent_item_id": "item-b7883add1471cf4b",
+        "observed_at": "2026-09-01T00:00:00Z",
+        "extraction_method": "http"
+      },
+      "content_type": null,
+      "http_status": null,
+      "checksum": null,
+      "metadata": {
+        "page_url": "https://example.com/",
+        "snapshot_id": 1,
+        "source_run_id": 1,
+        "prior_snapshot_id": null
+      }
+    },
+    {
+      "item_id": "item-9bbb719d07568179",
+      "item_type": "file_link",
+      "url": "https://example.com/report.pdf",
+      "title": null,
+      "status": "existing",
+      "observed_at": "2026-09-01T00:00:00Z",
+      "provenance": {
+        "source_id": "demo",
+        "run_id": "run-1",
+        "input_artifacts": [
+          "monitor_scope.yaml"
+        ],
+        "parent_item_id": "item-b7883add1471cf4b",
+        "observed_at": "2026-09-01T00:00:00Z",
+        "extraction_method": "http"
+      },
+      "content_type": null,
+      "http_status": null,
+      "checksum": null,
+      "metadata": {
+        "document_id": null,
+        "doc_type": null,
+        "page_url": "https://example.com/",
+        "file_observation_id": 1,
+        "source_run_id": 1
+      },
+      "item_state": "existing",
+      "discovered_from": "https://example.com/",
+      "parent_item_id": "item-b7883add1471cf4b"
+    }
+  ],
+  "downloaded_assets": [],
+  "provenance": {
+    "source_id": "demo",
+    "run_id": "run-1",
+    "input_artifacts": [
+      "monitor_scope.yaml"
+    ],
+    "parent_item_id": null,
+    "observed_at": "2026-09-01T00:00:00Z",
+    "extraction_method": "export_manifest"
+  },
+  "errors": [],
+  "deprecated": {
+    "scope_document_manifest": {
+      "generated_at": "2026-09-06T14:48:42.143890+00:00",
+      "display_name": "Demo",
+      "site_key": "demo",
+      "catalog": "test",
+      "scope_id": 1,
+      "run_id": 1,
+      "run_status": "completed",
+      "run_finished_at": "2026-09-01T00:00:00+00:00",
+      "document_count": 0,
+      "acquisition_evidence": {
+        "schema_version": "acquisition-evidence.v2",
+        "source": "persisted_exact_run",
+        "scope_id": 1,
+        "run_id": 1,
+        "attempts": [
+          {
+            "schema_version": "acquisition-attempt-storage.v1",
+            "attempt_id": "f645c0a3af78f72f644c8f9191d162a022ea75ad13a2dc43746763e807f062ff",
+            "request_id": "f645c0a3af78f72f644c8f9191d162a022ea75ad13a2dc43746763e807f062ff",
+            "scope_id": 1,
+            "run_id": 1,
+            "position": 0,
+            "content_kind": "page",
+            "profile_id": null,
+            "site_skill_id": null,
+            "site_skill_version": null,
+            "site_skill_package_sha256": null,
+            "recipe_id": null,
+            "script_sha256": null,
+            "executor_id": "legacy_compatibility_import",
+            "executor_version": "legacy-compatibility",
+            "requested_url": "https://example.com/",
+            "final_url": "https://example.com/",
+            "requested_at": "2026-09-06T14:48:42.066350Z",
+            "started_at": "2026-09-06T14:48:42.066350Z",
+            "finished_at": "2026-09-06T14:48:42.066350Z",
+            "acquisition_fingerprint": null,
+            "classification": "accepted",
+            "accepted": true,
+            "reason": "accepted",
+            "validation": {
+              "decision": "accepted"
+            },
+            "redaction_status": "redacted",
+            "authority_mode": "legacy_compatibility",
+            "artifacts": [],
+            "canonical_attempt": {
+              "attempt": {
+                "accepted": true,
+                "acquisition_fingerprint": null,
+                "attempt_id": "f645c0a3af78f72f644c8f9191d162a022ea75ad13a2dc43746763e807f062ff",
+                "authority_mode": "legacy_compatibility",
+                "classification": "accepted",
+                "content_kind": "page",
+                "executor_id": "legacy_compatibility_import",
+                "executor_version": "legacy-compatibility",
+                "final_url": "https://example.com/",
+                "finished_at": "2026-09-06T14:48:42.066350Z",
+                "position": 0,
+                "profile_id": null,
+                "reason": "accepted",
+                "recipe_id": null,
+                "redaction_status": "redacted",
+                "request_id": "f645c0a3af78f72f644c8f9191d162a022ea75ad13a2dc43746763e807f062ff",
+                "requested_at": "2026-09-06T14:48:42.066350Z",
+                "requested_url": "https://example.com/",
+                "run_id": 1,
+                "schema_version": "acquisition-attempt-storage.v1",
+                "scope_id": 1,
+                "script_sha256": null,
+                "site_skill_id": null,
+                "site_skill_package_sha256": null,
+                "site_skill_version": null,
+                "started_at": "2026-09-06T14:48:42.066350Z",
+                "validation": {
+                  "decision": "accepted"
+                }
+              },
+              "authority_mode": "legacy_compatibility",
+              "schema_version": "acquisition-attempt-compatibility.v1"
+            }
+          },
+          {
+            "schema_version": "acquisition-attempt-storage.v1",
+            "attempt_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+            "request_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+            "scope_id": 1,
+            "run_id": 1,
+            "position": 0,
+            "content_kind": "document",
+            "profile_id": null,
+            "site_skill_id": null,
+            "site_skill_version": null,
+            "site_skill_package_sha256": null,
+            "recipe_id": null,
+            "script_sha256": null,
+            "executor_id": "legacy_compatibility_import",
+            "executor_version": "legacy-compatibility",
+            "requested_url": "https://example.com/report.pdf",
+            "final_url": "https://example.com/report.pdf",
+            "requested_at": "2026-09-06T14:48:42.099793Z",
+            "started_at": "2026-09-06T14:48:42.099793Z",
+            "finished_at": "2026-09-06T14:48:42.099793Z",
+            "acquisition_fingerprint": null,
+            "classification": "accepted",
+            "accepted": true,
+            "reason": "accepted",
+            "validation": {
+              "decision": "accepted"
+            },
+            "redaction_status": "redacted",
+            "authority_mode": "legacy_compatibility",
+            "artifacts": [],
+            "canonical_attempt": {
+              "attempt": {
+                "accepted": true,
+                "acquisition_fingerprint": null,
+                "attempt_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+                "authority_mode": "legacy_compatibility",
+                "classification": "accepted",
+                "content_kind": "document",
+                "executor_id": "legacy_compatibility_import",
+                "executor_version": "legacy-compatibility",
+                "final_url": "https://example.com/report.pdf",
+                "finished_at": "2026-09-06T14:48:42.099793Z",
+                "position": 0,
+                "profile_id": null,
+                "reason": "accepted",
+                "recipe_id": null,
+                "redaction_status": "redacted",
+                "request_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+                "requested_at": "2026-09-06T14:48:42.099793Z",
+                "requested_url": "https://example.com/report.pdf",
+                "run_id": 1,
+                "schema_version": "acquisition-attempt-storage.v1",
+                "scope_id": 1,
+                "script_sha256": null,
+                "site_skill_id": null,
+                "site_skill_package_sha256": null,
+                "site_skill_version": null,
+                "started_at": "2026-09-06T14:48:42.099793Z",
+                "validation": {
+                  "decision": "accepted"
+                }
+              },
+              "authority_mode": "legacy_compatibility",
+              "schema_version": "acquisition-attempt-compatibility.v1"
+            }
+          }
+        ],
+        "executor_chain": [
+          "legacy_compatibility_import",
+          "legacy_compatibility_import"
+        ],
+        "fallback_used": false,
+        "quality_results": [
+          {
+            "decision": "accepted"
+          },
+          {
+            "decision": "accepted"
+          }
+        ],
+        "failure_classifications": [],
+        "artifacts": [],
+        "accepted_attempt_ids": [
+          "f645c0a3af78f72f644c8f9191d162a022ea75ad13a2dc43746763e807f062ff",
+          "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956"
+        ],
+        "latest_attempt": {
+          "schema_version": "acquisition-attempt-storage.v1",
+          "attempt_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+          "request_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+          "scope_id": 1,
+          "run_id": 1,
+          "position": 0,
+          "content_kind": "document",
+          "profile_id": null,
+          "site_skill_id": null,
+          "site_skill_version": null,
+          "site_skill_package_sha256": null,
+          "recipe_id": null,
+          "script_sha256": null,
+          "executor_id": "legacy_compatibility_import",
+          "executor_version": "legacy-compatibility",
+          "requested_url": "https://example.com/report.pdf",
+          "final_url": "https://example.com/report.pdf",
+          "requested_at": "2026-09-06T14:48:42.099793Z",
+          "started_at": "2026-09-06T14:48:42.099793Z",
+          "finished_at": "2026-09-06T14:48:42.099793Z",
+          "acquisition_fingerprint": null,
+          "classification": "accepted",
+          "accepted": true,
+          "reason": "accepted",
+          "validation": {
+            "decision": "accepted"
+          },
+          "redaction_status": "redacted",
+          "authority_mode": "legacy_compatibility",
+          "artifacts": [],
+          "canonical_attempt": {
+            "attempt": {
+              "accepted": true,
+              "acquisition_fingerprint": null,
+              "attempt_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+              "authority_mode": "legacy_compatibility",
+              "classification": "accepted",
+              "content_kind": "document",
+              "executor_id": "legacy_compatibility_import",
+              "executor_version": "legacy-compatibility",
+              "final_url": "https://example.com/report.pdf",
+              "finished_at": "2026-09-06T14:48:42.099793Z",
+              "position": 0,
+              "profile_id": null,
+              "reason": "accepted",
+              "recipe_id": null,
+              "redaction_status": "redacted",
+              "request_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+              "requested_at": "2026-09-06T14:48:42.099793Z",
+              "requested_url": "https://example.com/report.pdf",
+              "run_id": 1,
+              "schema_version": "acquisition-attempt-storage.v1",
+              "scope_id": 1,
+              "script_sha256": null,
+              "site_skill_id": null,
+              "site_skill_package_sha256": null,
+              "site_skill_version": null,
+              "started_at": "2026-09-06T14:48:42.099793Z",
+              "validation": {
+                "decision": "accepted"
+              }
+            },
+            "authority_mode": "legacy_compatibility",
+            "schema_version": "acquisition-attempt-compatibility.v1"
+          },
+          "adapter": "legacy_compatibility_import",
+          "status": "passed"
+        },
+        "profile": {
+          "site_key": ""
+        },
+        "recommended_next_adapter": "",
+        "next_action": "use_adapter_output"
+      },
+      "documents": [],
+      "notes": [
+        "preferred_display_path uses tracked_local_path when present and falls back to local_path otherwise.",
+        "tracked_local_path is the source-oriented browsing path; local_path remains the canonical SHA256 blob path."
+      ]
+    }
+  },
+  "metadata": {
+    "comment": "This fixture is a regression fixture, not current production."
+  },
+  "extensions": {
+    "acquisition": {
+      "schema_version": "acquisition-evidence.v2",
+      "source": "persisted_exact_run",
+      "scope_id": 1,
+      "run_id": 1,
+      "attempts": [
+        {
+          "schema_version": "acquisition-attempt-storage.v1",
+          "attempt_id": "f645c0a3af78f72f644c8f9191d162a022ea75ad13a2dc43746763e807f062ff",
+          "request_id": "f645c0a3af78f72f644c8f9191d162a022ea75ad13a2dc43746763e807f062ff",
+          "scope_id": 1,
+          "run_id": 1,
+          "position": 0,
+          "content_kind": "page",
+          "profile_id": null,
+          "site_skill_id": null,
+          "site_skill_version": null,
+          "site_skill_package_sha256": null,
+          "recipe_id": null,
+          "script_sha256": null,
+          "executor_id": "legacy_compatibility_import",
+          "executor_version": "legacy-compatibility",
+          "requested_url": "https://example.com/",
+          "final_url": "https://example.com/",
+          "requested_at": "2026-09-06T14:48:42.066350Z",
+          "started_at": "2026-09-06T14:48:42.066350Z",
+          "finished_at": "2026-09-06T14:48:42.066350Z",
+          "acquisition_fingerprint": null,
+          "classification": "accepted",
+          "accepted": true,
+          "reason": "accepted",
+          "validation": {
+            "decision": "accepted"
+          },
+          "redaction_status": "redacted",
+          "authority_mode": "legacy_compatibility",
+          "artifacts": [],
+          "canonical_attempt": {
+            "attempt": {
+              "accepted": true,
+              "acquisition_fingerprint": null,
+              "attempt_id": "f645c0a3af78f72f644c8f9191d162a022ea75ad13a2dc43746763e807f062ff",
+              "authority_mode": "legacy_compatibility",
+              "classification": "accepted",
+              "content_kind": "page",
+              "executor_id": "legacy_compatibility_import",
+              "executor_version": "legacy-compatibility",
+              "final_url": "https://example.com/",
+              "finished_at": "2026-09-06T14:48:42.066350Z",
+              "position": 0,
+              "profile_id": null,
+              "reason": "accepted",
+              "recipe_id": null,
+              "redaction_status": "redacted",
+              "request_id": "f645c0a3af78f72f644c8f9191d162a022ea75ad13a2dc43746763e807f062ff",
+              "requested_at": "2026-09-06T14:48:42.066350Z",
+              "requested_url": "https://example.com/",
+              "run_id": 1,
+              "schema_version": "acquisition-attempt-storage.v1",
+              "scope_id": 1,
+              "script_sha256": null,
+              "site_skill_id": null,
+              "site_skill_package_sha256": null,
+              "site_skill_version": null,
+              "started_at": "2026-09-06T14:48:42.066350Z",
+              "validation": {
+                "decision": "accepted"
+              }
+            },
+            "authority_mode": "legacy_compatibility",
+            "schema_version": "acquisition-attempt-compatibility.v1"
+          }
+        },
+        {
+          "schema_version": "acquisition-attempt-storage.v1",
+          "attempt_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+          "request_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+          "scope_id": 1,
+          "run_id": 1,
+          "position": 0,
+          "content_kind": "document",
+          "profile_id": null,
+          "site_skill_id": null,
+          "site_skill_version": null,
+          "site_skill_package_sha256": null,
+          "recipe_id": null,
+          "script_sha256": null,
+          "executor_id": "legacy_compatibility_import",
+          "executor_version": "legacy-compatibility",
+          "requested_url": "https://example.com/report.pdf",
+          "final_url": "https://example.com/report.pdf",
+          "requested_at": "2026-09-06T14:48:42.099793Z",
+          "started_at": "2026-09-06T14:48:42.099793Z",
+          "finished_at": "2026-09-06T14:48:42.099793Z",
+          "acquisition_fingerprint": null,
+          "classification": "accepted",
+          "accepted": true,
+          "reason": "accepted",
+          "validation": {
+            "decision": "accepted"
+          },
+          "redaction_status": "redacted",
+          "authority_mode": "legacy_compatibility",
+          "artifacts": [],
+          "canonical_attempt": {
+            "attempt": {
+              "accepted": true,
+              "acquisition_fingerprint": null,
+              "attempt_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+              "authority_mode": "legacy_compatibility",
+              "classification": "accepted",
+              "content_kind": "document",
+              "executor_id": "legacy_compatibility_import",
+              "executor_version": "legacy-compatibility",
+              "final_url": "https://example.com/report.pdf",
+              "finished_at": "2026-09-06T14:48:42.099793Z",
+              "position": 0,
+              "profile_id": null,
+              "reason": "accepted",
+              "recipe_id": null,
+              "redaction_status": "redacted",
+              "request_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+              "requested_at": "2026-09-06T14:48:42.099793Z",
+              "requested_url": "https://example.com/report.pdf",
+              "run_id": 1,
+              "schema_version": "acquisition-attempt-storage.v1",
+              "scope_id": 1,
+              "script_sha256": null,
+              "site_skill_id": null,
+              "site_skill_package_sha256": null,
+              "site_skill_version": null,
+              "started_at": "2026-09-06T14:48:42.099793Z",
+              "validation": {
+                "decision": "accepted"
+              }
+            },
+            "authority_mode": "legacy_compatibility",
+            "schema_version": "acquisition-attempt-compatibility.v1"
+          }
+        }
+      ],
+      "executor_chain": [
+        "legacy_compatibility_import",
+        "legacy_compatibility_import"
+      ],
+      "fallback_used": false,
+      "quality_results": [
+        {
+          "decision": "accepted"
+        },
+        {
+          "decision": "accepted"
+        }
+      ],
+      "failure_classifications": [],
+      "artifacts": [],
+      "accepted_attempt_ids": [
+        "f645c0a3af78f72f644c8f9191d162a022ea75ad13a2dc43746763e807f062ff",
+        "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956"
+      ],
+      "latest_attempt": {
+        "schema_version": "acquisition-attempt-storage.v1",
+        "attempt_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+        "request_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+        "scope_id": 1,
+        "run_id": 1,
+        "position": 0,
+        "content_kind": "document",
+        "profile_id": null,
+        "site_skill_id": null,
+        "site_skill_version": null,
+        "site_skill_package_sha256": null,
+        "recipe_id": null,
+        "script_sha256": null,
+        "executor_id": "legacy_compatibility_import",
+        "executor_version": "legacy-compatibility",
+        "requested_url": "https://example.com/report.pdf",
+        "final_url": "https://example.com/report.pdf",
+        "requested_at": "2026-09-06T14:48:42.099793Z",
+        "started_at": "2026-09-06T14:48:42.099793Z",
+        "finished_at": "2026-09-06T14:48:42.099793Z",
+        "acquisition_fingerprint": null,
+        "classification": "accepted",
+        "accepted": true,
+        "reason": "accepted",
+        "validation": {
+          "decision": "accepted"
+        },
+        "redaction_status": "redacted",
+        "authority_mode": "legacy_compatibility",
+        "artifacts": [],
+        "canonical_attempt": {
+          "attempt": {
+            "accepted": true,
+            "acquisition_fingerprint": null,
+            "attempt_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+            "authority_mode": "legacy_compatibility",
+            "classification": "accepted",
+            "content_kind": "document",
+            "executor_id": "legacy_compatibility_import",
+            "executor_version": "legacy-compatibility",
+            "final_url": "https://example.com/report.pdf",
+            "finished_at": "2026-09-06T14:48:42.099793Z",
+            "position": 0,
+            "profile_id": null,
+            "reason": "accepted",
+            "recipe_id": null,
+            "redaction_status": "redacted",
+            "request_id": "11ec6d0abba8646d78cf9ef95eee80512ccc37a1043f28675960a77ab86e2956",
+            "requested_at": "2026-09-06T14:48:42.099793Z",
+            "requested_url": "https://example.com/report.pdf",
+            "run_id": 1,
+            "schema_version": "acquisition-attempt-storage.v1",
+            "scope_id": 1,
+            "script_sha256": null,
+            "site_skill_id": null,
+            "site_skill_package_sha256": null,
+            "site_skill_version": null,
+            "started_at": "2026-09-06T14:48:42.099793Z",
+            "validation": {
+              "decision": "accepted"
+            }
+          },
+          "authority_mode": "legacy_compatibility",
+          "schema_version": "acquisition-attempt-compatibility.v1"
+        },
+        "adapter": "legacy_compatibility_import",
+        "status": "passed"
+      },
+      "profile": {
+        "site_key": ""
+      },
+      "recommended_next_adapter": "",
+      "next_action": "use_adapter_output"
+    }
+  }
+}

@@ -25,6 +25,14 @@ from web_listening.contracts.capture import (
     CaptureResult,
 )
 from web_listening.contracts.acquisition_batch import (
+    ACQUISITION_BATCH_RESULT_VERSION_V2,
+    AcquisitionBatchCountsV2,
+    AcquisitionBatchResultV2,
+    AcquisitionDispositionV2,
+    build_acquisition_batch_result_v2,
+    aggregate_batch_result_v2,
+    aggregate_batch_result,
+    acquisition_batch_result_v2_from_scope_run,
     ACQUISITION_BATCH_RESULT_VERSION,
     AcquisitionBatchCounts,
     AcquisitionBatchResult,
@@ -61,6 +69,14 @@ from web_listening.contracts.tool_result import (
 )
 
 __all__ = [
+    "ACQUISITION_BATCH_RESULT_VERSION_V2",
+    "AcquisitionBatchCountsV2",
+    "AcquisitionBatchResultV2",
+    "AcquisitionDispositionV2",
+    "build_acquisition_batch_result_v2",
+    "aggregate_batch_result_v2",
+    "aggregate_batch_result",
+    "acquisition_batch_result_v2_from_scope_run",
     "AcquisitionAttempt",
     "ACQUISITION_BATCH_RESULT_VERSION",
     "AcquisitionBatchCounts",

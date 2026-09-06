@@ -13,6 +13,7 @@ from web_listening.blocks.monitor_scope_planner import MonitorScopePlan, load_mo
 from web_listening.blocks.scope_lookup import find_scope_for_plan
 from web_listening.blocks.section_discovery import render_yaml
 from web_listening.blocks.storage import Storage
+from web_listening.blocks.diff import compute_diff, find_document_links, find_new_links
 from web_listening.config import settings
 from web_listening.models import CrawlRun, CrawlScope, Document, FileObservation, Site
 
@@ -162,7 +163,7 @@ def _file_observation_item(
         "item_id": _item_id(observation.scope_id, file_url, f"file-observation-{observation.id or 0}"),
         "item_type": "file_link",
         "url": file_url,
-        "title": document.title if document else Path(file_url or f"file-{observation.id or 0}").name,
+        "title": document.title or None if document else None,
         "status": "new",
         "observed_at": _utc_iso(document.downloaded_at if document else None) or _utc_iso(run.finished_at) or generated_text,
         "provenance": {
@@ -183,6 +184,141 @@ def _file_observation_item(
             "file_observation_id": observation.id or 0,
         },
     }
+
+
+def _observation_document(
+    storage: Storage, observation: FileObservation, document: Document | None
+) -> Document | None:
+    """Recover a run's file body from its existing immutable capture and blob index."""
+    if document is None:
+        return None
+    attempt = (
+        storage.get_acquisition_attempt(observation.attempt_id)
+        if observation.attempt_id
+        else None
+    )
+    capture = (
+        json.loads(attempt.canonical_json).get("result")
+        if attempt and attempt.canonical_json
+        else None
+    )
+    content = (capture or {}).get("content") or {}
+    digest = content.get("sha256")
+    if not digest:
+        # Legacy rows may have lost their original body through add_document's
+        # same-URL update. Preserve the URL, but never substitute a later body.
+        if any(
+            o.run_id > observation.run_id and o.document_id == observation.document_id
+            for o in storage.list_file_observations(observation.scope_id)
+        ):
+            return None
+        return document
+    blob = storage.get_blob(digest)
+    if blob is None:
+        return document if document.sha256 == digest else None
+    return document.model_copy(
+        update={
+            "title": content.get("metadata", {}).get("title") or "",
+            "sha256": digest,
+            "local_path": blob["canonical_path"],
+            "tracked_local_path": observation.tracked_local_path,
+            "content_type": content.get("media_type") or blob["content_type"],
+            "file_size": blob["file_size"],
+            "downloaded_at": attempt.finished_at,
+        }
+    )
+
+
+def _page_link_items(
+    storage: Storage,
+    *,
+    scope_id: int,
+    run: CrawlRun,
+    source_id: str,
+    input_paths: list[str],
+    extraction_method: str | None,
+) -> list[dict]:
+    """Compare the requested observation with history strictly preceding its run.
+
+    Absence is evidence only when the referring page was observed again. An
+    unvisited page (budget, failure, or partial crawl) cannot establish removal.
+    Discovery alone is not evidence that the linked body's content changed.
+    """
+    snapshots = storage.list_page_snapshots_for_run(scope_id, run.id)
+    history = [
+        s for s in storage.list_scope_page_snapshots(scope_id) if s.run_id < run.id
+    ]
+    previous = {}
+    for snapshot in sorted(history, key=lambda s: (s.run_id, s.id or 0)):
+        previous[snapshot.page_id] = snapshot
+    current = {s.page_id: s for s in snapshots}
+    pages = {p.id: p for p in storage.list_tracked_pages(scope_id)}
+    prior_links = sorted({link for s in history for link in s.links})
+    current_links = sorted({link for s in snapshots for link in s.links})
+    new_links = set(find_new_links(prior_links, current_links))
+    changed_targets = {
+        pages[page_id].canonical_url
+        for page_id, snapshot in current.items()
+        if page_id in previous
+        and page_id in pages
+        and compute_diff(previous[page_id].content_hash, snapshot.content_hash)[0]
+    }
+    result = {}
+    for snapshot in snapshots:
+        prior = previous.get(snapshot.page_id)
+        page = pages.get(snapshot.page_id)
+        page_url = page.canonical_url if page else snapshot.final_url
+        missing = find_new_links(current_links, prior.links) if prior else []
+        for url in sorted(set(snapshot.links) | set(missing)):
+            state = (
+                "missing"
+                if url in missing
+                else (
+                    "existing"
+                    if not history
+                    else (
+                        "new"
+                        if url in new_links
+                        else "changed" if url in changed_targets else "existing"
+                    )
+                )
+            )
+            parent = (
+                _item_id(scope_id, page.canonical_url, f"page-{page.id}")
+                if page
+                else None
+            )
+            item = {
+                "item_id": _item_id(scope_id, url, url),
+                "item_type": "file_link" if find_document_links([url]) else "page_link",
+                "url": url,
+                "title": None,
+                "status": state,
+                "item_state": state,
+                "discovered_from": page_url,
+                "parent_item_id": parent,
+                "observed_at": _utc_iso(snapshot.captured_at),
+                "provenance": {
+                    "source_id": source_id,
+                    "run_id": f"run-{run.id}",
+                    "input_artifacts": input_paths,
+                    "parent_item_id": parent,
+                    "observed_at": _utc_iso(snapshot.captured_at),
+                    "extraction_method": extraction_method,
+                },
+                "content_type": None,
+                "http_status": None,
+                "checksum": None,
+                "metadata": {
+                    "page_url": page_url,
+                    "snapshot_id": snapshot.id,
+                    "source_run_id": run.id,
+                    "prior_snapshot_id": prior.id if prior else None,
+                },
+            }
+            # Multiple referring pages still deliver one stable URL item.
+            result.setdefault(item["item_id"], item)
+    return sorted(result.values(), key=lambda item: item["url"])
 
 
 @dataclass(slots=True)
@@ -218,7 +354,7 @@ def build_scope_document_manifest(
 ) -> ScopeDocumentManifest:
     plan = load_monitor_scope_plan(scope_path)
     site, scope = find_scope_for_plan(storage, plan)
-    resolved_run_id = run_id or scope.baseline_run_id
+    resolved_run_id = run_id if run_id is not None else scope.baseline_run_id
     if resolved_run_id is None:
         raise ValueError(f"Scope `{scope.id}` does not have a baseline run yet.")
 
@@ -226,8 +362,18 @@ def build_scope_document_manifest(
     if run is None:
         raise ValueError(f"Could not find crawl run `{resolved_run_id}`.")
 
-    documents = storage.list_scope_documents(scope.id, run_id=resolved_run_id)
-    document_rows = [_document_row(document) for document in documents]
+    if run.scope_id != scope.id:
+        raise ValueError("Requested run does not belong to this scope")
+
+    documents = storage.list_scope_documents(
+        scope.id, run_id=resolved_run_id, include_legacy_fallback=False
+    )
+    documents_by_id = {document.id: document for document in documents}
+    document_rows = []
+    for observation in storage.list_file_observations(scope.id, run_id=resolved_run_id):
+        document = _observation_document(storage, observation, documents_by_id.get(observation.document_id))
+        if document is not None:
+            document_rows.append(_document_row(document))
     notes = [
         "preferred_display_path uses tracked_local_path when present and falls back to local_path otherwise.",
         "tracked_local_path is the source-oriented browsing path; local_path remains the canonical SHA256 blob path.",
@@ -353,14 +499,19 @@ def build_web_listening_manifest_v1(
     """
     plan = load_monitor_scope_plan(scope_path)
     site, scope = find_scope_for_plan(storage, plan)
-    resolved_run_id = run_id or scope.baseline_run_id
+    resolved_run_id = run_id if run_id is not None else scope.baseline_run_id
     if resolved_run_id is None:
         raise ValueError(f"Scope `{scope.id}` does not have a baseline run yet.")
     run = storage.get_crawl_run(resolved_run_id)
     if run is None:
         raise ValueError(f"Could not find crawl run `{resolved_run_id}`.")
 
-    documents = storage.list_scope_documents(scope.id or 0, run_id=resolved_run_id)
+    if run.scope_id != scope.id:
+        raise ValueError("Requested run does not belong to this scope")
+
+    documents = storage.list_scope_documents(
+        scope.id or 0, run_id=resolved_run_id, include_legacy_fallback=False
+    )
     documents_by_id = {document.id: document for document in documents if document.id is not None}
     file_observations = storage.list_file_observations(scope.id or 0, run_id=resolved_run_id)
     generated = generated_at or datetime.now(timezone.utc)
@@ -385,15 +536,40 @@ def build_web_listening_manifest_v1(
     idempotency_key = f"{source_id}|{plan.scope_fingerprint}|{resolved_run_id}"
     extraction_method = scope.fetch_mode or plan.fetch_mode or None
 
+    page_items = _page_link_items(
+        storage,
+        scope_id=scope.id or 0,
+        run=run,
+        source_id=source_id,
+        input_paths=input_paths,
+        extraction_method=extraction_method,
+    )
+    prior_observations = [
+        o
+        for o in storage.list_file_observations(scope.id or 0)
+        if o.run_id < resolved_run_id
+    ]
+    previous_files = {}
+    for observation in sorted(prior_observations, key=lambda o: (o.run_id, o.id or 0)):
+        previous_files[observation.file_id] = observation
+    prior_snapshots = [
+        s
+        for s in storage.list_scope_page_snapshots(scope.id or 0)
+        if s.run_id < resolved_run_id
+    ]
+    has_history = bool(prior_observations or prior_snapshots)
+    prior_discovered_urls = [
+        url for snapshot in prior_snapshots for url in snapshot.links
+    ]
     discovered_items: list[dict] = []
     downloaded_assets: list[dict] = []
     seen_items: set[str] = set()
     seen_assets: set[str] = set()
     for observation in file_observations:
-        tracked_file = storage.get_tracked_file(observation.file_id)
         tracked_page = storage.get_tracked_page(observation.page_id)
-        document_id = observation.document_id or (tracked_file.latest_document_id if tracked_file else None)
+        document_id = observation.document_id
         document = documents_by_id.get(document_id) if document_id is not None else None
+        document = _observation_document(storage, observation, document)
         page_url = tracked_page.canonical_url if tracked_page else None
         discovered_item = _file_observation_item(
             observation,
@@ -406,6 +582,42 @@ def build_web_listening_manifest_v1(
             extraction_method=extraction_method,
             generated_text=generated_text,
         )
+        previous = previous_files.get(observation.file_id)
+        previous_document = (
+            storage.get_document(previous.document_id)
+            if previous and previous.document_id
+            else None
+        )
+        if previous is not None:
+            previous_document = _observation_document(storage, previous, previous_document)
+        state = (
+            "existing"
+            if not has_history
+            else (
+                "new"
+                if previous is None
+                and find_new_links(
+                    prior_discovered_urls,
+                    [observation.download_url or observation.discovered_url],
+                )
+                else "existing"
+            )
+        )
+        if (
+            previous_document
+            and document
+            and previous_document.sha256
+            and document.sha256
+        ):
+            if compute_diff(previous_document.sha256, document.sha256)[0]:
+                state = "changed"
+        discovered_item.update(
+            status=state,
+            item_state=state,
+            discovered_from=page_url,
+            parent_item_id=discovered_item["provenance"]["parent_item_id"],
+        )
+        discovered_item["metadata"]["source_run_id"] = resolved_run_id
         item_id = discovered_item["item_id"]
         if item_id not in seen_items:
             discovered_items.append(discovered_item)
@@ -441,6 +653,59 @@ def build_web_listening_manifest_v1(
             }
         )
         seen_assets.add(asset_key)
+
+    # A missing file is established only by another observation of its parent
+    # page. Mutable tracked-file activity flags cannot describe a historical run.
+    current_pages = {
+        s.page_id: s
+        for s in storage.list_page_snapshots_for_run(scope.id or 0, resolved_run_id)
+    }
+    current_file_urls = sorted(
+        {o.download_url or o.discovered_url for o in file_observations}
+        | {item["url"] for item in page_items if item["status"] != "missing"}
+    )
+    missing_file_urls = set(
+        find_new_links(
+            current_file_urls,
+            [o.download_url or o.discovered_url for o in previous_files.values()],
+        )
+    )
+    for previous in previous_files.values():
+        url = previous.download_url or previous.discovered_url
+        if url not in missing_file_urls or previous.page_id not in current_pages:
+            continue
+        page = storage.get_tracked_page(previous.page_id)
+        item = _file_observation_item(
+            previous,
+            page_url=page.canonical_url if page else None,
+            document=None,
+            run=run,
+            source_id=source_id,
+            run_id_text=run_id_text,
+            input_paths=input_paths,
+            extraction_method=extraction_method,
+            generated_text=generated_text,
+        )
+        snapshot = current_pages[previous.page_id]
+        item.update(
+            status="missing",
+            item_state="missing",
+            observed_at=_utc_iso(snapshot.captured_at),
+        )
+        item["metadata"].update(
+            source_run_id=resolved_run_id,
+            prior_source_run_id=previous.run_id,
+            snapshot_id=snapshot.id,
+        )
+        if item["item_id"] not in seen_items:
+            discovered_items.append(item)
+            seen_items.add(item["item_id"])
+
+    for item in page_items:
+        if item["item_id"] not in seen_items:
+            discovered_items.append(item)
+            seen_items.add(item["item_id"])
+    discovered_items.sort(key=lambda item: (item["url"], item["item_id"]))
 
     artifact_provenance = {
         "source_id": source_id,

@@ -19,7 +19,10 @@ from web_listening.blocks.acquisition_profile import (
 from web_listening.blocks.acquisition_terminal import DEFAULT_BLOCKED_MARKERS
 from web_listening.blocks.acquisition_tools import validate_http_url
 from web_listening.blocks.diff import extract_links, find_document_links
-from web_listening.blocks.governed_read import ROLLBACK_REQUIRED_READ_ERRORS
+from web_listening.blocks.governed_read import (
+    AccessRejectedError,
+    ROLLBACK_REQUIRED_READ_ERRORS,
+)
 from web_listening.blocks.normalizer import normalize_html
 from web_listening.config import settings
 from web_listening.contracts.tool_result import (
@@ -384,6 +387,19 @@ def _fetch_with_readers(
                 break
         try:
             page = reused if reused is not None else adapter.capture(url)
+        except AccessRejectedError as exc:
+            # The gateway rejects before this reader has opened target content.
+            # Do not expose the provisional reader record as an attempted read.
+            return _result(
+                "permission_denied",
+                exc.envelope.reason_code,
+                [],
+                data={
+                    **base,
+                    "rejection": exc.envelope.model_dump(mode="json"),
+                },
+                gates=gates,
+            )
         except ROLLBACK_REQUIRED_READ_ERRORS:
             raise
         except _ReaderFailure as exc:

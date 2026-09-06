@@ -385,6 +385,58 @@ def test_ac14_compiled_loopback_wrapper_parity(output):
         assert response.json() == expected
 
 
+def test_compiled_loopback_robots_rejection_is_terminal_and_wrapper_equivalent(output):
+    from typer.testing import CliRunner
+
+    from tests.fixtures.article_content.loopback import loopback_authority
+    from tests.test_access_decision import DECISION_TIME, _policy, build_access_decision
+    from web_listening.blocks.governed_read import AccessRejectedError
+    from web_listening.cli import app
+    from web_listening.mcp.tools import web_listening_fetch_article_content
+
+    with loopback_authority(output.parent / "fixture") as (kwargs, seen):
+        decision = build_access_decision(
+            policy=_policy("http_403"),
+            canonical_url=kwargs["url"],
+            decision_time=DECISION_TIME,
+            redirect_hops=[],
+            request_slot_reservation=None,
+            origin_reservation=None,
+        )
+        envelope = decision.rejection_or_error
+        assert envelope is not None
+
+        def reject(self, url):
+            raise AccessRejectedError(decision)
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(article._CompiledReader, "capture", reject)
+            expected = article.fetch_article_content(**kwargs).model_dump(mode="json")
+            assert expected["data_status"] == "permission_denied"
+            assert expected["stop_reason"] == envelope.reason_code
+            assert expected["attempts"] == []
+            assert expected["data"]["requested_url"] == kwargs["url"]
+            assert expected["data"]["rejection"] == envelope.model_dump(mode="json")
+            assert seen == []
+            assert web_listening_fetch_article_content(**kwargs) == expected
+            cli = CliRunner().invoke(
+                app,
+                [
+                    "fetch-article-content",
+                    "--url",
+                    kwargs["url"],
+                    "--profile-path",
+                    kwargs["profile_path"],
+                    "--scope-path",
+                    kwargs["scope_path"],
+                    "--output-dir",
+                    kwargs["output_dir"],
+                ],
+            )
+            assert cli.exit_code == 0, cli.stdout
+            assert json.loads(cli.stdout) == expected
+
+
 def test_reuse_rechecks_current_quality(output):
     first = run(output, {"web_http": reader("web_http")})
     http = reader("web_http")

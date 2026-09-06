@@ -1834,7 +1834,8 @@ def report_scope(
 @app.command("aggregate-batch-result")
 def aggregate_batch_result_command(
     input_path: Path = typer.Option(
-        ..., "--input", help="JSON file containing one v2 result or a list of results."
+        ..., "--input",
+        help="JSON file containing v1 and/or v2 records (single record or list); the aggregator projects v1 to v2 conservatively and emits canonical v2.",
     ),
     json_output: bool = typer.Option(
         False, "--json", help="Emit canonical aggregated v2 JSON."

@@ -6,17 +6,22 @@ counters and explicit acquisition classifications. Successful dispositions requi
 a caller-supplied real run artifact identity. A completed run with no observations
 and no changes is failed evidence (`scope.no_observations`), not an in-flight task.
 
-`aggregate_batch_result_v2` (also exported as `aggregate_batch_result`) accepts v2
-records. It performs no I/O, preserves inputs, sorts by site key and requested URL,
-and unions task identities. Identical records collapse; inconsistent task data,
-source-run authority, or evidence counts raise ValueError. Evidence totals are
-counted once per distinct source run and task set; they are observation counters,
-not requested-site counts. v1 remains available unchanged. No automatic v1 success
-upgrade is provided because v1 lacks updated/unchanged change evidence.
+`aggregate_batch_result_v2` (also exported as `aggregate_batch_result`) accepts
+either v1 or v2 records (and lists mixing both). It performs no I/O, preserves
+inputs, sorts by site key and requested URL, and unions task identities.
+Identical records collapse; inconsistent task data, source-run authority, or
+evidence counts raise ValueError. v1 input is projected conservatively to v2
+using the v1 producer's `task_id` as the site key and the run's existing
+disposition/reason; v1 lacks updated/unchanged change evidence, so v1 success
+is reported as `unresolved` for the per-site disposition (counts conservation
+is preserved; the weekly `summary.checked/succeeded/failed` is computed from
+the projected v2 counts). Evidence totals are counted once per distinct source
+run and task set; they are observation counters, not requested-site counts.
+v1 remains available unchanged.
 
-The CLI `aggregate-batch-result --input PATH --json` reads a single v2 record or
-list and emits canonical JSON. Invalid input exits 2. The CLI's file read is
-outside the pure aggregate function. `counts.failed` is exclusive of blocked;
+The CLI `aggregate-batch-result --input PATH --json` reads v1 and/or v2 records
+(either a single record or a list) and emits canonical v2 JSON. Invalid input
+exits 2. The CLI's file read is outside the pure aggregate function. `counts.failed` is exclusive of blocked;
 `summary.failed` includes blocked. `summary.checked` excludes unresolved.
 
 Manifest exports bind to the explicitly requested run and its earlier snapshots,

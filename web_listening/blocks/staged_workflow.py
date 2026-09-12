@@ -204,9 +204,25 @@ def _portable_json(value):
 
 
 def _compile_acquisition_gateway(
-    plan, *, acquisition_profile_path=None, site_skill_root=None, acquisition_profile=None
+    plan,
+    *,
+    acquisition_profile_path=None,
+    site_skill_root=None,
+    acquisition_profile=None,
+    before_target_request=None,
+    timeout_seconds=None,
 ):
     """Resolve all governed authority before Storage (and therefore mutation) exists."""
+    if before_target_request is not None and not callable(before_target_request):
+        raise TypeError("before_target_request must be callable")
+    if timeout_seconds is not None and (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+    ):
+        raise ValueError("timeout_seconds must be positive and finite")
+    caller_timeout = float(timeout_seconds) if timeout_seconds is not None else None
     from web_listening.blocks.acquisition_execution_plan import (
         compile_acquisition_execution_plan,
     )
@@ -236,7 +252,9 @@ def _compile_acquisition_gateway(
             "formal scope execution requires complete governed acquisition bindings"
         )
     if acquisition_profile_path is not None and acquisition_profile is not None:
-        raise ValueError("supply acquisition_profile or acquisition_profile_path, not both")
+        raise ValueError(
+            "supply acquisition_profile or acquisition_profile_path, not both"
+        )
     if acquisition_profile_path is None and acquisition_profile is None:
         raise ValueError("governed scope requires --acquisition-profile-path")
     if acquisition_profile is not None:
@@ -273,7 +291,7 @@ def _compile_acquisition_gateway(
                 "executor request identity must not override the frozen AccessGateway identity"
             )
 
-    timeout_seconds, max_body_bytes = _sealed_gateway_limits(compiled)
+    gateway_timeout_seconds, max_body_bytes = _sealed_gateway_limits(compiled)
 
     read_gateway = build_runtime_read_gateway(
         authority_sha256=compiled.acquisition_fingerprint,
@@ -281,7 +299,7 @@ def _compile_acquisition_gateway(
         allowed_domains=tuple(profile.safety.allowed_domains),
         user_agent=settings.user_agent,
         max_body_bytes=max_body_bytes,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=gateway_timeout_seconds,
         budget_limit=min(
             1_000_000,
             max(
@@ -301,11 +319,16 @@ def _compile_acquisition_gateway(
 
         def execute(self, request):
             started = datetime.now(timezone.utc)
-            response = read_gateway.read(
-                str(request.url),
-                max_body_bytes=self._max_body_bytes,
-                timeout_seconds=self._timeout_seconds,
-            )
+            effective_timeout = self._timeout_seconds
+            if caller_timeout is not None:
+                effective_timeout = min(effective_timeout, caller_timeout)
+            read_options = {
+                "max_body_bytes": self._max_body_bytes,
+                "timeout_seconds": effective_timeout,
+            }
+            if before_target_request is not None:
+                read_options["before_target_request"] = before_target_request
+            response = read_gateway.read(str(request.url), **read_options)
             if request.metadata.get("content_kind") == "document":
                 return CaptureResult(
                     **request.model_dump(
@@ -396,10 +419,13 @@ def _compile_acquisition_gateway(
                 prepare_browser_acquisition_adapter,
             )
 
+            controls = {}
+            if before_target_request is not None:
+                controls["before_target_request"] = before_target_request
+            if caller_timeout is not None:
+                controls["timeout_seconds"] = caller_timeout
             adapter = prepare_browser_acquisition_adapter(
-                compiled,
-                step,
-                read_gateway,
+                compiled, step, read_gateway, **controls
             )
             executors[executor_id] = BrowserAcquisitionExecutor(adapter)
         registry = ExecutorRegistry(

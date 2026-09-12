@@ -1051,9 +1051,11 @@ class AccessGateway:
                     f"origin hard budget exhausted: {origin.as_url_origin()}"
                 )
             not_before = reserved_at
-            pacing_floor = (
-                state.last_request_reserved_for or state.last_request_started_at
-            )
+            pacing_floor = state.last_request_reserved_for
+            if state.last_request_started_at is not None and (
+                pacing_floor is None or state.last_request_started_at > pacing_floor
+            ):
+                pacing_floor = state.last_request_started_at
             if pacing_floor is not None:
                 not_before = max(
                     not_before,

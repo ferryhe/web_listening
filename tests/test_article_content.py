@@ -467,6 +467,37 @@ def test_compiled_reader_reports_extensionless_pdf_without_guessing_text(media_t
     assert content_kinds == ["page"]
 
 
+@pytest.mark.parametrize(
+    "media_type",
+    [
+        "application/msword; charset=binary",
+        "Application/Vnd.Ms-Excel; version=8.0",
+        "APPLICATION/VND.MS-POWERPOINT",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document; charset=binary",
+        "Application/Vnd.Openxmlformats-Officedocument.Spreadsheetml.Sheet",
+        "APPLICATION/VND.OPENXMLFORMATS-OFFICEDOCUMENT.PRESENTATIONML.PRESENTATION; version=1",
+    ],
+)
+def test_compiled_reader_reports_extensionless_office_document_without_guessing_text(
+    media_type,
+):
+    from web_listening.contracts import CaptureContent
+
+    extensionless_url = "https://example.com/download?id=report"
+    adapter, content_kinds = compiled_reader(
+        CaptureContent(
+            media_type=media_type,
+            text="lossy decoded office document text",
+            sha256=hashlib.sha256(b"original binary office document bytes").hexdigest(),
+        ),
+        url=extensionless_url,
+    )
+
+    with pytest.raises(article._ReaderFailure, match="unsupported_content_kind"):
+        adapter.capture(extensionless_url)
+    assert content_kinds == ["page"]
+
+
 def test_compiled_reader_keeps_utf8_html_hash_contract():
     from web_listening.contracts import CaptureContent
 

@@ -1249,18 +1249,15 @@ class TreeCrawler:
             or metadata.get("sha256_scope") != "decoded-bytes"
             or content.sha256 is None
         ):
-            # Preserve plain-text synthetic/external gateway support without treating
-            # it as a byte-capable governed executor representation.
-            payload = content.text.encode("utf-8")
-        else:
-            try:
-                payload = base64.b64decode(content.text, validate=True)
-            except (binascii.Error, ValueError) as exc:
-                raise ValueError(
-                    "invalid governed document base64 representation"
-                ) from exc
+            raise ValueError(
+                "governed document content must declare base64 decoded-byte integrity"
+            )
+        try:
+            payload = base64.b64decode(content.text, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("invalid governed document base64 representation") from exc
         sha256 = hashlib.sha256(payload).hexdigest()
-        if content.sha256 is not None and content.sha256 != sha256:
+        if content.sha256 != sha256:
             raise ValueError("governed document content sha256 mismatch")
 
         filename = os.path.basename(urlsplit(file_url).path) or "document"

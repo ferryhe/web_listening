@@ -1371,7 +1371,7 @@ def test_governed_document_integrity_failure_creates_no_file_state_without_downl
     storage.close()
 
 
-def test_governed_document_persists_admitted_bytes_without_second_fetch(tmp_path):
+def test_governed_document_rejects_metadata_free_capture_without_persistence(tmp_path):
     storage = Storage(tmp_path / "governed-document.db")
     site = storage.add_site(
         Site(url="https://example.com/section", name="Governed Document")
@@ -1466,12 +1466,14 @@ def test_governed_document_persists_admitted_bytes_without_second_fetch(tmp_path
         "https://example.com/files/ignored.pdf",
     }
     assert gateway.calls[1][1] == "document"
-    assert [item.canonical_url for item in result.files] == [final_url]
-    document = storage.list_documents(site_id=site.id)[0]
-    assert document.download_url == final_url
-    assert document.sha256 == admitted_sha
-    assert Path(document.local_path).read_bytes() == admitted_bytes
-    assert storage.list_file_observations(result.scope.id)[0].download_url == final_url
+    assert result.files == []
+    assert len(result.file_failures) == 1
+    assert "governed document content must declare" in result.file_failures[0]
+    assert storage.list_documents(site_id=site.id) == []
+    assert storage.list_file_observations(result.scope.id) == []
+    assert (
+        storage.conn.execute("SELECT COUNT(*) FROM document_blobs").fetchone()[0] == 0
+    )
     storage.close()
 
 

@@ -25,6 +25,7 @@ from web_listening.blocks.governed_read import (
     AccessRejectedError,
     ROLLBACK_REQUIRED_READ_ERRORS,
 )
+from web_listening.blocks.immutable_artifacts import DOCUMENT_MIME_TYPES
 from web_listening.blocks.normalizer import normalize_html
 from web_listening.config import settings
 from web_listening.contracts.tool_result import (
@@ -558,7 +559,7 @@ class _CompiledReader:
                 raise _ReaderFailure("capture_hash_mismatch")
             raise _ReaderFailure("unsupported_content_kind")
         media_type = result.content.media_type.partition(";")[0].strip().casefold()
-        if media_type == "application/pdf":
+        if media_type in DOCUMENT_MIME_TYPES:
             raise _ReaderFailure("unsupported_content_kind")
         if result.content.sha256 != hashlib.sha256(body.encode("utf-8")).hexdigest():
             raise _ReaderFailure("capture_hash_mismatch")

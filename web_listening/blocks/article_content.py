@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import os
 import re
@@ -23,6 +25,7 @@ from web_listening.blocks.governed_read import (
     AccessRejectedError,
     ROLLBACK_REQUIRED_READ_ERRORS,
 )
+from web_listening.blocks.immutable_artifacts import DOCUMENT_MIME_TYPES
 from web_listening.blocks.normalizer import normalize_html
 from web_listening.config import settings
 from web_listening.contracts.tool_result import (
@@ -506,8 +509,9 @@ class _CompiledReader:
         from web_listening.blocks.crawler import FetchResult
         from web_listening.contracts import CaptureResult
 
+        content_kind = "document" if find_document_links([url]) else "page"
         request = self.gateway._request(
-            url, "article-content", "article-content", self.step, "page"
+            url, "article-content", "article-content", self.step, content_kind
         )
         result = self.gateway.registry.execute(request)
         lineage = (
@@ -535,6 +539,28 @@ class _CompiledReader:
         body = result.content.text
         if body is None:
             raise _ReaderFailure("empty_content")
+        metadata = result.content.metadata
+        encoded_document = (
+            metadata.get("representation") == "base64"
+            or metadata.get("sha256_scope") == "decoded-bytes"
+        )
+        if request.metadata.get("content_kind") == "document" or encoded_document:
+            if (
+                result.content.sha256 is None
+                or metadata.get("representation") != "base64"
+                or metadata.get("sha256_scope") != "decoded-bytes"
+            ):
+                raise _ReaderFailure("capture_hash_mismatch")
+            try:
+                document_bytes = base64.b64decode(body, validate=True)
+            except (binascii.Error, ValueError):
+                raise _ReaderFailure("capture_hash_mismatch") from None
+            if result.content.sha256 != hashlib.sha256(document_bytes).hexdigest():
+                raise _ReaderFailure("capture_hash_mismatch")
+            raise _ReaderFailure("unsupported_content_kind")
+        media_type = result.content.media_type.partition(";")[0].strip().casefold()
+        if media_type in DOCUMENT_MIME_TYPES:
+            raise _ReaderFailure("unsupported_content_kind")
         if result.content.sha256 != hashlib.sha256(body.encode("utf-8")).hexdigest():
             raise _ReaderFailure("capture_hash_mismatch")
         return FetchResult(

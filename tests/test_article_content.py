@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+from contextlib import nullcontext
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,7 +15,64 @@ from web_listening.blocks import article_content as article
 from web_listening.blocks.acquisition_profile import AcquisitionQualityGates
 
 URL = "https://example.com/page"
+DOCUMENT_URL = "https://example.com/report.pdf"
 BODY = "<html><body>one two three four</body></html>"
+
+
+def compiled_reader(content, *, url=URL):
+    from web_listening.contracts import CaptureResult
+
+    request = SimpleNamespace(
+        request_id="article-request",
+        site_key="example",
+        site_skill_id="example-skill",
+        site_skill_version="1.0.0",
+        site_skill_digest="a" * 64,
+        recipe_id="example-recipe",
+        run_id="example-run",
+        scope_id="example-scope",
+        executor_id="web_http",
+        url=url,
+        metadata={},
+    )
+    result = CaptureResult(
+        **{
+            key: getattr(request, key)
+            for key in (
+                "request_id",
+                "site_key",
+                "site_skill_id",
+                "site_skill_version",
+                "site_skill_digest",
+                "recipe_id",
+                "run_id",
+                "scope_id",
+                "executor_id",
+            )
+        },
+        state="succeeded",
+        started_at=datetime(2026, 9, 12, tzinfo=UTC),
+        finished_at=datetime(2026, 9, 12, tzinfo=UTC),
+        final_url=url,
+        status_code=200,
+        content=content,
+    )
+    request_content_kinds = []
+
+    def build_request(*args):
+        request.metadata = {"content_kind": args[4]}
+        request_content_kinds.append(args[4])
+        return request
+
+    gateway = SimpleNamespace(
+        registry=SimpleNamespace(execute=lambda candidate: result),
+        _request=build_request,
+        _origin=lambda candidate: "https://example.com",
+    )
+    return (
+        article._CompiledReader(gateway, {"executor_id": "web_http"}),
+        request_content_kinds,
+    )
 
 
 @pytest.fixture
@@ -26,9 +87,9 @@ def reader(name, body=BODY, status=200):
     return FakeAdapter(name, result)
 
 
-def run(output, readers, **kwargs):
+def run(output, readers, *, target_url=URL, **kwargs):
     return article._fetch_with_readers(
-        URL,
+        target_url,
         profile=make_profile(
             quality_gates=AcquisitionQualityGates(min_words=1, min_links=0)
         ),
@@ -311,6 +372,155 @@ def test_scoped_public_entrypoint_uses_compiler(output, monkeypatch):
     )
     assert result.has_data and executor.calls == 1 and len(calls) == 1
     assert gateway._closed
+
+
+def test_compiled_reader_accepts_valid_document_hash_as_honest_limitation(
+    output, monkeypatch
+):
+    from web_listening.contracts import CaptureContent
+
+    payload = b"%PDF-1.7\nreal governed document bytes\n%%EOF"
+    adapter, content_kinds = compiled_reader(
+        CaptureContent(
+            media_type="application/pdf",
+            text=base64.b64encode(payload).decode("ascii"),
+            sha256=hashlib.sha256(payload).hexdigest(),
+            metadata={
+                "representation": "base64",
+                "sha256_scope": "decoded-bytes",
+            },
+        ),
+        url=DOCUMENT_URL,
+    )
+    monkeypatch.setattr(article, "_output_descriptor", lambda _: nullcontext())
+
+    result = run(output, {"web_http": adapter}, target_url=DOCUMENT_URL)
+
+    assert content_kinds == ["document"]
+    assert result.ok and not result.has_data
+    assert result.data_status == "no_content"
+    assert result.attempts[0]["data_status"] == "not_applicable"
+    assert result.attempts[0]["reason"] == "unsupported_content_kind"
+
+
+def test_compiled_reader_rejects_corrupt_document_decoded_bytes_hash():
+    from web_listening.contracts import CaptureContent
+
+    payload = b"%PDF-1.7\nreal governed document bytes\n%%EOF"
+    adapter, content_kinds = compiled_reader(
+        CaptureContent(
+            media_type="application/pdf",
+            text=base64.b64encode(payload).decode("ascii"),
+            sha256=hashlib.sha256(b"different bytes").hexdigest(),
+            metadata={
+                "representation": "base64",
+                "sha256_scope": "decoded-bytes",
+            },
+        ),
+        url=DOCUMENT_URL,
+    )
+
+    with pytest.raises(article._ReaderFailure, match="capture_hash_mismatch"):
+        adapter.capture(DOCUMENT_URL)
+    assert content_kinds == ["document"]
+
+
+def test_compiled_reader_rejects_invalid_document_base64():
+    from web_listening.contracts import CaptureContent
+
+    adapter, content_kinds = compiled_reader(
+        CaptureContent(
+            media_type="application/pdf",
+            text="not valid base64!",
+            sha256=hashlib.sha256(b"not relevant").hexdigest(),
+            metadata={
+                "representation": "base64",
+                "sha256_scope": "decoded-bytes",
+            },
+        ),
+        url=DOCUMENT_URL,
+    )
+
+    with pytest.raises(article._ReaderFailure, match="capture_hash_mismatch"):
+        adapter.capture(DOCUMENT_URL)
+    assert content_kinds == ["document"]
+
+
+@pytest.mark.parametrize(
+    "media_type", ["application/pdf", "application/pdf; version=1.7"]
+)
+def test_compiled_reader_reports_extensionless_pdf_without_guessing_text(media_type):
+    from web_listening.contracts import CaptureContent
+
+    extensionless_url = "https://example.com/download?id=report"
+    adapter, content_kinds = compiled_reader(
+        CaptureContent(
+            media_type=media_type,
+            text="%PDF-1.7 replacement-character:\ufffd",
+            sha256=hashlib.sha256(b"original binary pdf bytes").hexdigest(),
+        ),
+        url=extensionless_url,
+    )
+
+    with pytest.raises(article._ReaderFailure, match="unsupported_content_kind"):
+        adapter.capture(extensionless_url)
+    assert content_kinds == ["page"]
+
+
+@pytest.mark.parametrize(
+    "media_type",
+    [
+        "application/msword; charset=binary",
+        "Application/Vnd.Ms-Excel; version=8.0",
+        "APPLICATION/VND.MS-POWERPOINT",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document; charset=binary",
+        "Application/Vnd.Openxmlformats-Officedocument.Spreadsheetml.Sheet",
+        "APPLICATION/VND.OPENXMLFORMATS-OFFICEDOCUMENT.PRESENTATIONML.PRESENTATION; version=1",
+    ],
+)
+def test_compiled_reader_reports_extensionless_office_document_without_guessing_text(
+    media_type,
+):
+    from web_listening.contracts import CaptureContent
+
+    extensionless_url = "https://example.com/download?id=report"
+    adapter, content_kinds = compiled_reader(
+        CaptureContent(
+            media_type=media_type,
+            text="lossy decoded office document text",
+            sha256=hashlib.sha256(b"original binary office document bytes").hexdigest(),
+        ),
+        url=extensionless_url,
+    )
+
+    with pytest.raises(article._ReaderFailure, match="unsupported_content_kind"):
+        adapter.capture(extensionless_url)
+    assert content_kinds == ["page"]
+
+
+def test_compiled_reader_keeps_utf8_html_hash_contract():
+    from web_listening.contracts import CaptureContent
+
+    valid, valid_content_kinds = compiled_reader(
+        CaptureContent(
+            media_type="text/html",
+            text=BODY,
+            sha256=hashlib.sha256(BODY.encode("utf-8")).hexdigest(),
+        )
+    )
+    assert valid.capture(URL).raw_html == BODY
+    assert valid_content_kinds == ["page"]
+
+    corrupt, corrupt_content_kinds = compiled_reader(
+        CaptureContent(
+            media_type="text/html",
+            text=BODY,
+            sha256=hashlib.sha256(b"different bytes").hexdigest(),
+        )
+    )
+    with pytest.raises(article._ReaderFailure, match="capture_hash_mismatch"):
+        corrupt.capture(URL)
+    assert corrupt_content_kinds == ["page"]
 
 
 def test_public_wrapper_parity_and_cli_validation(output):

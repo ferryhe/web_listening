@@ -72,6 +72,14 @@ _MIME_EXTENSIONS: dict[str, frozenset[str]] = {
     "image/jpeg": frozenset({".jpg", ".jpeg"}),
     "image/gif": frozenset({".gif"}),
 }
+_DOCUMENT_EXTENSIONS = frozenset(
+    {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
+)
+DOCUMENT_MIME_TYPES = frozenset(
+    mime_type
+    for mime_type, extensions in _MIME_EXTENSIONS.items()
+    if extensions and extensions <= _DOCUMENT_EXTENSIONS
+)
 _ZIP_MIME_PREFIXES = {
     "application/zip": None,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": b"word/",

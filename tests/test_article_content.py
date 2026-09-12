@@ -360,6 +360,64 @@ def test_ac13_compiled_loopback(output, scenario, status, method, reads):
             assert result.attempts[0]["data_status"] == "failed_quality_gate"
 
 
+def test_public_article_signature_exposes_target_guard_and_timeout():
+    import inspect
+
+    parameters = inspect.signature(article.fetch_article_content).parameters
+
+    assert "before_target_request" in parameters
+    assert "timeout_seconds" in parameters
+
+
+def test_public_article_forwards_target_controls_to_compiler(output, monkeypatch):
+    from types import SimpleNamespace
+
+    from tests.test_prepared_scope_execution import _scope_plan
+    from web_listening.blocks import staged_workflow
+    from web_listening.blocks.monitor_scope_planner import render_yaml_text
+
+    scope_path = output.parent / "scope.yaml"
+    scope_path.write_text(render_yaml_text(_scope_plan(seed_url=URL)))
+
+    def callback(target, decision):
+        return None
+
+    captured = {}
+
+    class Gateway:
+        plan = SimpleNamespace(steps=())
+
+        def close(self):
+            captured["closed"] = True
+
+    def compile(scope, **kwargs):
+        captured.update(kwargs)
+        return Gateway()
+
+    monkeypatch.setattr(staged_workflow, "_compile_acquisition_gateway", compile)
+    monkeypatch.setattr(
+        article,
+        "_fetch_with_readers",
+        lambda *args, **kwargs: article._result(
+            "no_content", "no_usable_content", [], data={"requested_url": URL}
+        ),
+    )
+
+    result = article.fetch_article_content(
+        URL,
+        profile=make_profile(),
+        scope_path=scope_path,
+        output_dir=output,
+        before_target_request=callback,
+        timeout_seconds=2.0,
+    )
+
+    assert result.data_status == "no_content"
+    assert captured["before_target_request"] is callback
+    assert captured["timeout_seconds"] == 2.0
+    assert captured["closed"] is True
+
+
 def test_ac14_compiled_loopback_wrapper_parity(output):
     from fastapi.testclient import TestClient
     from typer.testing import CliRunner

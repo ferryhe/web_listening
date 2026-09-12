@@ -15,7 +15,10 @@ import httpx
 import pytest
 
 from web_listening.blocks.acquisition_execution_plan import AcquisitionExecutionPlan
-from web_listening.blocks.access_gateway import AccessGatewayOriginError
+from web_listening.blocks.access_gateway import (
+    AccessGatewayOriginError,
+    AccessGatewayTransportError,
+)
 from web_listening.blocks.governed_read import (
     MockClientReadGateway,
     build_runtime_read_gateway,
@@ -104,16 +107,19 @@ class _ReadGateway:
         self.final_url = final_url
         self.calls: list[tuple[str, int | None]] = []
         self.timeouts: list[float | None] = []
+        self.before_target_requests: list[object] = []
 
     def read(
         self,
         url: str,
         *,
         max_body_bytes: int | None = None,
+        before_target_request=None,
         timeout_seconds: float | None = None,
     ):
         self.calls.append((url, max_body_bytes))
         self.timeouts.append(timeout_seconds)
+        self.before_target_requests.append(before_target_request)
         body = self.html.encode("utf-8")
         return SimpleNamespace(
             body=body,
@@ -373,6 +379,35 @@ def test_prepared_adapter_passes_sealed_wait_until_to_session() -> None:
         ("render", "https://example.com/final", 5000, "networkidle"),
         "close",
     ]
+
+
+def test_prepared_browser_rejects_article_callback_replacement_before_send() -> None:
+    gateway = _ReadGateway(html="<html><body>source</body></html>")
+    session = _Session(rendered_html="<html><body>rendered</body></html>")
+
+    def callback(target, decision):
+        return None
+
+    plan = _plan()
+    adapter = prepare_browser_acquisition_adapter(
+        plan,
+        plan.steps[0],
+        gateway,
+        session_factory=lambda: session,
+        before_target_request=callback,
+    )
+    object.__setattr__(
+        adapter._authority,
+        "before_target_request",
+        lambda target, decision: None,
+    )
+
+    with pytest.raises(BrowserCaptureError) as captured:
+        adapter.capture("https://example.com/start", config={})
+
+    assert captured.value.code == "browser_authority_mismatch"
+    assert gateway.calls == []
+    assert session.events == []
 
 
 def test_prepared_adapter_returns_rendered_fetch_result_and_recomputable_digest() -> (
@@ -786,6 +821,233 @@ def test_mixed_timeouts_keep_shared_max_and_exact_executor_limits(
     ]
     assert read_gateway.timeouts == [30.0, browser_timeout]
     gateway.close()
+
+
+@pytest.mark.parametrize(
+    ("caller_timeout", "expected_timeouts"),
+    [(2.0, [2.0, 2.0]), (3_600.0, [30.0, 5.0])],
+)
+def test_article_controls_reach_each_compiled_gateway_step(
+    monkeypatch, caller_timeout: float, expected_timeouts: list[float]
+) -> None:
+    compiled = _mixed_gateway_plan(http_timeout=30.0, browser_timeout=5.0)
+    read_gateway = _ReadGateway(html="<html><body>source notice</body></html>")
+    session = _Session(rendered_html="<html><body>rendered notice</body></html>")
+    outer_plan = _patch_staged_compile_inputs(
+        monkeypatch,
+        compiled,
+        gateway_builder=lambda **kwargs: read_gateway,
+    )
+    original_prepare = prepare_browser_acquisition_adapter
+    monkeypatch.setattr(
+        "web_listening.executors.playwright_wrapper.prepare_browser_acquisition_adapter",
+        lambda plan, step, gateway, **kwargs: original_prepare(
+            plan,
+            step,
+            gateway,
+            session_factory=lambda: session,
+            **kwargs,
+        ),
+    )
+
+    def before_target_request(target, decision):
+        return None
+
+    gateway = staged_workflow._compile_acquisition_gateway(
+        outer_plan,
+        acquisition_profile_path="profile.yaml",
+        before_target_request=before_target_request,
+        timeout_seconds=caller_timeout,
+    )
+    gateway.registry.execute(_request().model_copy(update={"executor_id": "web_http"}))
+    gateway.registry.execute(_request())
+
+    assert read_gateway.timeouts == expected_timeouts
+    assert read_gateway.before_target_requests == [
+        before_target_request,
+        before_target_request,
+    ]
+    gateway.close()
+
+
+def test_article_http_guard_runs_before_initial_and_redirect_targets(
+    monkeypatch,
+) -> None:
+    seen: list[tuple[str, float | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(
+            (
+                str(request.url),
+                request.extensions.get("web_listening_timeout_seconds"),
+            )
+        )
+        if request.url.path == "/start":
+            return httpx.Response(
+                302, headers={"Location": "https://example.com/final"}
+            )
+        return httpx.Response(
+            200,
+            text="<html><body>final article body</body></html>",
+            headers={"Content-Type": "text/html"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    read_gateway = MockClientReadGateway(
+        client, user_agent="web-listening-bot test-agent", max_body_bytes=8192
+    )
+    mixed = _mixed_gateway_plan(http_timeout=30.0, browser_timeout=5.0)
+    compiled = replace(mixed, steps=(mixed.steps[0],))
+    outer_plan = _patch_staged_compile_inputs(
+        monkeypatch, compiled, gateway_builder=lambda **kwargs: read_gateway
+    )
+    targets = []
+
+    gateway = staged_workflow._compile_acquisition_gateway(
+        outer_plan,
+        acquisition_profile_path="profile.yaml",
+        before_target_request=lambda target, decision: targets.append(
+            (target, decision.decision_id)
+        ),
+        timeout_seconds=2.0,
+    )
+    result = gateway.registry.execute(
+        _request().model_copy(update={"executor_id": "web_http"})
+    )
+
+    assert result.state == "succeeded"
+    assert [target for target, _decision in targets] == [
+        "https://example.com/start",
+        "https://example.com/final",
+    ]
+    assert seen == [
+        ("https://example.com/start", 2.0),
+        ("https://example.com/final", 2.0),
+    ]
+    gateway.close()
+    client.close()
+
+
+def test_article_guard_failure_stops_before_corresponding_target_send(
+    monkeypatch,
+) -> None:
+    sends = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sends.append(str(request.url))
+        return httpx.Response(302, headers={"Location": "https://example.com/final"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    read_gateway = MockClientReadGateway(
+        client, user_agent="web-listening-bot test-agent", max_body_bytes=8192
+    )
+    mixed = _mixed_gateway_plan(http_timeout=30.0, browser_timeout=5.0)
+    compiled = replace(mixed, steps=(mixed.steps[0],))
+    outer_plan = _patch_staged_compile_inputs(
+        monkeypatch, compiled, gateway_builder=lambda **kwargs: read_gateway
+    )
+    targets = []
+
+    def stop(target, decision):
+        targets.append((target, decision.decision_id))
+        if target.endswith("/final"):
+            raise RuntimeError("caller budget stopped")
+
+    gateway = staged_workflow._compile_acquisition_gateway(
+        outer_plan,
+        acquisition_profile_path="profile.yaml",
+        before_target_request=stop,
+        timeout_seconds=2.0,
+    )
+    with pytest.raises(AccessGatewayTransportError, match="caller budget stopped"):
+        gateway.registry.execute(
+            _request().model_copy(update={"executor_id": "web_http"})
+        )
+
+    assert [target for target, _decision in targets] == [
+        "https://example.com/start",
+        "https://example.com/final",
+    ]
+    assert sends == ["https://example.com/start"]
+    gateway.close()
+    client.close()
+
+
+def test_article_guard_reaches_browser_gateway_path(monkeypatch) -> None:
+    sends = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sends.append(str(request.url))
+        return httpx.Response(
+            200,
+            text="<html><body>browser source</body></html>",
+            headers={"Content-Type": "text/html"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    read_gateway = MockClientReadGateway(
+        client, user_agent="web-listening-bot test-agent", max_body_bytes=4096
+    )
+    compiled = _plan()
+    outer_plan = _patch_staged_compile_inputs(
+        monkeypatch, compiled, gateway_builder=lambda **kwargs: read_gateway
+    )
+    session = _Session(rendered_html="<html><body>browser result</body></html>")
+    original_prepare = prepare_browser_acquisition_adapter
+    monkeypatch.setattr(
+        "web_listening.executors.playwright_wrapper.prepare_browser_acquisition_adapter",
+        lambda plan, step, gateway, **kwargs: original_prepare(
+            plan,
+            step,
+            gateway,
+            session_factory=lambda: session,
+            **kwargs,
+        ),
+    )
+    targets = []
+
+    gateway = staged_workflow._compile_acquisition_gateway(
+        outer_plan,
+        acquisition_profile_path="profile.yaml",
+        before_target_request=lambda target, decision: targets.append(
+            (target, decision.decision_id)
+        ),
+        timeout_seconds=2.0,
+    )
+    result = gateway.registry.execute(_request())
+
+    assert result.state == "succeeded"
+    assert [target for target, _decision in targets] == ["https://example.com/start"]
+    assert sends == ["https://example.com/start"]
+    assert session.events == [
+        "open",
+        ("render", "https://example.com/start", 2000, "domcontentloaded"),
+        "close",
+    ]
+    gateway.close()
+    client.close()
+
+
+@pytest.mark.parametrize("timeout_seconds", [0, -1, float("nan"), float("inf"), True])
+def test_article_compiler_rejects_invalid_timeout_before_gateway_build(
+    monkeypatch, timeout_seconds
+) -> None:
+    compiled = _mixed_gateway_plan(http_timeout=30.0, browser_timeout=5.0)
+    builds = []
+    outer_plan = _patch_staged_compile_inputs(
+        monkeypatch,
+        compiled,
+        gateway_builder=lambda **kwargs: builds.append(kwargs),
+    )
+
+    with pytest.raises(ValueError, match="positive and finite"):
+        staged_workflow._compile_acquisition_gateway(
+            outer_plan,
+            acquisition_profile_path="profile.yaml",
+            timeout_seconds=timeout_seconds,
+        )
+
+    assert builds == []
 
 
 def test_gateway_limits_preserve_web_http_only_pair() -> None:

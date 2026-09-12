@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -92,6 +93,8 @@ class _PreparedBrowserAuthority:
     config_json: str
     gateway_type: type
     gateway_read: object
+    before_target_request: Callable[[str, Any], Callable[[], None] | None] | None
+    before_target_request_seal: object
     timeout_seconds: float
     timeout_milliseconds: int
     max_body_bytes: int
@@ -121,6 +124,11 @@ class _PreparedBrowserAuthority:
             or type(self.read_gateway) is not self.gateway_type
             or getattr(self.gateway_type, "read", None) is not self.gateway_read
             or "read" in getattr(self.read_gateway, "__dict__", {})
+            or self.before_target_request is not self.before_target_request_seal
+            or (
+                self.before_target_request is not None
+                and not callable(self.before_target_request)
+            )
             or _canonical_json(normalized_config) != self.config_json
             or normalized_config["wait_until"] != self.wait_until
             or not callable(self.session_factory)
@@ -380,11 +388,13 @@ class BrowserAcquisitionAdapter:
         try:
             session = authority.session_factory()
             session.open()
-            response = authority.read_gateway.read(
-                url,
-                max_body_bytes=authority.max_body_bytes,
-                timeout_seconds=authority.timeout_seconds,
-            )
+            read_options = {
+                "max_body_bytes": authority.max_body_bytes,
+                "timeout_seconds": authority.timeout_seconds,
+            }
+            if authority.before_target_request is not None:
+                read_options["before_target_request"] = authority.before_target_request
+            response = authority.read_gateway.read(url, **read_options)
             rendered_html = session.render(
                 response,
                 timeout_milliseconds=authority.timeout_milliseconds,
@@ -483,6 +493,10 @@ def prepare_browser_acquisition_adapter(
     read_gateway: Any,
     *,
     session_factory: Callable[[], Any] | None = None,
+    before_target_request: (
+        Callable[[str, Any], Callable[[], None] | None] | None
+    ) = None,
+    timeout_seconds: float | None = None,
 ) -> BrowserAcquisitionAdapter:
     """Bind one browser adapter to one immutable compiled plan step and gateway."""
     from web_listening.blocks.acquisition_execution_plan import AcquisitionExecutionPlan
@@ -504,6 +518,17 @@ def prepare_browser_acquisition_adapter(
         or timeout <= 0
     ):
         raise BrowserCaptureError("browser_authority_mismatch")
+    if before_target_request is not None and not callable(before_target_request):
+        raise TypeError("before_target_request must be callable")
+    if timeout_seconds is not None:
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be positive and finite")
+        timeout = min(timeout, float(timeout_seconds))
     normalized_config = _normalize_browser_config(step.get("config", {}))
     if type(read_gateway) is GovernedReadGateway:
         gateway = read_gateway.gateway
@@ -520,6 +545,8 @@ def prepare_browser_acquisition_adapter(
         config_json=_canonical_json(normalized_config),
         gateway_type=type(read_gateway),
         gateway_read=getattr(type(read_gateway), "read", None),
+        before_target_request=before_target_request,
+        before_target_request_seal=before_target_request,
         timeout_seconds=timeout,
         timeout_milliseconds=max(1, int(timeout * 1000)),
         max_body_bytes=max_body_bytes,

@@ -575,12 +575,16 @@ def fetch_article_content(
     output_dir=None,
     scope_path=None,
     prior_attempts=None,
+    before_target_request=None,
+    timeout_seconds=None,
 ) -> ToolResult:
     """Read one reviewed scope seed using article_content.v1.
 
     ``scope_path`` supplies the existing MonitorScopePlan authority; a profile
     alone cannot replace its reviewed Site Skill bindings. ``prior_attempts``
     accepts verified result data retained by the caller during this invocation.
+    ``before_target_request`` runs at the governed gateway boundary before every
+    target send, while ``timeout_seconds`` may only narrow each compiled step.
     """
     from web_listening.blocks import staged_workflow
     from web_listening.blocks.monitor_scope_planner import load_monitor_scope_plan
@@ -680,7 +684,10 @@ def fetch_article_content(
         }
     )
     gateway = staged_workflow._compile_acquisition_gateway(
-        scope, acquisition_profile=compiled_profile
+        scope,
+        acquisition_profile=compiled_profile,
+        before_target_request=before_target_request,
+        timeout_seconds=timeout_seconds,
     )
     try:
         result = _fetch_with_readers(

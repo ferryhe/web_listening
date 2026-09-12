@@ -18,6 +18,7 @@ from web_listening.blocks.crawler import Crawler, resolve_request_headers
 from web_listening.blocks.acquisition_gateway import (
     AcquisitionGateway,
     AcquisitionOutcome,
+    LegacyCrawlerGateway,
     legacy_document_runtime_attempt,
 )
 from web_listening.blocks.diff import (
@@ -1078,7 +1079,15 @@ class TreeCrawler:
 
         try:
             if download_files and self.document_processor is not None:
-                if self.acquisition_gateway is not None:
+                if isinstance(self.acquisition_gateway, LegacyCrawlerGateway):
+                    document = self.document_processor.process(
+                        file_url,
+                        site_id=scope.site_id,
+                        institution=institution,
+                        page_url=page_url,
+                        force_download=force_download,
+                    )
+                elif self.acquisition_gateway is not None:
                     document = self._document_from_capture(
                         capture_result,
                         site_id=scope.site_id,

@@ -646,6 +646,34 @@ def test_each_redirect_target_revalidates_exact_origin_and_robots() -> None:
     assert result.decision.policy.canonical_origin == OTHER_ORIGIN
 
 
+def test_same_origin_redirect_paces_from_late_actual_request_start() -> None:
+    clock = ManualClock()
+    transport = ScriptedTransport(
+        {
+            "https://example.com/robots.txt": [response(404)],
+            "https://example.com/start": [response(302, Location="/final")],
+            "https://example.com/final": [response(200, b"done")],
+        }
+    )
+
+    result = gateway(
+        transport,
+        clock=clock,
+        pacing_interval=timedelta(seconds=1),
+    ).request("https://example.com/start", consume=read_body)
+
+    redirect = result.decision.redirect_hops[0]
+    current = result.decision.origin_reservation
+    assert current is not None
+    assert current.not_before >= redirect.request_started_at + timedelta(seconds=1)
+    assert result.value == b"done"
+    assert transport.requests == [
+        "https://example.com/robots.txt",
+        "https://example.com/start",
+        "https://example.com/final",
+    ]
+
+
 def test_context_consumer_receives_canonical_final_redirect_url() -> None:
     transport = ScriptedTransport(
         {

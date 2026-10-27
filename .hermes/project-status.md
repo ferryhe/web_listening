@@ -144,3 +144,10 @@
 - Snapshot build manifest records source SHA, Python, builder pip `25.0.1`, setuptools `80.9.0`, wheel `0.45.1`, and `dev`/`mcp` extras. Both matrix snapshots and comparison were regenerated.
 - Added focused cases for valid, missing and mismatched wheel provenance plus METADATA/import/OpenAPI version disagreement. Refreshed API/version/MCP/CLI/harness/catalog focused suite passed `180/180` in baseline, candidate, and full-baseline-lock rollback environment. The earlier full-suite results are unchanged and were not rerun for this harness-only follow-up.
 - Updated README and the worker report. Work remains uncommitted, unstaged and unpublished; no production dependency/API/CI changes.
+
+## Issue #83 post-merge image digest correction (2026-10-27)
+
+- Corrected the README Docker image digest from the 65-character typo `f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f8` to the verified 64-character `f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f`. The specified external worker-report line 17 already contained the correct 64-character digest and was left intact; an external correction note records that verification.
+- Proof recorded for all three task containers: Docker inspect `Config.Image` and resolved `Image` both use that same digest; `docker image inspect` identifies tag `python:3.12.14-slim` and RepoDigest `python@sha256:` followed by the same 64-character value.
+- No snapshots, schema, runtime, project dependencies, or production code changed. The original audit JSON retains the originally observed typo as historical evidence.
+- Post-merge correction worktree: `codex/issue-83-image-digest-correction`, based at `4178acd3b82d8c93cbd0a276b7f35c868e039c82`. No commit or push was performed.

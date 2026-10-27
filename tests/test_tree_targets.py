@@ -1,8 +1,12 @@
+from pathlib import Path
+
 from web_listening.tree_targets import load_dev_tree_targets, load_smoke_tree_targets
+
+CONFIG = Path(__file__).parents[1] / "config"
 
 
 def test_load_dev_tree_targets_contains_required_dev_sites():
-    targets = load_dev_tree_targets()
+    targets = load_dev_tree_targets(CONFIG / "dev_test_sites.json")
     site_keys = {item.site_key for item in targets}
 
     assert {"soa", "cas", "iaa"}.issubset(site_keys)
@@ -14,7 +18,7 @@ def test_load_dev_tree_targets_contains_required_dev_sites():
 
 
 def test_load_smoke_tree_targets_contains_large_catalog():
-    targets = load_smoke_tree_targets()
+    targets = load_smoke_tree_targets(CONFIG / "smoke_site_catalog.json")
 
     assert len(targets) >= 30
     assert all(item.catalog == "smoke" for item in targets)

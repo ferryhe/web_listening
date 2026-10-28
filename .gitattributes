@@ -1,1 +1,7 @@
 /contracts/acquisition-manifest.v1/*.json text eol=lf
+/docs/testing/fixtures/playwright-1.64.1-qualification.win32-x86_64.json text eol=lf
+/docs/testing/fixtures/playwright-1.64.1-baseline-windows-amd64-py3.12.14.lock -text whitespace=cr-at-eol
+/docs/testing/fixtures/playwright-1.64.1-candidate-linux-amd64-py3.12.14.lock -text whitespace=cr-at-eol
+/docs/testing/fixtures/playwright-1.64.1-candidate-windows-amd64-py3.12.14.lock -text whitespace=cr-at-eol
+/docs/testing/fixtures/playwright-1.64.1-python-conda-win-64.json -text whitespace=cr-at-eol
+/docs/testing/fixtures/playwright-1.64.1-candidate.patch text eol=lf whitespace=-blank-at-eol

@@ -2,6 +2,75 @@
 
 `web_listening` 3.2 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
 
+## Version and release status
+
+The project metadata on GitHub `main` at commit `3d783882d5f7d51fe452d563cab55bafd7e4f0ad` declares `3.2.0`. This is the current development/source version; it is not a claim that `3.2.0` is a formal release or has been deployed to every operator environment. The latest GitHub formal release observed on 2026-10-28 is [`v1.0.0`](https://github.com/ferryhe/web_listening/releases/tag/v1.0.0), published 2026-07-20, and its tag points to commit `570236c2aeeb239c827729115940f230c7ff9a44`. A release tag, source `pyproject.toml`, built wheel, installed distribution metadata, imported package, FastAPI app, and OpenAPI document are separate version sources; verify the installed sources together in one process before diagnosing a deployment.
+
+The 2026-10-28 runtime qualification baseline is Python 3.12.14 with FastAPI 0.139.2; MCP environments use the accepted baseline MCP 1.28.1, while the base environment has no MCP package. The version-provenance check builds and installs the project wheel from the recorded source SHA and checks its exact wheel digest and PEP 610 installed-archive digest. This describes the isolated qualification environment only; it does not assert a production installation or change a release. At `2026-10-28T06:16:53Z`, the exact PyPI JSON endpoint `https://pypi.org/pypi/web-listening/json` returned HTTP 404. That endpoint was not found at that time; this observation does not establish whether the project was published earlier or through another channel.
+
+The repository currently has a CI workflow and no automated release-publishing workflow. Passing CI or building a wheel does not publish a release.
+
+The historical Linux cron host could not be reached for this check and remains **unverified**. To recheck it from that host without changing its environment, run:
+
+```bash
+repo=/path/to/web_listening
+cd /tmp
+env -u PYTHONPATH "$repo/.venv/bin/python" - <<'PY'
+import importlib.metadata
+import json
+import pathlib
+import sys
+
+import web_listening
+from web_listening.api.app import app
+
+try:
+    distribution = importlib.metadata.distribution("web-listening")
+except importlib.metadata.PackageNotFoundError:
+    distribution = None
+print(json.dumps({
+    "executable": sys.executable,
+    "import_path": str(pathlib.Path(web_listening.__file__).resolve()),
+    "distribution_version": distribution.version if distribution else None,
+    "distribution_path": str(pathlib.Path(distribution.locate_file("web_listening")).resolve()) if distribution else None,
+    "package_version": web_listening.__version__,
+    "app_version": app.version,
+    "openapi_version": app.openapi()["info"]["version"],
+}, indent=2))
+PY
+env -u PYTHONPATH "$repo/.venv/bin/python" -m pip show web-listening
+env -u PYTHONPATH "$repo/.venv/bin/web-listening" --help
+```
+
+Run the probe from `/tmp` with the deployed virtual environment's absolute executable and without `PYTHONPATH`, so the checkout cannot shadow the installed package. This command only inspects the environment; it does not install, uninstall, restart, or modify cron. If versions differ or the import path points at an unexpected checkout, first preserve the current environment details and identify the intended wheel. Repair only that environment using the authorized wheel and its established dependency lock:
+
+```bash
+repo=/path/to/web_listening
+cd /tmp
+env -u PYTHONPATH "$repo/.venv/bin/python" -m pip install --no-deps --force-reinstall /path/to/web_listening-3.2.0-py3-none-any.whl
+```
+
+For rollback, use the previously recorded known-good wheel with this self-contained command, substituting its exact path, and repeat the checks:
+
+```bash
+repo=/path/to/web_listening
+cd /tmp
+env -u PYTHONPATH "$repo/.venv/bin/python" -m pip install --no-deps --force-reinstall /path/to/known-good-web_listening.whl
+```
+
+Do not use an unpinned dependency upgrade or assume the PyPI endpoint above can supply an artifact.
+
+### Future formal release checklist
+
+This version check does not approve a release. Before a separately authorized release:
+
+1. Select and record the exact target commit SHA and intended release version; confirm the version in project metadata and explain the SemVer decision.
+2. Review schema/data migrations and compatibility impact; prepare release notes that describe changes and rollback limits.
+3. Obtain an independent code/document review and require applicable CI for the exact target commit to pass. Evaluate and resolve accepted, in-scope non-Copilot feedback; leave zero unresolved review threads and satisfy repository protections before merge. Copilot review is disabled by maintainer preference; do not request or wait for it, and do not claim it ran.
+4. Build the wheel and source archive from that SHA, record artifact SHA-256 digests, and verify installed metadata, package, app, OpenAPI, and CLI from the built artifact.
+5. Confirm the intended publication channels and release authorization before publishing or creating a tag. Record the published artifact locations and digests.
+6. Record the previous known-good artifact and exact rollback install/check commands. Treat rollback of database migrations or persisted data as a separate reviewed plan.
+
 The supported 1.0 scope is complete and stable. Future changes follow the semantic-version policy below. The canonical product flow is:
 
 ```text

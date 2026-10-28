@@ -1,0 +1,246 @@
+{
+  "baseline_rollback": {
+    "combination": "dev",
+    "empty_environment": "/workspace/envs/rebuild-baseline-dev",
+    "fastapi": "0.139.2",
+    "lock_file": "docs/testing/fixtures/mcp-1.28.1-dev-linux-amd64-py3.12.14.lock",
+    "mcp": "1.28.1",
+    "pip_check_returncode": 0,
+    "stdio_api_cli_capture_returncode": 0
+  },
+  "candidate_full_suite": {
+    "decision_reason": "The final candidate full suite following the cancellation evidence update has one same-inode registry failure. The exact node also fails under the baseline lock in the same source/pytest 9.2/init/ext4 runner. It is shared intermittent behavior, but the candidate full-suite gate is not green; defer until deterministic and clean.",
+    "failures": [
+      {
+        "classification": "runner PID1 did not reap the orphaned descendant; this failure disappears under docker --init",
+        "node": "tests/test_browseract_executor.py::test_inspection_kills_pipe_holding_descendant_after_leader_exit",
+        "result": "failed without docker --init"
+      },
+      {
+        "classification": "runner PID1 did not reap the orphaned descendant; this failure disappears under docker --init",
+        "node": "tests/test_executor_gateway.py::test_unenrolled_supervisor_forged_cleanup_is_rejected_and_child_reaped",
+        "result": "failed without docker --init"
+      },
+      {
+        "classification": "The exact isolated node failed under both baseline and candidate locks, and the final post-capture candidate full suite also failed it.",
+        "node": "tests/test_site_skill_registry.py::test_cache_source_same_inode_rewrite_after_package_hash_fails_closed",
+        "result": "Isolated baseline and candidate controls both failed; the final candidate full suite exited 1 with this node as its sole failure."
+      }
+    ],
+    "final_status": "defer",
+    "first_run": {
+      "duration_seconds": 136.94,
+      "failed": 3,
+      "passed": 3092,
+      "returncode": 1,
+      "skipped": 7,
+      "summary": "3 failed, 3092 passed, 7 skipped in 136.94s"
+    },
+    "init_enabled_run": {
+      "command": "cd /workspace/repo && PYTHONPATH=/tmp/issue84-pytest-support /workspace/envs/seed-candidate-dev/bin/python -P -m pytest tests -q --import-mode=importlib --basetemp=/workspace/pytest-tmp-f1-full",
+      "duration_seconds": 132.86,
+      "failed": 1,
+      "failed_node": "tests/test_site_skill_registry.py::test_cache_source_same_inode_rewrite_after_package_hash_fails_closed",
+      "fastapi_version": "0.139.2",
+      "log": "candidate-dev-full-suite-f1.log",
+      "log_sha256": "a692f2681572b395ea329a277da46a30a4498b6fc99afd7c3f90cca65d0361ff",
+      "manifest": "f1-full-suite-result-manifest.json",
+      "manifest_sha256": "bfa29e0220bd1c5f63d56e428a30187cdf38c2b3e56584f51fe91ef6be120db8",
+      "mcp_version": "1.30.0",
+      "passed": 3096,
+      "preflight_manifest": "f1-full-suite-preflight.json",
+      "preflight_manifest_sha256": "523e7cf5fd023fbcc8e11cfb4a61310e8d271e1617c006fe1c4cff17cb8dad83",
+      "project_import_path": "/workspace/envs/seed-candidate-dev/lib/python3.12/site-packages/web_listening/__init__.py",
+      "project_wheel_sha256": "cd3bf730e3dbf0db5c565cf384e50012404d5805c87ccc192be8e15c3de6421e",
+      "pytest_version": "9.2.0",
+      "python_version": "3.12.14",
+      "returncode": 1,
+      "runner": {
+        "container": "issue84-cancel-f1-20261028-runner",
+        "hostconfig_init": true,
+        "id": "1bec665bfae412ba3d74a19eac21b9d1c0d1bca8b1581044964daf13c665e20b",
+        "volume": "issue84-cancel-f1-20261028-ext4",
+        "volume_filesystem": "ext4"
+      },
+      "skipped": 7,
+      "source_commit": "c119453726be53c0bfd30ca9f98e19567069fde8",
+      "summary": "1 failed, 3096 passed, 7 skipped in 132.86s"
+    },
+    "invalid_init_attempt": {
+      "accepted_as_final": false,
+      "failed": 1,
+      "log": "candidate-dev-full-suite-init.log",
+      "passed": 3095,
+      "pythonpath": "/workspace/repo:/tmp/pytest-support",
+      "reason": "Discarded: repository root on PYTHONPATH exposed source checkout metadata ahead of the installed wheel.",
+      "returncode": 1,
+      "skipped": 7
+    },
+    "original_runner": {
+      "container": "issue84-qualification-runner",
+      "hostconfig_init": null,
+      "hostconfig_init_present": false,
+      "id": "6d47c90b3465313667197a77bcbaa7be4ab1e49173e9e6e60e2db55e03b1c01f",
+      "volume": "issue84-qualification-ext4",
+      "volume_filesystem": "ext4"
+    },
+    "repeat_with_skip_reasons": {
+      "duration_seconds": 133.07,
+      "failed": 3,
+      "passed": 3092,
+      "returncode": 1,
+      "skipped": 7,
+      "summary": "3 failed, 3092 passed, 7 skipped in 133.07s"
+    },
+    "same_inode_node_control": {
+      "baseline": {
+        "command": "docker exec issue84-cancel-f1-20261028-runner sh -lc \"cd /workspace/repo && PYTHONPATH=/tmp/issue84-pytest-support /workspace/envs/seed-baseline-dev/bin/python -P -m pytest tests/test_site_skill_registry.py::test_cache_source_same_inode_rewrite_after_package_hash_fails_closed -q --import-mode=importlib --basetemp=/workspace/pytest-tmp-f1-registry-baseline\"",
+        "duration_seconds": 0.21,
+        "failed": 1,
+        "log": "registry-node-baseline-f1.log",
+        "log_sha256": "6058538c9a0e5c090b2177f829652d3312db69ac03498e274c6fd597b5f1e059",
+        "mcp_version": "1.28.1",
+        "passed": 0,
+        "returncode": 1,
+        "summary": "1 failed in 0.21s"
+      },
+      "candidate": {
+        "command": "docker exec issue84-cancel-f1-20261028-runner sh -lc \"cd /workspace/repo && PYTHONPATH=/tmp/issue84-pytest-support /workspace/envs/seed-candidate-dev/bin/python -P -m pytest tests/test_site_skill_registry.py::test_cache_source_same_inode_rewrite_after_package_hash_fails_closed -q --import-mode=importlib --basetemp=/workspace/pytest-tmp-f1-registry-candidate\"",
+        "duration_seconds": 0.22,
+        "failed": 1,
+        "log": "registry-node-candidate-f1.log",
+        "log_sha256": "6c5beec3b1cdfe95afa4579ab373d8984fd376adf23280e7b9731b2381b515f0",
+        "mcp_version": "1.30.0",
+        "passed": 0,
+        "returncode": 1,
+        "summary": "1 failed in 0.22s"
+      },
+      "command_template": "cd /workspace/repo && PYTHONPATH=/tmp/issue84-pytest-support /workspace/envs/{matrix}-dev/bin/python -P -m pytest tests/test_site_skill_registry.py::test_cache_source_same_inode_rewrite_after_package_hash_fails_closed -q --import-mode=importlib --basetemp=/workspace/pytest-tmp-f1-registry-{matrix}",
+      "fastapi_version": "0.139.2",
+      "node": "tests/test_site_skill_registry.py::test_cache_source_same_inode_rewrite_after_package_hash_fails_closed",
+      "pytest_version": "9.2.0",
+      "python_version": "3.12.14",
+      "runner": {
+        "container": "issue84-cancel-f1-20261028-runner",
+        "docker_init": true,
+        "filesystem": "ext4",
+        "id": "1bec665bfae412ba3d74a19eac21b9d1c0d1bca8b1581044964daf13c665e20b",
+        "volume": "issue84-cancel-f1-20261028-ext4"
+      },
+      "same_failure_in_both": true,
+      "source_commit": "c119453726be53c0bfd30ca9f98e19567069fde8"
+    },
+    "skip_reason_audit": {
+      "command": "docker exec issue84-cancel-f1-20261028-runner sh -lc \"cd /workspace/repo && PYTHONPATH=/tmp/issue84-pytest-support /workspace/envs/seed-candidate-dev/bin/python -P -m pytest tests/live/test_authorized_access_gateway_canary.py::test_authorized_access_gateway_canary tests/live/test_browseract_live.py::test_browseract_live_handshake_only tests/live/test_catalog_site_skills_live.py::test_selected_catalog_canaries_report_configured_classification tests/test_access_decision_cli.py::test_validate_access_contract_json_unreadable_failure_uses_exact_envelope tests/test_cloakbrowser_0_5_8_qualification.py::test_real_wrapper_license_routing_probe_uses_no_key_value tests/test_executor_gateway.py::test_writable_cgroup_escalation_reaps_ignore_term_helper_and_target tests/test_governed_browser_reader.py::test_qualified_playwright_renders_governed_offline_fixture -q -rs --import-mode=importlib --basetemp=/workspace/pytest-tmp-f1-skip-audit\"",
+      "log": "candidate-dev-skip-reason-audit-f1.log",
+      "log_sha256": "6061aeb14dc2694bc6a3e51e507d9d573e92dc3274f99ea3c3619920939d705e",
+      "node_ids": [
+        "tests/live/test_authorized_access_gateway_canary.py::test_authorized_access_gateway_canary",
+        "tests/live/test_browseract_live.py::test_browseract_live_handshake_only",
+        "tests/live/test_catalog_site_skills_live.py::test_selected_catalog_canaries_report_configured_classification",
+        "tests/test_access_decision_cli.py::test_validate_access_contract_json_unreadable_failure_uses_exact_envelope",
+        "tests/test_cloakbrowser_0_5_8_qualification.py::test_real_wrapper_license_routing_probe_uses_no_key_value",
+        "tests/test_executor_gateway.py::test_writable_cgroup_escalation_reaps_ignore_term_helper_and_target",
+        "tests/test_governed_browser_reader.py::test_qualified_playwright_renders_governed_offline_fixture"
+      ],
+      "returncode": 0,
+      "skipped": 7
+    },
+    "skip_reasons": [
+      {
+        "node": "tests/live/test_authorized_access_gateway_canary.py:16",
+        "reason": "authorized live canary is offline by default"
+      },
+      {
+        "node": "tests/live/test_browseract_live.py:11",
+        "reason": "opt-in BrowserAct runtime smoke"
+      },
+      {
+        "node": "tests/live/test_catalog_site_skills_live.py:112",
+        "reason": "catalog canary is opt-in"
+      },
+      {
+        "node": "tests/test_access_decision_cli.py:238",
+        "reason": "portable unreadable-file check requires non-root POSIX permissions"
+      },
+      {
+        "node": "tests/test_cloakbrowser_0_5_8_qualification.py:344",
+        "reason": "real wrapper routing probe requires isolated cloakbrowser==0.5.8"
+      },
+      {
+        "node": "tests/test_executor_gateway.py:700",
+        "reason": "current delegated cgroup is not writable"
+      },
+      {
+        "node": "tests/test_governed_browser_reader.py:1468",
+        "reason": "Playwright 1.62.0 is not installed on this host"
+      }
+    ],
+    "superseded_pre_f1_run": {
+      "accepted_as_final": false,
+      "command": "cd /workspace/repo && PYTHONPATH=/tmp/issue84-pytest-support /workspace/envs/seed-candidate-dev/bin/python -P -m pytest tests -q --import-mode=importlib --basetemp=/workspace/pytest-tmp-full-init-final",
+      "duration_seconds": 130.15,
+      "failed": 0,
+      "fastapi_version": "0.139.2",
+      "log": "candidate-dev-full-suite-init-final.log",
+      "log_sha256": "fa74d8e13cb505540056bc439dc78d83099d4c95a1bcc6233898bbd9cace6dbf",
+      "manifest": "candidate-dev-full-suite-init-manifest.json",
+      "manifest_sha256": "956079e6b52a2275c1d6a9bd7b1062227727be3a3cbcace9782ef707ffbd8b31",
+      "mcp_version": "1.30.0",
+      "passed": 3096,
+      "project_import_path": "/workspace/envs/seed-candidate-dev/lib/python3.12/site-packages/web_listening/__init__.py",
+      "project_wheel_sha256": "cd3bf730e3dbf0db5c565cf384e50012404d5805c87ccc192be8e15c3de6421e",
+      "pytest_version": "9.2.0",
+      "python_version": "3.12.14",
+      "returncode": 0,
+      "runner": {
+        "container": "issue84-qualification-runner-init",
+        "hostconfig_init": true,
+        "id": "7ea6e3a1876f457d6df4deaee029c6ce623c16aad586029255435e3a36acebcb",
+        "volume": "issue84-qualification-ext4",
+        "volume_filesystem": "ext4"
+      },
+      "skipped": 7,
+      "source_commit": "c119453726be53c0bfd30ca9f98e19567069fde8",
+      "status": "historical_pre_f1",
+      "summary": "3096 passed, 7 skipped in 130.15s",
+      "superseded_by": "candidate-dev-full-suite-f1.log"
+    },
+    "target_import_path_after": "/workspace/envs/seed-candidate-dev/lib/python3.12/site-packages/web_listening/__init__.py",
+    "target_import_path_before": "/workspace/envs/seed-candidate-dev/lib/python3.12/site-packages/web_listening/__init__.py"
+  },
+  "decision": "defer",
+  "decision_reason": "The final candidate full suite following the cancellation evidence update has one same-inode registry failure. The exact node also fails under the baseline lock in the same source/pytest 9.2/init/ext4 runner. It is shared intermittent behavior, but the candidate full-suite gate is not green; defer until deterministic and clean.",
+  "focused_suite": {
+    "command": "cd /workspace/repo && PYTHONPATH=/tmp/issue84-pytest-support /workspace/envs/seed-candidate-dev/bin/python -P -m pytest tests/test_mcp_server.py tests/test_release_version.py tests/test_api.py tests/test_cli.py tests/test_acquisition_contract_cli.py tests/test_acquisition_manifest_contract.py tests/test_manifest_contract_fixture.py tests/test_fastapi_qualification.py tests/test_mcp_qualification.py -q --import-mode=importlib --basetemp=/workspace/pytest-tmp-f1-focused-final",
+    "duration_seconds": 8.03,
+    "log": "candidate-dev-focused-f1-final.log",
+    "log_sha256": "03e3b325ef7f4e3bc4ca0b37feaa2d75fc57c074fcacc68daa8062d456ab08f8",
+    "passed": 282,
+    "returncode": 0
+  },
+  "pid1_control": {
+    "baseline_nodes": {
+      "failed": 1,
+      "failure": "tests/test_site_skill_registry.py::test_cache_source_same_inode_rewrite_after_package_hash_fails_closed",
+      "passed": 2,
+      "returncode": 1
+    },
+    "candidate_nodes": {
+      "failed": 1,
+      "failure": "tests/test_site_skill_registry.py::test_cache_source_same_inode_rewrite_after_package_hash_fails_closed",
+      "passed": 2,
+      "returncode": 1
+    },
+    "runner": {
+      "container": "issue84-qualification-runner-init",
+      "hostconfig_init": true,
+      "id": "7ea6e3a1876f457d6df4deaee029c6ce623c16aad586029255435e3a36acebcb",
+      "volume": "issue84-qualification-ext4",
+      "volume_filesystem": "ext4"
+    }
+  },
+  "project_wheel_sha256": "cd3bf730e3dbf0db5c565cf384e50012404d5805c87ccc192be8e15c3de6421e",
+  "schema_version": "mcp-qualification-full-suite.v1",
+  "source_commit": "c119453726be53c0bfd30ca9f98e19567069fde8"
+}

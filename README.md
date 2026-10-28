@@ -268,14 +268,13 @@ Optional installations are additive:
 python -m pip install -e ".[browser]"
 python -m playwright install chromium
 
-# Explicitly authorized CloakBrowser probing
-python -m pip install -e ".[cloakbrowser]"
-
 # MCP stdio server without the development extra
 python -m pip install -e ".[mcp]"
 ```
 
 There is no `core` extra: `python -m pip install .` installs the base package. BrowserAct is not a project dependency and must not be installed in the project environment; see [Version and Runtime Compatibility](#version-and-runtime-compatibility).
+
+CloakBrowser is disabled: no current reader or probe workflow uses the optional `cloakbrowser` extra, and normal project use does not need it. Do not install that extra from general setup guidance. Its unqualified declaration is retained for future, separately authorized qualification work; see [CloakBrowser 0.6.4 dependency and restart assessment](#cloakbrowser-064-dependency-and-restart-assessment).
 
 ## Configuration
 
@@ -738,6 +737,57 @@ if ($hadCloakLicense) {
 ```
 
 Never use the production CloakBrowser cache for qualification or rollback. The fixture supports exactly one conclusion, `defer`, with SHA-256 `a5b8256b3f797395048f0fd107f60c73b489983dbc9bbcae95ea6c4857ccdd72`.
+
+### CloakBrowser 0.6.4 dependency and restart assessment
+
+**Recommendation: keep the optional `cloakbrowser` extra declaration at `cloakbrowser>=0.3.26` as unqualified metadata for a future, separately authorized task; it enables no current CloakBrowser target-read or probe workflow.** The disabled reader does not require or use the extra, and normal project use does not require it. Installing the Python extra does not itself download or run the browser. The [upstream wrapper README](https://github.com/CloakHQ/CloakBrowser/blob/main/README.md) says the binary may be downloaded on first launch, so any future probe/launch requires a separate authorization and applicable license. The production CloakBrowser reader remains disabled and rejects before importing the optional package. The independent `browser` extra pins `playwright==1.62.0`; CloakBrowser 0.6.4 declares `playwright>=1.53`, which does not qualify any Playwright version for this project. Keeping the declaration leaves current metadata unchanged; removing it would remove only the named install option, since no current target-read or probe workflow uses it. Pinning it would imply a qualification decision not supported here. The broad lower bound still permits resolver drift; this documentation change does not prevent it. The prior 0.5.8 qualification remains **defer** as recorded above.
+
+The following public observations were recorded on **2026-10-28 09:40 UTC**. They do not identify a project-qualified package/browser pair.
+
+| Evidence | Observation | Limits |
+|---|---|---|
+| Wrapper source/package | [PyPI 0.6.4 JSON](https://pypi.org/pypi/cloakbrowser/0.6.4/json) identifies CloakHQ, upload time `2026-10-23T20:06:59Z`, wrapper MIT, Python `>=3.9`, and declared dependencies `cryptography>=41.0`, `httpx>=0.24`, `playwright>=1.53`. | Wheel `cloakbrowser-0.6.4-py3-none-any.whl`, SHA-256 `d6d0f988275f20acb1bdc1efa2d4779f46cbcf591269046a28a9b25769cb004f`; PyPI reports `has_sig=false`. Source archive `cloakbrowser-0.6.4.tar.gz`, SHA-256 `88773949a1df8a51dd2eb4da79105cd8c76279646fc26233ed820133bdbbb29f`. These identify wrapper distributions, not a browser executable. |
+| Resolver Stable, Windows host | At 09:40 UTC, the no-credential resolver returned `150.0.7871.114.3`. | The response did not identify platform, executable path/hash, archive, wrapper pairing, signature, or license. Do not generalize this result to another platform. |
+| Resolver Preview, Windows host | At 09:40 UTC, Preview returned `150.0.7871.114.3`, with `requested_channel=preview`, `resolved_channel=stable`, and `fallback=true`. | Preview fell back to Stable; no distinct Preview build was observed. The response supplied no platform or executable identity. |
+| Published Stable release inventory | The [official releases page](https://github.com/CloakHQ/CloakBrowser/releases), inspected 2026-10-28, describes wrapper 0.6.4 as current and lists these Stable builds and archives. | These page observations are not a downloaded or independently verified binary pairing. Published hashes/signature files have not been independently checked here; executable hashes are unknown. |
+
+| Platform | Published Stable build | Stable archive and published SHA-256 | Preview build/archive/hash |
+|---|---|---|---|
+| Linux x64 | Chromium `155.0.8059.39.2` | `cloakbrowser-linux-x64.tar.gz` — `d54521088fd2ca0a6584c490c7ce43d02d6e1190013a759517632d9b7d0a1c0d` | Unknown; no platform-specific Preview release identified |
+| Linux ARM64 | Chromium `155.0.8059.39.2` | `cloakbrowser-linux-arm64.tar.gz` — `f9a2e4666de97f98e3bfdb5d96f9c3c32ae2aa09573b811226a3ddbad1f08430` | Unknown; no platform-specific Preview release identified |
+| Windows x64 | Chromium `155.0.8059.39.1` | `cloakbrowser-windows-x64.zip` — `3cd304226e0c75699368144428d07b3bff1c2b387951310f3f94b6e7dfd650b0` | Unknown; no platform-specific Preview release identified |
+| macOS ARM64 | Chromium `155.0.8059.39.1` | `cloakbrowser-darwin-arm64.tar.gz` — `d13481c2d69e188e5f2ef12cd0a5403fe1634fe78f94b3c7b3e0086f79ae8473` | Unknown; no platform-specific Preview release identified |
+| macOS x64 | Chromium `155.0.8059.39.1` | `cloakbrowser-darwin-x64.tar.gz` — `ebc078e492ad2d730cbad368e8ef0185b98aa2185998cf1b4c77a3f288231dac` | Unknown; no platform-specific Preview release identified |
+
+No channel-specific Preview build was identified for any listed platform. The generic no-credential Windows-host Preview resolver observation above is not mapped to Windows x64 or any other platform. The release page reports signed tags and `SHA256SUMS`/`SHA256SUMS.sig`, but no signature verification was performed. Exact resolver-to-platform/build pairing, verified package/build pairing, executable identity/hash, and task-specific license entitlement remain unknown. The upstream README says its latest build is free with a GitHub sign-in for one concurrent session, while the [Binary License](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md) says downloading and using the currently listed latest-major binary requires an active paid subscription. These public statements coexist; this assessment cannot determine entitlement for a fixed qualification build and does not assume a free key covers it. The wrapper's MIT metadata does not grant rights to the separately licensed browser. No archive, executable, license secret, or browser was downloaded or used for these observations.
+
+#### Restart gate and handoff
+
+A future qualification needs a separate, explicitly authorized task and must record all of the following before any reader change:
+
+1. Confirm a task-specific license that applies to the exact build, channel, platform, identity, and intended use; do not read or print a pre-existing license secret as part of this documentation workflow.
+2. Record exact wrapper version/wheel filename/hash, requested and resolved channel, platform/architecture, browser build and executable path/identity, and independently verifiable archive and executable hashes plus signature verification. If any identity or verification is unavailable, keep it unknown and stop qualification.
+3. Use a task-owned isolated environment and cache. Do not use or delete a shared or production cache.
+4. With separate authorization, run loopback-only success, timeout, cancellation, close-failure, and cleanup cases; record each result independently. No public target is needed.
+5. Prove that the disabled production reader still rejects before package import or launch and that any future supported reader routes every target read through the exact governed gateway. A successful probe alone does not grant reader authority.
+6. Only after evidence and independent review, decide whether to change the dependency/reader contract in a separate implementation task. Pair any adoption rollback across project code/configuration and the exact wrapper, channel, browser build, and task-owned environment/cache.
+
+To prepare a later, separately authorized qualification workspace on Windows, use a unique task-owned directory and inspect it before installing anything:
+
+```powershell
+$taskId = [guid]::NewGuid().ToString('N')
+$qualRoot = Join-Path $env:TEMP "web-listening-cloakbrowser-064-$taskId"
+if (Test-Path -LiteralPath $qualRoot) {
+    throw "Task workspace already exists; choose a new task ID."
+}
+New-Item -ItemType Directory -Path $qualRoot -ErrorAction Stop
+py -3.12 -m venv (Join-Path $qualRoot 'venv')
+New-Item -ItemType Directory -Path (Join-Path $qualRoot 'browser-cache')
+Set-Content -LiteralPath (Join-Path $qualRoot 'workspace-path.txt') -Value $qualRoot
+Get-Item -LiteralPath $qualRoot
+```
+
+The generated UUID makes the directory name valid on Windows; `New-Item -ErrorAction Stop` fails on a collision instead of reusing existing state. Keep `workspace-path.txt` and copy its exact value into the later task's evidence report so rollback targets the same owned root. The later task must first confirm license scope and independently verify exact package/archive/signature evidence before adding explicit pinned artifacts to this environment and cache. Then run its loopback-only qualification and gateway-boundary checks. Rollback may remove only that task's `browser-cache` and `venv` after confirming their exact paths; never remove a shared cache. For a future adoption, revert the paired project code/config and wrapper/build in the same rollback record. This assessment preserves the disabled reader and does not qualify 0.6.4 or prevent dependency resolution drift.
 
 ### Semantic-version decision rubric
 

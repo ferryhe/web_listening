@@ -22,6 +22,8 @@ from web_listening.blocks.governed_read import (
     access_rejection_payload,
     governed_read_failure_payload,
 )
+from web_listening.exploration import parser_error_result, register_exploration_commands
+from web_listening.exploration_batch import register_exploration_batch_commands
 
 try:
     from typer._click.exceptions import Exit as TyperExit
@@ -190,6 +192,11 @@ class _SiteSkillJsonGroup(TyperGroup):
         json_aware_command = command in _SITE_SKILL_JSON_SCHEMAS or command in {
             _ACCESS_CONTRACT_COMMAND,
             _ACQUISITION_CONTRACT_COMMAND,
+            "read-page",
+            "download-file",
+            "extract-pdf",
+            "collect",
+            "list-exploration-tools",
         }
         if not json_aware_command or not json_requested:
             return super().main(
@@ -219,6 +226,16 @@ class _SiteSkillJsonGroup(TyperGroup):
                 _emit_access_contract_error()
             elif command == _ACQUISITION_CONTRACT_COMMAND:
                 _emit_acquisition_contract_error("bundle.argument_invalid")
+            elif command in {
+                "read-page",
+                "download-file",
+                "extract-pdf",
+                "collect",
+                "list-exploration-tools",
+            }:
+                typer.echo(
+                    parser_error_result(command, exc.format_message()).model_dump_json(indent=2)
+                )
             else:
                 _stable_json(_parser_failure(command, exc.format_message()))
             if standalone_mode:
@@ -251,6 +268,8 @@ app = typer.Typer(
     help="Web Listening - monitor websites for changes", cls=_SiteSkillJsonGroup
 )
 console = Console(width=200, soft_wrap=True)
+register_exploration_commands(app)
+register_exploration_batch_commands(app)
 
 
 def _stable_json(payload: object) -> None:

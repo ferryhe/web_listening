@@ -1,14 +1,33 @@
 # web_listening
 
-`web_listening` 3.2 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts.
+`web_listening` 3.3 is a governed website-monitoring platform for human operators and AI agents. It discovers site structure, turns reviewed monitoring intent into bounded scopes, captures repeatable evidence, detects later changes, and exports stable machine and human handoff artifacts. Version 3.3.0 also adds five explicit one-off exploration commands for reading pages, downloading files, extracting PDF text, collecting URL lists, and listing the exploration tools.
 
 ## Version and release status
 
-The project metadata on GitHub `main` at commit `3d783882d5f7d51fe452d563cab55bafd7e4f0ad` declares `3.2.0`. This is the current development/source version; it is not a claim that `3.2.0` is a formal release or has been deployed to every operator environment. The latest GitHub formal release observed on 2026-10-28 is [`v1.0.0`](https://github.com/ferryhe/web_listening/releases/tag/v1.0.0), published 2026-07-20, and its tag points to commit `570236c2aeeb239c827729115940f230c7ff9a44`. A release tag, source `pyproject.toml`, built wheel, installed distribution metadata, imported package, FastAPI app, and OpenAPI document are separate version sources; verify the installed sources together in one process before diagnosing a deployment.
+The source version is `3.3.0`. Check the canonical [GitHub v3.3.0 Release page](https://github.com/ferryhe/web_listening/releases/tag/v3.3.0) for the published tag and assets; source metadata alone does not establish publication or deployment. That page is the source for the wheel, source archive, and `SHA256SUMS`; PyPI publishing is not configured. The latest formal release observed on 2026-10-28 was [`v1.0.0`](https://github.com/ferryhe/web_listening/releases/tag/v1.0.0), published 2026-07-20, and its tag points to commit `570236c2aeeb239c827729115940f230c7ff9a44`. A release tag, source `pyproject.toml`, built wheel, installed distribution metadata, imported package, FastAPI app, and OpenAPI document are separate version sources; verify the installed sources together in one process before diagnosing a deployment.
 
 The 2026-10-28 runtime qualification baseline is Python 3.12.14 with FastAPI 0.139.2; MCP environments use the accepted baseline MCP 1.28.1, while the base environment has no MCP package. The version-provenance check builds and installs the project wheel from the recorded source SHA and checks its exact wheel digest and PEP 610 installed-archive digest. This describes the isolated qualification environment only; it does not assert a production installation or change a release. At `2026-10-28T06:16:53Z`, the exact PyPI JSON endpoint `https://pypi.org/pypi/web-listening/json` returned HTTP 404. That endpoint was not found at that time; this observation does not establish whether the project was published earlier or through another channel.
 
-The repository currently has a CI workflow and no automated release-publishing workflow. Passing CI or building a wheel does not publish a release.
+The repository has a CI workflow and no automated release-publishing workflow. Passing CI or building a wheel does not publish a release. Check the [v3.3.0 GitHub Release page](https://github.com/ferryhe/web_listening/releases/tag/v3.3.0) for its release notes and artifacts.
+
+### Install from the v3.3.0 GitHub Release
+
+Download and verify both release archives before installing the wheel in a new Python 3.12 environment. These commands do not migrate an existing installation or modify cron, configuration, or production data:
+
+```bash
+release=https://github.com/ferryhe/web_listening/releases/download/v3.3.0
+curl -fLO "$release/web_listening-3.3.0-py3-none-any.whl"
+curl -fLO "$release/web_listening-3.3.0.tar.gz"
+curl -fLO "$release/SHA256SUMS"
+sha256sum -c SHA256SUMS
+python3.12 -m venv .venv-3.3.0
+source .venv-3.3.0/bin/activate
+python -m pip install --upgrade pip
+python -m pip install './web_listening-3.3.0-py3-none-any.whl[browser,pdf,mcp]'
+python -m playwright install chromium
+```
+
+The project still declares lower-bound dependencies rather than a complete lock, so resolution can vary by environment. The install example does not claim compatibility across every platform or target site. Version 2.0 changed execution authority and 3.0 changed storage semantics; back up the database, artifact files, and configuration, review existing scopes and migrations, and do not treat installing an older wheel by itself as a data rollback. See the [v3.3.0 release notes](https://github.com/ferryhe/web_listening/releases/tag/v3.3.0) for compatibility and rollback guidance.
 
 The historical Linux cron host could not be reached for this check and remains **unverified**. To recheck it from that host without changing its environment, run:
 
@@ -47,7 +66,7 @@ Run the probe from `/tmp` with the deployed virtual environment's absolute execu
 ```bash
 repo=/path/to/web_listening
 cd /tmp
-env -u PYTHONPATH "$repo/.venv/bin/python" -m pip install --no-deps --force-reinstall /path/to/web_listening-3.2.0-py3-none-any.whl
+env -u PYTHONPATH "$repo/.venv/bin/python" -m pip install --no-deps --force-reinstall /path/to/web_listening-3.3.0-py3-none-any.whl
 ```
 
 For rollback, use the previously recorded known-good wheel with this self-contained command, substituting its exact path, and repeat the checks:
@@ -60,9 +79,9 @@ env -u PYTHONPATH "$repo/.venv/bin/python" -m pip install --no-deps --force-rein
 
 Do not use an unpinned dependency upgrade or assume the PyPI endpoint above can supply an artifact.
 
-### Future formal release checklist
+### Formal release checklist
 
-This version check does not approve a release. Before a separately authorized release:
+Version checks do not publish a release. A formally authorized release requires:
 
 1. Select and record the exact target commit SHA and intended release version; confirm the version in project metadata and explain the SemVer decision.
 2. Review schema/data migrations and compatibility impact; prepare release notes that describe changes and rollback limits.
@@ -97,13 +116,13 @@ Version 3.1 adds `agentic-site-rules.v1` and `agentic-orchestration.v1` as an ad
 
 Version 3.2 adopts the qualified Playwright 1.62.0 runtime as an optional governed reader for compiled `browser_rendered` recipe steps. The shared gateway still performs the main-document read and every redirect under the frozen origin, robots, SSRF, request-count, and byte boundaries. Playwright receives only the admitted final response through route fulfillment and aborts every other browser request, so scripts can render the supplied DOM without creating a direct-browser network path. Bare URLs, fetch modes, profiles, probes, and legacy browser wrappers remain unable to grant **formal scoped execution authority**.
 
-The current development work also adds explicit one-off exploration commands: `read-page`, `download-file`, `extract-pdf`, and serial URL-list `collect`, plus a separate `list-exploration-tools` catalog. They do not change formal scope execution or the version metadata in `pyproject.toml` (3.2.0). The exploration HTTP and browser requests connect directly to the target and do not inherit `AccessGateway` robots checks, DNS validation, pinned peers, or request accounting. Browser host and request limits apply to requests Playwright routes observe; on the current build, a direct HTTP 302 chain exposes only its first hop to that route ledger, so exploration does not provide per-hop transport enforcement. Before a formal release, review this change to target-read permissions and choose the appropriate semantic version; this development note is not a release claim.
+Version 3.3.0 adds five explicit one-off exploration commands: `read-page`, `download-file`, `extract-pdf`, serial URL-list `collect`, and `list-exploration-tools`. This is additive to 3.2.0 and does not change formal scope execution or its authority. Collection supports serial pacing and jitter, writes an append-only manifest, and exposes failed URLs for explicit retries; PDF extraction is local text extraction without OCR. Exploration HTTP and browser requests connect directly to the target and do not inherit `AccessGateway` robots checks, DNS validation, pinned peers, or request accounting. Browser host and request limits apply to requests Playwright routes observe; a direct HTTP 302 chain exposes only its first hop to that route ledger, so exploration does not provide per-hop transport enforcement. See the [v3.3.0 GitHub Release page](https://github.com/ferryhe/web_listening/releases/tag/v3.3.0) for full limits and installation details.
 
 ## Supported interfaces and target-read paths
 
-This inventory describes formal execution paths in 3.2 plus the current development exploration CLI. The four exploration commands are a separate, explicit one-off evidence mode and are not formal scope execution. Version 3.2 preserves the governed scope authority and immutable 3.0 storage semantics while adding the plan-bound browser renderer.
+This inventory describes formal execution paths in version 3.3.0 plus its one-off exploration CLI. All five exploration commands are a separate, explicit one-off evidence mode and are not formal scope execution. Version 3.3.0 preserves the governed scope authority and immutable 3.0 storage semantics while adding one-off exploration capabilities to the 3.2.0 baseline.
 
-| Path | 3.2 status | Execution rule |
+| Path | 3.3.0 status | Execution rule |
 |---|---|---|
 | Canonical `discover` section inventory | Supported planning read through a per-target gateway | Each reviewed catalog target is digest-bound to its own planning `AccessGateway`; robots rejection/error and every gateway or bounded-body failure propagate before inventory directories, YAML, or report creation, and successful planning reads grant no later execution authority. |
 | Crawler HTML, XML, feed, and sitemap content | Supported through scoped `web_http` execution | Every URL, including a discovered candidate and every redirect hop, enters `AccessGateway`; redirects are never followed automatically. |
@@ -116,6 +135,7 @@ This inventory describes formal execution paths in 3.2 plus the current developm
 | Exploration `download-file` | Explicit one-file evidence download | Streams complete response bytes up to 128 MiB by default, hashes the file, and writes a source sidecar. It does not use formal-scope `ArtifactStore` or the old 4 MiB executor limit. |
 | Exploration `extract-pdf` | Local PDF text extraction | Uses optional `pypdf==6.21.3`, records page numbers, metadata, empty-page and extraction-error counts, and reports partial extraction honestly. It does not perform OCR. |
 | Exploration `collect` | Explicit serial URL-list evidence collection | Reads one URL per nonblank line, continues after per-item failures, saves each result and an append-only JSONL manifest, and writes failed URLs for another explicit method attempt. Browser actions may be applied to each page URL. |
+| Exploration `list-exploration-tools` | One-off tool catalog | Lists the versioned exploration evidence commands; it remains separate from the formal acquisition-tool catalog. |
 | Legacy `Crawler`/`DocumentProcessor` direct-client construction | Disabled in production | A gateway is required. The `httpx.MockTransport` compatibility seam is offline-test-only and itself wraps `AccessGateway`; it is not a production transport option. |
 | `diagnose-site` robots/sitemap reads | Explicitly isolated planning producer | It uses its separate bounded, pinned, robots-first diagnostic transport, never fetches page candidates, mutates no execution scope, and grants no acquisition authority. |
 
@@ -881,6 +901,8 @@ Issue #52 changes durable content behavior from mutable same-URL document state 
 Issue #53 adds versioned Agentic rules, candidate exploration, and durable parent/child/read-observation state without changing the existing staged CLI, access authority, immutable identity, or storage contract. It is a backward-compatible capability and additive schema evolution, so the project advances from 3.0.0 to **3.1.0**. Final acquisition-manifest production and downstream classification/index/ready work remain separately gated.
 
 Issue #69 adds an optional, compiled-plan-bound `browser_rendered` reader without changing the HTTP reader, storage contract, fallback order, or direct-reader boundary. It is a backward-compatible optional capability under the rubric, so the project advances from 3.1.0 to **3.2.0**.
+
+PR #96 adds five explicit one-off exploration commands without changing the formal scope authority or the immutable storage contract. It is an additive capability to 3.2.0 under this rubric, so the project advances to **3.3.0**.
 
 ### Weekly review policy
 

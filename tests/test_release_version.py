@@ -19,7 +19,7 @@ def test_release_version_authorities_are_consistent() -> None:
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )["project"]
 
-    assert project["version"] == "3.2.0"
+    assert project["version"] == "3.3.0"
     assert importlib.metadata.version("web-listening") == project["version"]
     assert web_listening.__version__ == project["version"]
     assert app.version == project["version"]
